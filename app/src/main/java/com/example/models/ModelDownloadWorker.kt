@@ -59,15 +59,14 @@ class ModelDownloadWorker(
             return Result.retry()
         }
 
-        val requiredTotal = spec.expectedSizeBytes +
-            if (spec.requiresEspeakData) ModelCatalog.espeakNgDataSpec.expectedSizeBytes else 0L
-        if (!storage.hasEnoughDiskSpace(requiredTotal)) {
+        val needsEspeak = spec.requiresEspeakData && !storage.verifyInstalledPackage(ModelCatalog.espeakNgDataSpec)
+        if (!storage.hasEnoughDiskSpace(spec, includeEspeakDependency = needsEspeak)) {
             dao.upsert(
                 ModelRecordEntity(
                     modelId = spec.id,
                     status = ModelInstallStatus.FAILED.name,
                     totalBytes = spec.expectedSizeBytes,
-                    lastError = "المساحة الحرة غير كافية للتنزيل وفك الضغط."
+                    lastError = "المساحة الحرة غير كافية للتنزيل والتثبيت بأمان."
                 )
             )
             return Result.failure()
@@ -95,12 +94,14 @@ class ModelDownloadWorker(
             )
             throw ce
         } catch (t: Throwable) {
-            val partLen = storage.getTempPartFile(spec.id).length()
-            val status = if (t.message?.contains("SHA-256") == true || t.message?.contains("تالف") == true) {
-                ModelInstallStatus.CORRUPTED
-            } else {
-                ModelInstallStatus.FAILED
+            val isCorrupted = t.message?.contains("SHA-256") == true ||
+                t.message?.contains("تالف") == true ||
+                t.message?.contains("عدم تطابق الحجم") == true
+            if (isCorrupted) {
+                storage.getTempPartFile(spec.id).delete()
             }
+            val partLen = storage.getTempPartFile(spec.id).length()
+            val status = if (isCorrupted) ModelInstallStatus.CORRUPTED else ModelInstallStatus.FAILED
             dao.upsert(
                 ModelRecordEntity(
                     modelId = spec.id,
@@ -124,7 +125,10 @@ class ModelDownloadWorker(
         val partFile = storage.getTempPartFile(spec.id)
         var existingBytes = if (partFile.exists()) partFile.length() else 0L
 
-        if (existingBytes > spec.expectedSizeBytes) {
+        val previousRecord = if (!isDependency) dao.getRecord(spec.id) else null
+        if (existingBytes > spec.expectedSizeBytes ||
+            (existingBytes == spec.expectedSizeBytes && previousRecord?.status == ModelInstallStatus.CORRUPTED.name)
+        ) {
             partFile.delete()
             existingBytes = 0L
         }
@@ -138,20 +142,27 @@ class ModelDownloadWorker(
                 if (!response.isSuccessful && response.code != 206) {
                     error("خطأ من الخادم: HTTP ${response.code}")
                 }
-                val supportsRange = response.code == 206
-                if (existingBytes > 0L && !supportsRange) {
+                val contentRange = response.header("Content-Range").orEmpty()
+                val validRangeResume = response.code == 206 &&
+                    contentRange.startsWith("bytes $existingBytes-", ignoreCase = true)
+                if (existingBytes > 0L && !validRangeResume) {
+                    if (response.code == 206) {
+                        partFile.delete()
+                        error("استجاب الخادم بـ HTTP 206 لكن رأس Content-Range غير متطابق ($contentRange). أعد المحاولة.")
+                    }
+                    // Server ignored Range and returned 200 full stream from byte 0
                     partFile.delete()
                     existingBytes = 0L
                 }
                 val body = response.body ?: error("استجابة فارغة من الخادم.")
-                val totalBytes = if (supportsRange) {
+                val totalBytes = if (validRangeResume) {
                     spec.expectedSizeBytes
                 } else {
                     body.contentLength().takeIf { it > 0L } ?: spec.expectedSizeBytes
                 }
 
                 body.byteStream().use { input ->
-                    FileOutputStream(partFile, supportsRange).use { fos ->
+                    FileOutputStream(partFile, validRangeResume).use { fos ->
                         val buffer = ByteArray(64 * 1024)
                         var transferred = existingBytes
                         var lastNotifyTime = 0L
@@ -199,7 +210,12 @@ class ModelDownloadWorker(
 
         if (!isDependency) {
             // Mandatory load & short-synthesis verification before declaring the model ready
-            app.ttsEngineManager.verifyModelLoadable(spec, finalDir).getOrThrow()
+            try {
+                app.ttsEngineManager.verifyModelLoadable(spec, finalDir).getOrThrow()
+            } catch (t: Throwable) {
+                storage.deleteModelFiles(spec.id)
+                throw t
+            }
             dao.upsert(
                 ModelRecordEntity(
                     modelId = spec.id,

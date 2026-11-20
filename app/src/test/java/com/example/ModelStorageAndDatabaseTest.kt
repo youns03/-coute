@@ -10,6 +10,7 @@ import com.example.domain.ArchiveType
 import com.example.domain.BenchmarkCorpus
 import com.example.domain.EngineType
 import com.example.domain.ModelSpec
+import com.example.models.ModelCatalog
 import com.example.models.ModelRepository
 import com.example.models.ModelStorageManager
 import com.example.tts.TtsEngineManager
@@ -123,7 +124,26 @@ class ModelStorageAndDatabaseTest {
         val result = storageManager.installVerifiedPackage(spec, badFile)
         assertTrue(result.isFailure)
         assertTrue(result.exceptionOrNull()?.message?.contains("SHA-256") == true)
-        badFile.delete()
+        assertFalse("Corrupted .part file must be deleted automatically to avoid retry loops", badFile.exists())
+    }
+
+    @Test
+    fun `storage manager deletes temp file on size mismatch and differentiates archive peak bytes`() = runTest {
+        val wrongSizeFile = File(storageManager.tempDownloadsRoot, "wrong_size.litertlm")
+        wrongSizeFile.writeBytes(ByteArray(64) { 7 })
+
+        val spec = ModelCatalog.findById("kokoro-82m-gpu-fp16")!!
+        val result = storageManager.installVerifiedPackage(spec, wrongSizeFile)
+        assertTrue(result.isFailure)
+        assertFalse("Size-mismatched .part file must be deleted", wrongSizeFile.exists())
+
+        val kokoroPeak = storageManager.requiredPeakBytes(spec, includeEspeakDependency = false)
+        val piperSpec = ModelCatalog.findById("piper-fr-siwis-medium")!!
+        val piperPeak = storageManager.requiredPeakBytes(piperSpec, includeEspeakDependency = true)
+
+        assertTrue(kokoroPeak > spec.expectedSizeBytes)
+        assertTrue(kokoroPeak < spec.expectedSizeBytes * 2L)
+        assertTrue(piperPeak > piperSpec.expectedSizeBytes * 2L)
     }
 
     @Test

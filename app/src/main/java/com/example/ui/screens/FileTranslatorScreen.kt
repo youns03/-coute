@@ -34,6 +34,7 @@ import androidx.compose.material.icons.rounded.PlayArrow
 import androidx.compose.material.icons.rounded.Translate
 import androidx.compose.material.icons.rounded.UploadFile
 import androidx.compose.material.icons.rounded.Visibility
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.AssistChip
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
@@ -51,6 +52,7 @@ import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.minimumInteractiveComponentSize
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
@@ -93,6 +95,7 @@ fun FileTranslatorScreen(
     onPauseJob: (String) -> Unit,
     onDeleteJob: (String) -> Unit,
     onChangeJobLanguage: (String, SourceLanguage) -> Unit,
+    onResetAndChangeJobLanguage: (String, SourceLanguage) -> Unit,
     onOpenPreview: (String) -> Unit,
     onClosePreview: () -> Unit,
     onExportJob: (String, Uri, ExportMode) -> Unit,
@@ -102,6 +105,7 @@ fun FileTranslatorScreen(
 ) {
     var pendingExportRequest by remember { mutableStateOf<Pair<TranslationJobEntity, ExportMode>?>(null) }
     var exportChoiceJob by remember { mutableStateOf<TranslationJobEntity?>(null) }
+    var languageResetConfirm by remember { mutableStateOf<Pair<TranslationJobEntity, SourceLanguage>?>(null) }
 
     val notifLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.RequestPermission()
@@ -358,7 +362,11 @@ fun FileTranslatorScreen(
                         onToggleLanguage = {
                             val current = SourceLanguage.fromCode(job.sourceLanguage)
                             val next = if (current == SourceLanguage.FRENCH) SourceLanguage.ENGLISH else SourceLanguage.FRENCH
-                            onChangeJobLanguage(job.id, next)
+                            if (job.completedChunks > 0) {
+                                languageResetConfirm = job to next
+                            } else {
+                                onChangeJobLanguage(job.id, next)
+                            }
                         },
                         onPreview = { onOpenPreview(job.id) },
                         onExport = { exportChoiceJob = job },
@@ -456,6 +464,11 @@ fun FileTranslatorScreen(
 
     if (exportChoiceJob != null) {
         val jobToExport = exportChoiceJob!!
+        val availableModes = if (jobToExport.completedChunks >= jobToExport.totalChunks) {
+            listOf(ExportMode.ARABIC_COMPLETED_ONLY, ExportMode.BILINGUAL_COMPLETED_ONLY)
+        } else {
+            ExportMode.entries
+        }
         ModalBottomSheet(onDismissRequest = { exportChoiceJob = null }) {
             Column(
                 modifier = Modifier
@@ -469,14 +482,13 @@ fun FileTranslatorScreen(
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
-                ExportMode.entries.forEach { mode ->
+                availableModes.forEach { mode ->
                     Button(
                         onClick = {
-                            val suffix = if (mode == ExportMode.ARABIC_ONLY) "_ar.txt" else "_bilingual.txt"
                             val safeName = jobToExport.title.replace(Regex("""[^\p{L}\p{N}_\- ]"""), "_").ifBlank { "translation" }
                             pendingExportRequest = jobToExport to mode
                             exportChoiceJob = null
-                            createDocumentLauncher.launch("$safeName$suffix")
+                            createDocumentLauncher.launch("$safeName${mode.fileSuffix}")
                         },
                         modifier = Modifier.fillMaxWidth()
                     ) {
@@ -488,6 +500,38 @@ fun FileTranslatorScreen(
                 Spacer(Modifier.height(18.dp))
             }
         }
+    }
+
+    if (languageResetConfirm != null) {
+        val (targetJob, nextLang) = languageResetConfirm!!
+        AlertDialog(
+            onDismissRequest = { languageResetConfirm = null },
+            title = { Text("تأكيد تغيير لغة المصدر") },
+            text = {
+                Text(
+                    "تحتوي مهمة «${targetJob.title}» على ${targetJob.completedChunks} جزءاً مترجماً بالفعل.\n\n" +
+                        "لمنع خلط ترجمات الفرنسية والإنجليزية في ملف واحد، سيؤدي التحويل إلى «${nextLang.labelAr}» " +
+                        "إلى مسح جميع الترجمات المحفوظة وإعادة المهمة من البداية (0 / ${targetJob.totalChunks})."
+                )
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        val j = targetJob
+                        val l = nextLang
+                        languageResetConfirm = null
+                        onResetAndChangeJobLanguage(j.id, l)
+                    }
+                ) {
+                    Text("مسح الترجمات وتغيير اللغة")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { languageResetConfirm = null }) {
+                    Text("إلغاء")
+                }
+            }
+        )
     }
 }
 
@@ -545,7 +589,8 @@ private fun TranslationJobCard(
                 }
 
                 AssistChip(
-                    onClick = { if (job.status != "RUNNING") onToggleLanguage() },
+                    onClick = onToggleLanguage,
+                    enabled = job.status != "RUNNING",
                     label = { Text(direction.shortBadge) }
                 )
             }

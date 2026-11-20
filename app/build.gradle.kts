@@ -1,4 +1,14 @@
 import com.google.gms.googleservices.GoogleServicesPlugin.MissingGoogleServicesStrategy
+import java.io.File
+import java.net.URI
+import java.security.MessageDigest
+import org.gradle.api.DefaultTask
+import org.gradle.api.GradleException
+import org.gradle.api.file.RegularFileProperty
+import org.gradle.api.provider.Property
+import org.gradle.api.tasks.Input
+import org.gradle.api.tasks.OutputFile
+import org.gradle.api.tasks.TaskAction
 
 plugins {
   alias(libs.plugins.android.application)
@@ -80,6 +90,64 @@ secrets {
 }
 
 googleServices { missingGoogleServicesStrategy = MissingGoogleServicesStrategy.WARN }
+
+// Clean-clone self-healing dependency fetch: on fresh GitHub clones where app/libs/sherpa-onnx-2.0.2.aar
+// is absent, Gradle automatically fetches the official v2.0.2 AAR and verifies its SHA-256 before compiling.
+// When app/libs/sherpa-onnx-2.0.2.aar is already present on disk, this task is completely skipped.
+abstract class DownloadSherpaAarTask : DefaultTask() {
+  @get:Input abstract val downloadUrl: Property<String>
+  @get:Input abstract val expectedSha256: Property<String>
+  @get:OutputFile abstract val outputFile: RegularFileProperty
+
+  @TaskAction
+  fun fetchIfMissing() {
+    val targetFile = outputFile.get().asFile
+    if (targetFile.exists()) return
+    logger.lifecycle("Downloading Sherpa-ONNX v2.0.2 AAR from official GitHub release...")
+    targetFile.parentFile.mkdirs()
+    val partFile = File("${targetFile.absolutePath}.part")
+    if (partFile.exists()) partFile.delete()
+    URI.create(downloadUrl.get()).toURL().openStream().use { input ->
+      partFile.outputStream().use { output -> input.copyTo(output) }
+    }
+    val digest = MessageDigest.getInstance("SHA-256")
+    partFile.inputStream().use { input ->
+      val buffer = ByteArray(64 * 1024)
+      while (true) {
+        val read = input.read(buffer)
+        if (read <= 0) break
+        digest.update(buffer, 0, read)
+      }
+    }
+    val actualSha = digest.digest().joinToString("") { "%02x".format(it) }
+    val expected = expectedSha256.get()
+    if (!actualSha.equals(expected, ignoreCase = true)) {
+      partFile.delete()
+      throw GradleException(
+        "Sherpa-ONNX AAR SHA-256 mismatch! Expected $expected, got $actualSha"
+      )
+    }
+    if (!partFile.renameTo(targetFile)) {
+      partFile.copyTo(targetFile, overwrite = true)
+      partFile.delete()
+    }
+  }
+}
+
+val sherpaAarFile = layout.projectDirectory.file("libs/sherpa-onnx-2.0.2.aar")
+val ensureSherpaAar =
+  tasks.register<DownloadSherpaAarTask>("ensureSherpaAar") {
+    downloadUrl.set(
+      "https://github.com/k2-fsa/sherpa-onnx/releases/download/v2.0.2/sherpa-onnx-2.0.2.aar"
+    )
+    expectedSha256.set("6420cfb86c2ef8462dadd77b2202b7430487bdfb2bc715e9ce2864871209a80e")
+    outputFile.set(sherpaAarFile)
+    onlyIf { !outputFile.get().asFile.exists() }
+  }
+
+tasks.matching {
+  it.name == "preBuild" || it.name == "preDebugBuild" || it.name == "preReleaseBuild"
+}.configureEach { dependsOn(ensureSherpaAar) }
 
 // Some unused dependencies are commented out below instead of being removed.
 // This makes it easy to add them back in the future if needed.

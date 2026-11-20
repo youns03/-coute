@@ -56,10 +56,39 @@ class FileTranslationRepository(
         }
     }
 
-    suspend fun updateJobSourceLanguage(jobId: String, language: SourceLanguage) {
+    suspend fun updateJobSourceLanguageIfEmpty(jobId: String, language: SourceLanguage): Boolean {
+        val job = jobDao.getJob(jobId) ?: return false
+        if (job.status == "RUNNING") return false
+        val actualDone = jobDao.countCompletedChunks(jobId)
+        if (actualDone > 0 || job.completedChunks > 0) return false
+        jobDao.updateJob(
+            job.copy(
+                sourceLanguage = language.code,
+                status = "PENDING",
+                lastError = null,
+                updatedAt = System.currentTimeMillis()
+            )
+        )
+        return true
+    }
+
+    private fun cancelWorkSafely(uniqueWorkName: String) {
+        runCatching { workManager.cancelUniqueWork(uniqueWorkName) }
+    }
+
+    suspend fun resetAndChangeJobSourceLanguage(jobId: String, language: SourceLanguage) {
+        cancelWorkSafely("file_tx_$jobId")
         val job = jobDao.getJob(jobId) ?: return
-        if (job.status == "RUNNING") return
-        jobDao.upsertJob(job.copy(sourceLanguage = language.code, updatedAt = System.currentTimeMillis()))
+        jobDao.resetChunksForJob(jobId)
+        jobDao.updateJob(
+            job.copy(
+                sourceLanguage = language.code,
+                status = "PENDING",
+                completedChunks = 0,
+                lastError = null,
+                updatedAt = System.currentTimeMillis()
+            )
+        )
     }
 
     suspend fun startOrResumeJob(jobId: String) {
@@ -83,13 +112,13 @@ class FileTranslationRepository(
     }
 
     suspend fun pauseJob(jobId: String) {
-        workManager.cancelUniqueWork("file_tx_$jobId")
+        cancelWorkSafely("file_tx_$jobId")
         val done = jobDao.countCompletedChunks(jobId)
         jobDao.updateJobProgress(jobId, done, "PAUSED", null)
     }
 
     suspend fun deleteJob(jobId: String) {
-        workManager.cancelUniqueWork("file_tx_$jobId")
+        cancelWorkSafely("file_tx_$jobId")
         jobDao.deleteJob(jobId)
     }
 

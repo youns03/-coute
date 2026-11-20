@@ -53,8 +53,22 @@ class ModelStorageManager(private val context: Context) {
         return stat.availableBytes
     }
 
+    fun requiredPeakBytes(spec: ModelSpec, includeEspeakDependency: Boolean): Long {
+        val depBytes = if (includeEspeakDependency) ModelCatalog.espeakNgDataSpec.expectedSizeBytes * 3L else 0L
+        val safetyMargin = 100L * 1024L * 1024L
+        val modelPeak = when (spec.archiveType) {
+            // SINGLE_LITERTLM uses atomic renameTo on the same internal filesystem, avoiding full 2x copy
+            ArchiveType.SINGLE_LITERTLM -> spec.expectedSizeBytes + 25L * 1024L * 1024L
+            ArchiveType.TAR_BZ2, ArchiveType.ZIP -> (spec.expectedSizeBytes * 2.6).toLong()
+        }
+        return modelPeak + depBytes + safetyMargin
+    }
+
+    fun hasEnoughDiskSpace(spec: ModelSpec, includeEspeakDependency: Boolean = false): Boolean {
+        return getFreeInternalBytes() >= requiredPeakBytes(spec, includeEspeakDependency)
+    }
+
     fun hasEnoughDiskSpace(requiredBytes: Long): Boolean {
-        // Require 1.5x buffer for extraction & temp files + 100 MB safety margin
         val needed = (requiredBytes * 1.5).toLong() + 100L * 1024L * 1024L
         return getFreeInternalBytes() >= needed
     }
@@ -81,11 +95,14 @@ class ModelStorageManager(private val context: Context) {
                 error("الملف المؤقت غير موجود.")
             }
             if (downloadedFile.length() != spec.expectedSizeBytes) {
-                error("عدم تطابق الحجم: المتوقع ${spec.expectedSizeBytes} بايت، الفعلي ${downloadedFile.length()} بايت.")
+                val actualLen = downloadedFile.length()
+                downloadedFile.delete()
+                error("عدم تطابق الحجم: المتوقع ${spec.expectedSizeBytes} بايت، الفعلي $actualLen بايت. تم حذف الملف المؤقت.")
             }
             val actualHash = computeSha256(downloadedFile)
             if (!actualHash.equals(spec.sha256, ignoreCase = true)) {
-                error("فشل فحص SHA-256! البصمة الفعلية: ${actualHash.take(12)}...")
+                downloadedFile.delete()
+                error("فشل فحص SHA-256! البصمة الفعلية: ${actualHash.take(12)}... تم حذف الملف التالف.")
             }
 
             val stagingDir = File(context.cacheDir, "staging_${spec.id}")
@@ -96,9 +113,13 @@ class ModelStorageManager(private val context: Context) {
                 ArchiveType.SINGLE_LITERTLM -> {
                     val fileName = spec.downloadUrl.substringAfterLast('/')
                     val outFile = File(stagingDir, fileName)
-                    downloadedFile.copyTo(outFile, overwrite = true)
+                    if (!downloadedFile.renameTo(outFile)) {
+                        downloadedFile.copyTo(outFile, overwrite = true)
+                        downloadedFile.delete()
+                    }
                     if (outFile.length() != spec.expectedSizeBytes) {
-                        error("فشل نسخ ملف LiteRT-LM إلى مجلد التجهيز.")
+                        outFile.delete()
+                        error("فشل نقل ملف LiteRT-LM إلى مجلد التجهيز.")
                     }
                 }
                 ArchiveType.TAR_BZ2 -> {
@@ -119,8 +140,8 @@ class ModelStorageManager(private val context: Context) {
                 stagingDir.copyRecursively(finalDir, overwrite = true)
                 stagingDir.deleteRecursively()
             }
-            // Remove temp part file only after permanent commit succeeds
-            downloadedFile.delete()
+            // Remove temp part file only after permanent commit succeeds (no-op if already moved)
+            if (downloadedFile.exists()) downloadedFile.delete()
             finalDir
         }
     }

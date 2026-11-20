@@ -103,7 +103,17 @@ class FileTranslatorViewModel(application: Application) : AndroidViewModel(appli
 
     fun changeJobLanguage(jobId: String, lang: SourceLanguage) {
         viewModelScope.launch {
-            repo.updateJobSourceLanguage(jobId, lang)
+            val changed = repo.updateJobSourceLanguageIfEmpty(jobId, lang)
+            if (!changed) {
+                _statusBanner.value = "لا يمكن تبديل لغة مهمة تحتوي على أجزاء مترجمة دون إعادة ضبطها أولاً."
+            }
+        }
+    }
+
+    fun resetAndChangeJobLanguage(jobId: String, lang: SourceLanguage) {
+        viewModelScope.launch {
+            repo.resetAndChangeJobSourceLanguage(jobId, lang)
+            _statusBanner.value = "تمت إعادة تهيئة المهمة إلى اللغة الجديدة (${lang.labelAr}) ومسح الترجمات السابقة بنجاح."
         }
     }
 

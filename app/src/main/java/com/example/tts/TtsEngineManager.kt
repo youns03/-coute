@@ -148,7 +148,11 @@ class TtsEngineManager(
 
         val res = engine.synthesize(spokenText, voiceId, speed)
         val peakRam = MemoryDiagnostics.getProcessPssMb(context)
+        val synth = res.getOrNull()
         _runtimeState.value = _runtimeState.value.copy(
+            acceleratorLabel = synth?.usedAccelerator ?: engine.activeAccelerator,
+            fellBackToCpu = synth?.fellBackToCpu ?: engine.fellBackToCpu,
+            fallbackReason = synth?.fallbackReason ?: engine.fallbackReason,
             ramPeakSynthesisMb = maxOf(_runtimeState.value.ramPeakSynthesisMb, peakRam)
         )
         res

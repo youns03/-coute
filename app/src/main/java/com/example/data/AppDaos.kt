@@ -5,6 +5,7 @@ import androidx.room.Insert
 import androidx.room.OnConflictStrategy
 import androidx.room.Query
 import androidx.room.Transaction
+import androidx.room.Update
 import kotlinx.coroutines.flow.Flow
 
 @Dao
@@ -155,6 +156,9 @@ interface TranslationJobDao {
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun upsertJob(job: TranslationJobEntity)
 
+    @Update
+    suspend fun updateJob(job: TranslationJobEntity)
+
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertChunks(chunks: List<TranslationChunkEntity>)
 
@@ -166,6 +170,9 @@ interface TranslationJobDao {
 
     @Query("UPDATE translation_chunks SET translatedText = :translatedText, isCompleted = 1 WHERE id = :chunkId")
     suspend fun markChunkTranslated(chunkId: Long, translatedText: String)
+
+    @Query("UPDATE translation_chunks SET translatedText = NULL, isCompleted = 0 WHERE jobId = :jobId")
+    suspend fun resetChunksForJob(jobId: String)
 
     @Query(
         "UPDATE translation_jobs SET completedChunks = :completedChunks, status = :status, lastError = :lastError, updatedAt = :updatedAt WHERE id = :jobId"

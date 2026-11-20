@@ -320,6 +320,7 @@ fun EcouteAppRoot(isExpandedNav: Boolean) {
                                 onPauseJob = translatorVm::pauseJob,
                                 onDeleteJob = translatorVm::deleteJob,
                                 onChangeJobLanguage = translatorVm::changeJobLanguage,
+                                onResetAndChangeJobLanguage = translatorVm::resetAndChangeJobLanguage,
                                 onOpenPreview = translatorVm::openPreview,
                                 onClosePreview = translatorVm::closePreview,
                                 onExportJob = translatorVm::exportJob,

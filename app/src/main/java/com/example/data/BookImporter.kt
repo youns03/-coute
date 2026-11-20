@@ -10,10 +10,17 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import org.xmlpull.v1.XmlPullParser
 import org.xmlpull.v1.XmlPullParserFactory
+import java.io.BufferedInputStream
+import java.io.BufferedReader
 import java.io.ByteArrayInputStream
+import java.io.ByteArrayOutputStream
+import java.io.File
+import java.io.FileOutputStream
 import java.io.InputStream
+import java.io.InputStreamReader
 import java.util.UUID
-import java.util.zip.ZipInputStream
+import java.util.zip.ZipEntry
+import java.util.zip.ZipFile
 
 data class ExtractedDocumentSection(
     val title: String,
@@ -39,23 +46,37 @@ class BookImporter(private val context: Context) {
 
     suspend fun parseDocumentFromUri(uri: Uri): Result<ParsedSourceDocument> = withContext(Dispatchers.IO) {
         runCatching {
-            val fileName = resolveFileName(uri) ?: "Document"
+            val meta = resolveFileMeta(uri)
+            val fileName = meta.first ?: "Document"
+            val declaredSize = meta.second
             val mimeType = context.contentResolver.getType(uri).orEmpty()
 
             if (fileName.endsWith(".pdf", ignoreCase = true) || mimeType.contains("pdf", ignoreCase = true)) {
                 error("استيراد ملفات PDF غير متاح حالياً — يدعم التطبيق ملفات TXT وEPUB الآن مع قابلية إضافة PDF لاحقاً.")
             }
 
+            if (declaredSize > MAX_IMPORT_FILE_BYTES) {
+                error("حجم الملف يتجاوز الحد الأقصى المسموح للاستيراد (${MAX_IMPORT_FILE_BYTES / (1024 * 1024)} MB).")
+            }
+
             val isEpub = fileName.endsWith(".epub", ignoreCase = true) ||
                 mimeType.contains("epub", ignoreCase = true)
 
-            context.contentResolver.openInputStream(uri)?.use { stream ->
-                if (isEpub) {
-                    parseEpubDocument(stream, fileName)
-                } else {
-                    parseTxtDocument(stream, fileName)
+            if (isEpub) {
+                val tempEpub = File(context.cacheDir, "epub_import_${UUID.randomUUID()}.tmp")
+                try {
+                    context.contentResolver.openInputStream(uri)?.use { stream ->
+                        copyBoundedToTempFile(stream, tempEpub, MAX_IMPORT_FILE_BYTES)
+                    } ?: error("تعذر فتح الملف المحدد.")
+                    parseEpubFileStreaming(tempEpub, fileName)
+                } finally {
+                    tempEpub.delete()
                 }
-            } ?: error("تعذر فتح الملف المحدد.")
+            } else {
+                context.contentResolver.openInputStream(uri)?.use { stream ->
+                    parseTxtDocumentStreaming(stream, fileName)
+                } ?: error("تعذر فتح الملف المحدد.")
+            }
         }
     }
 
@@ -73,33 +94,83 @@ class BookImporter(private val context: Context) {
         }
     }
 
-    private fun parseTxtDocument(input: InputStream, rawFileName: String): ParsedSourceDocument {
-        val rawBytes = input.readBytes()
-        val text = decodeUtf8WithBom(rawBytes)
-        if (text.isBlank()) error("الملف النصي فارغ.")
-
-        val title = rawFileName.substringBeforeLast('.').ifBlank { "مستند نصي" }
-        val paragraphs = text.replace("\r\n", "\n")
-            .split(Regex("""\n\s*\n+"""))
-            .filter { it.isNotBlank() }
-
-        val sections = mutableListOf<ExtractedDocumentSection>()
-        val currentChunk = StringBuilder()
-        var sectionNum = 1
-        for (p in paragraphs) {
-            currentChunk.append(p.trim()).append("\n\n")
-            if (currentChunk.length >= 3500) {
-                sections.add(ExtractedDocumentSection("Section $sectionNum", currentChunk.toString().trim()))
-                currentChunk.clear()
-                sectionNum++
+    private fun copyBoundedToTempFile(input: InputStream, dest: File, maxBytes: Long) {
+        var total = 0L
+        BufferedInputStream(input, 64 * 1024).use { bis ->
+            FileOutputStream(dest).use { fos ->
+                val buffer = ByteArray(32 * 1024)
+                while (true) {
+                    val read = bis.read(buffer)
+                    if (read <= 0) break
+                    total += read
+                    if (total > maxBytes) {
+                        error("يتجاوز حجم ملف EPUB الحد الأقصى (${maxBytes / (1024 * 1024)} MB).")
+                    }
+                    fos.write(buffer, 0, read)
+                }
             }
         }
-        if (currentChunk.isNotBlank()) {
-            val label = if (sectionNum == 1) "" else "Section $sectionNum"
-            sections.add(ExtractedDocumentSection(label, currentChunk.toString().trim()))
+    }
+
+    private fun parseTxtDocumentStreaming(input: InputStream, rawFileName: String): ParsedSourceDocument {
+        val title = rawFileName.substringBeforeLast('.').ifBlank { "مستند نصي" }
+        val sections = mutableListOf<ExtractedDocumentSection>()
+        val sectionBuf = StringBuilder()
+        val paragraphBuf = StringBuilder()
+        val languageSampleBuf = StringBuilder()
+        var sectionNum = 1
+        var totalChars = 0L
+
+        fun flushParagraph() {
+            if (paragraphBuf.isNotBlank()) {
+                sectionBuf.append(paragraphBuf.toString().trim()).append("\n\n")
+                paragraphBuf.clear()
+                if (sectionBuf.length >= 3500) {
+                    sections.add(ExtractedDocumentSection("Section $sectionNum", sectionBuf.toString().trim()))
+                    sectionBuf.clear()
+                    sectionNum++
+                }
+            }
         }
 
-        val detected = detectSourceLanguage(text.take(2500), opfLangHint = null)
+        BufferedReader(InputStreamReader(BufferedInputStream(input, 64 * 1024), Charsets.UTF_8)).use { reader ->
+            var isFirstLine = true
+            while (true) {
+                val rawLine = reader.readLine() ?: break
+                val line = if (isFirstLine) {
+                    isFirstLine = false
+                    rawLine.removePrefix("\uFEFF")
+                } else {
+                    rawLine
+                }
+
+                totalChars += line.length + 1
+                if (totalChars > MAX_EXTRACTED_TEXT_CHARS) {
+                    error("النص يتجاوز الحد الأقصى المسموح للمعالجة (${MAX_EXTRACTED_TEXT_CHARS / 1_000_000} مليون حرف).")
+                }
+
+                if (languageSampleBuf.length < 2500 && line.isNotBlank()) {
+                    languageSampleBuf.append(line).append(' ')
+                }
+
+                if (line.isBlank()) {
+                    flushParagraph()
+                } else {
+                    if (paragraphBuf.isNotEmpty()) paragraphBuf.append('\n')
+                    paragraphBuf.append(line.trimEnd())
+                }
+            }
+        }
+        flushParagraph()
+
+        if (sectionBuf.isNotBlank()) {
+            val label = if (sectionNum == 1) "" else "Section $sectionNum"
+            sections.add(ExtractedDocumentSection(label, sectionBuf.toString().trim()))
+        }
+
+        if (sections.isEmpty()) error("الملف النصي فارغ.")
+
+        val detected = detectSourceLanguage(languageSampleBuf.toString(), opfLangHint = null)
         return ParsedSourceDocument(
             fileName = rawFileName,
             title = title,
@@ -110,63 +181,104 @@ class BookImporter(private val context: Context) {
         )
     }
 
-    private fun parseEpubDocument(input: InputStream, rawFileName: String): ParsedSourceDocument {
-        val entries = mutableMapOf<String, ByteArray>()
-        ZipInputStream(input).use { zis ->
-            var entry = zis.nextEntry
-            while (entry != null) {
+    private fun parseEpubFileStreaming(epubFile: File, rawFileName: String): ParsedSourceDocument {
+        ZipFile(epubFile).use { zip ->
+            if (zip.size() > MAX_EPUB_ENTRIES) {
+                error("ملف EPUB يحتوي على عدد عناصر أكبر من الحد المسموح ($MAX_EPUB_ENTRIES).")
+            }
+
+            // Build metadata-only index (no binary assets decompressed into RAM)
+            val entryByName = LinkedHashMap<String, ZipEntry>()
+            val enumeration = zip.entries()
+            while (enumeration.hasMoreElements()) {
+                val entry = enumeration.nextElement()
                 if (!entry.isDirectory && !entry.name.contains("..")) {
-                    entries[entry.name] = zis.readBytes()
-                }
-                zis.closeEntry()
-                entry = zis.nextEntry
-            }
-        }
-        if (entries.isEmpty()) error("ملف EPUB غير صالح أو فارغ.")
-
-        val containerBytes = entries["META-INF/container.xml"]
-            ?: error("ملف EPUB يفتقد META-INF/container.xml")
-        val opfPath = parseContainerOpfPath(containerBytes)
-            ?: entries.keys.firstOrNull { it.endsWith(".opf", ignoreCase = true) }
-            ?: error("تعذر العثور على ملف OPF داخل EPUB")
-
-        val opfDir = if ('/' in opfPath) opfPath.substringBeforeLast('/') + "/" else ""
-        val opfBytes = entries[opfPath] ?: error("تعذر قراءة $opfPath")
-
-        val opfMeta = parseOpf(opfBytes)
-        val bookTitle = opfMeta.title.ifBlank { rawFileName.substringBeforeLast('.') }
-        val bookAuthor = opfMeta.author.ifBlank { "كتاب إلكتروني (EPUB)" }
-
-        val sections = mutableListOf<ExtractedDocumentSection>()
-        opfMeta.spinePaths.forEachIndexed { idx, relHref ->
-            val fullPath = normalizeZipPath(opfDir + relHref)
-            val htmlBytes = entries[fullPath]
-                ?: entries.entries.firstOrNull { it.key.equals(fullPath, ignoreCase = true) }?.value
-            if (htmlBytes != null) {
-                val xhtml = decodeUtf8WithBom(htmlBytes)
-                val extracted = extractReadableTextFromXhtml(xhtml)
-                if (extracted.second.isNotBlank()) {
-                    val chTitle = extracted.first.ifBlank { "Chapter ${idx + 1}" }
-                    sections.add(ExtractedDocumentSection(chTitle, extracted.second))
+                    entryByName[entry.name] = entry
                 }
             }
+            if (entryByName.isEmpty()) error("ملف EPUB غير صالح أو فارغ.")
+
+            val containerEntry = findZipEntry(entryByName, "META-INF/container.xml")
+                ?: error("ملف EPUB يفتقد META-INF/container.xml")
+            val containerBytes = readZipEntryBounded(zip, containerEntry, MAX_EPUB_SPINE_ENTRY_BYTES)
+
+            val opfPath = parseContainerOpfPath(containerBytes)
+                ?: entryByName.keys.firstOrNull { it.endsWith(".opf", ignoreCase = true) }
+                ?: error("تعذر العثور على ملف OPF داخل EPUB")
+
+            val opfDir = if ('/' in opfPath) opfPath.substringBeforeLast('/') + "/" else ""
+            val opfEntry = findZipEntry(entryByName, opfPath)
+                ?: error("تعذر قراءة $opfPath")
+            val opfBytes = readZipEntryBounded(zip, opfEntry, MAX_EPUB_SPINE_ENTRY_BYTES)
+
+            val opfMeta = parseOpf(opfBytes)
+            val bookTitle = opfMeta.title.ifBlank { rawFileName.substringBeforeLast('.') }
+            val bookAuthor = opfMeta.author.ifBlank { "كتاب إلكتروني (EPUB)" }
+
+            val sections = mutableListOf<ExtractedDocumentSection>()
+            var totalExtractedChars = 0L
+
+            // Only read and decompress spine XHTML/HTML text entries one-by-one; skip images, fonts, audio, etc.
+            opfMeta.spinePaths.forEachIndexed { idx, relHref ->
+                val fullPath = normalizeZipPath(opfDir + relHref)
+                val spineEntry = findZipEntry(entryByName, fullPath)
+                if (spineEntry != null) {
+                    val htmlBytes = readZipEntryBounded(zip, spineEntry, MAX_EPUB_SPINE_ENTRY_BYTES)
+                    val xhtml = decodeUtf8WithBom(htmlBytes)
+                    val extracted = extractReadableTextFromXhtml(xhtml)
+                    if (extracted.second.isNotBlank()) {
+                        totalExtractedChars += extracted.second.length
+                        if (totalExtractedChars > MAX_EXTRACTED_TEXT_CHARS) {
+                            error("حجم النص المستخرج من EPUB يتجاوز الحد المسموح للمعالجة.")
+                        }
+                        val chTitle = extracted.first.ifBlank { "Chapter ${idx + 1}" }
+                        sections.add(ExtractedDocumentSection(chTitle, extracted.second))
+                    }
+                }
+            }
+
+            if (sections.isEmpty()) {
+                error("لم يتم العثور على فصول نصية صالحة داخل هذا الـ EPUB.")
+            }
+
+            val sample = sections.take(2).joinToString("\n") { it.body }.take(2500)
+            val detected = detectSourceLanguage(sample, opfMeta.language)
+
+            return ParsedSourceDocument(
+                fileName = rawFileName,
+                title = bookTitle,
+                author = bookAuthor,
+                sourceType = "EPUB",
+                detectedLanguage = detected,
+                sections = sections
+            )
         }
+    }
 
-        if (sections.isEmpty()) {
-            error("لم يتم العثور على فصول نصية صالحة داخل هذا الـ EPUB.")
+    private fun findZipEntry(entries: Map<String, ZipEntry>, targetPath: String): ZipEntry? {
+        return entries[targetPath]
+            ?: entries.entries.firstOrNull { it.key.equals(targetPath, ignoreCase = true) }?.value
+    }
+
+    private fun readZipEntryBounded(zip: ZipFile, entry: ZipEntry, maxBytes: Long): ByteArray {
+        if (entry.size > maxBytes) {
+            error("عنصر داخل EPUB (${entry.name}) يتجاوز الحد المسموح (${maxBytes / (1024 * 1024)} MB).")
         }
-
-        val sample = sections.take(2).joinToString("\n") { it.body }.take(2500)
-        val detected = detectSourceLanguage(sample, opfMeta.language)
-
-        return ParsedSourceDocument(
-            fileName = rawFileName,
-            title = bookTitle,
-            author = bookAuthor,
-            sourceType = "EPUB",
-            detectedLanguage = detected,
-            sections = sections
-        )
+        val baos = ByteArrayOutputStream()
+        var totalRead = 0L
+        zip.getInputStream(entry).use { input ->
+            val buffer = ByteArray(16 * 1024)
+            while (true) {
+                val read = input.read(buffer)
+                if (read <= 0) break
+                totalRead += read
+                if (totalRead > maxBytes) {
+                    error("الحجم المفكوك لعنصر (${entry.name}) يتجاوز الحد المسموح (${maxBytes / (1024 * 1024)} MB).")
+                }
+                baos.write(buffer, 0, read)
+            }
+        }
+        return baos.toByteArray()
     }
 
     private fun buildBookPayload(
@@ -185,9 +297,7 @@ class BookImporter(private val context: Context) {
             val processed = FrenchTextPreprocessor.splitAndPreprocess(section.body)
             if (processed.isNotEmpty()) {
                 val realChIndex = chapters.size
-                val chTitle = section.title.ifBlank {
-                    if (sourceLanguage == "en") "Section ${idx + 1}" else "Section ${idx + 1}"
-                }
+                val chTitle = section.title.ifBlank { "Section ${idx + 1}" }
                 chapters.add(
                     ChapterEntity(
                         bookId = bookId,
@@ -348,16 +458,27 @@ class BookImporter(private val context: Context) {
         return stack.joinToString("/")
     }
 
-    private fun resolveFileName(uri: Uri): String? {
-        return runCatching {
+    private fun resolveFileMeta(uri: Uri): Pair<String?, Long> {
+        val resolved = runCatching {
             context.contentResolver.query(uri, null, null, null, null)?.use { cursor ->
                 val nameIndex = cursor.getColumnIndex(OpenableColumns.DISPLAY_NAME)
-                if (cursor.moveToFirst() && nameIndex >= 0) cursor.getString(nameIndex) else null
+                val sizeIndex = cursor.getColumnIndex(OpenableColumns.SIZE)
+                if (cursor.moveToFirst()) {
+                    val name = if (nameIndex >= 0) cursor.getString(nameIndex) else null
+                    val size = if (sizeIndex >= 0 && !cursor.isNull(sizeIndex)) cursor.getLong(sizeIndex) else -1L
+                    name to size
+                } else null
             }
-        }.getOrNull() ?: uri.lastPathSegment
+        }.getOrNull()
+        return (resolved?.first ?: uri.lastPathSegment) to (resolved?.second ?: -1L)
     }
 
     companion object {
+        const val MAX_IMPORT_FILE_BYTES = 50L * 1024L * 1024L
+        const val MAX_EPUB_ENTRIES = 2000
+        const val MAX_EPUB_SPINE_ENTRY_BYTES = 5L * 1024L * 1024L
+        const val MAX_EXTRACTED_TEXT_CHARS = 15_000_000
+
         fun detectSourceLanguage(sampleText: String, opfLangHint: String?): SourceLanguage {
             val hint = opfLangHint.orEmpty().lowercase()
             if (hint.startsWith("en")) return SourceLanguage.ENGLISH

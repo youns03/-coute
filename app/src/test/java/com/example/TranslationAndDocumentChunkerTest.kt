@@ -11,6 +11,7 @@ import com.example.data.ParsedSourceDocument
 import com.example.data.TranslationJobEntity
 import com.example.translation.DocumentChunker
 import com.example.translation.ExportMode
+import com.example.translation.FileTranslationRepository
 import com.example.translation.SourceLanguage
 import com.example.translation.TranslationDirection
 import com.example.translation.TranslationModelCatalog
@@ -25,6 +26,9 @@ import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
 import java.io.File
+import java.io.FileOutputStream
+import java.util.zip.ZipEntry
+import java.util.zip.ZipOutputStream
 
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [36])
@@ -72,6 +76,74 @@ class TranslationAndDocumentChunkerTest {
     }
 
     @Test
+    fun `book importer parses streaming EPUB via ZipFile ignoring binary image assets`() = runTest {
+        val epubFile = File(context.cacheDir, "test_streaming.epub")
+        ZipOutputStream(FileOutputStream(epubFile)).use { zos ->
+            zos.putNextEntry(ZipEntry("META-INF/container.xml"))
+            zos.write(
+                """
+                <?xml version="1.0"?>
+                <container version="1.0" xmlns="urn:oasis:names:tc:opendocument:xmlns:container">
+                  <rootfiles>
+                    <rootfile full-path="OEBPS/content.opf" media-type="application/oebps-package+xml"/>
+                  </rootfiles>
+                </container>
+                """.trimIndent().toByteArray()
+            )
+            zos.closeEntry()
+
+            zos.putNextEntry(ZipEntry("OEBPS/content.opf"))
+            zos.write(
+                """
+                <?xml version="1.0" encoding="utf-8"?>
+                <package xmlns="http://www.idpf.org/2007/opf" version="3.0">
+                  <metadata xmlns:dc="http://purl.org/dc/elements/1.1/">
+                    <dc:title>Le Jardin Secret</dc:title>
+                    <dc:creator>Auteur Test</dc:creator>
+                    <dc:language>fr</dc:language>
+                  </metadata>
+                  <manifest>
+                    <item id="ch1" href="ch1.xhtml" media-type="application/xhtml+xml"/>
+                    <item id="cover" href="images/cover.png" media-type="image/png"/>
+                  </manifest>
+                  <spine>
+                    <itemref idref="ch1"/>
+                  </spine>
+                </package>
+                """.trimIndent().toByteArray()
+            )
+            zos.closeEntry()
+
+            zos.putNextEntry(ZipEntry("OEBPS/ch1.xhtml"))
+            zos.write(
+                """
+                <html xmlns="http://www.w3.org/1999/xhtml">
+                  <body>
+                    <h1>Chapitre Un</h1>
+                    <p>Bonjour tout le monde dans le jardin secret.</p>
+                  </body>
+                </html>
+                """.trimIndent().toByteArray()
+            )
+            zos.closeEntry()
+
+            zos.putNextEntry(ZipEntry("OEBPS/images/cover.png"))
+            zos.write(ByteArray(4096) { 0x7F })
+            zos.closeEntry()
+        }
+
+        val importer = BookImporter(context)
+        val parsed = importer.parseDocumentFromUri(Uri.fromFile(epubFile)).getOrThrow()
+        assertEquals("EPUB", parsed.sourceType)
+        assertEquals("Le Jardin Secret", parsed.title)
+        assertEquals("Auteur Test", parsed.author)
+        assertEquals(SourceLanguage.FRENCH, parsed.detectedLanguage)
+        assertEquals(1, parsed.sections.size)
+        assertTrue(parsed.sections[0].body.contains("Bonjour tout le monde"))
+        epubFile.delete()
+    }
+
+    @Test
     fun `document chunker preserves headings splits oversized paragraphs and exports cleanly`() = runTest {
         val longParagraph = buildString {
             repeat(18) { i ->
@@ -108,7 +180,7 @@ class TranslationAndDocumentChunkerTest {
             title = doc.title,
             direction = TranslationDirection.FR_TO_AR,
             chunks = simulatedTranslated,
-            mode = ExportMode.ARABIC_ONLY
+            mode = ExportMode.ARABIC_COMPLETED_ONLY
         )
         assertTrue(arabicOnly.contains("## ترجمة: 0"))
         assertFalse(arabicOnly.contains("Premier paragraphe court."))
@@ -117,7 +189,7 @@ class TranslationAndDocumentChunkerTest {
             title = doc.title,
             direction = TranslationDirection.FR_TO_AR,
             chunks = simulatedTranslated,
-            mode = ExportMode.BILINGUAL
+            mode = ExportMode.BILINGUAL_COMPLETED_ONLY
         )
         assertTrue(bilingual.contains("Premier paragraphe court."))
         assertTrue(bilingual.contains("← ترجمة: 1"))
@@ -130,8 +202,83 @@ class TranslationAndDocumentChunkerTest {
     }
 
     @Test
-    fun `translation job dao persists partial chunks supports pause reconcile and resume`() = runTest {
+    fun `document chunker strictly enforces maxCharsPerChunk even without punctuation`() {
+        val noPunctuationWords = (1..120).joinToString(" ") { "mot$it" }
+        val unbrokenToken = "x".repeat(260)
+        val doc = ParsedSourceDocument(
+            fileName = "unpunctuated.txt",
+            title = "Unpunctuated",
+            author = "TXT",
+            sourceType = "TXT",
+            detectedLanguage = SourceLanguage.FRENCH,
+            sections = listOf(
+                ExtractedDocumentSection("", "$noPunctuationWords\n\n$unbrokenToken")
+            )
+        )
+
+        val chunks = DocumentChunker.buildChunks("job_strict", doc, maxCharsPerChunk = 120)
+        assertTrue(chunks.size >= 8)
+        chunks.forEach { chunk ->
+            assertTrue(
+                "Chunk exceeded 120 chars: ${chunk.originalText.length}",
+                chunk.originalText.length <= 120
+            )
+        }
+    }
+
+    @Test
+    fun `partial export completed-only omits placeholders while draft includes placeholders`() {
+        val doc = ParsedSourceDocument(
+            fileName = "partial.txt",
+            title = "Partial Book",
+            author = "TXT",
+            sourceType = "TXT",
+            detectedLanguage = SourceLanguage.FRENCH,
+            sections = listOf(
+                ExtractedDocumentSection("", "Première partie.\n\nDeuxième partie.\n\nTroisième partie en attente.")
+            )
+        )
+        val base = DocumentChunker.buildChunks("job_partial", doc)
+        val partialChunks = listOf(
+            base[0].copy(translatedText = "الجزء الأول.", isCompleted = true),
+            base[1].copy(translatedText = "الجزء الثاني.", isCompleted = true),
+            base[2].copy(translatedText = null, isCompleted = false)
+        )
+
+        val completedOnlyAr = DocumentChunker.formatForExport(
+            title = doc.title,
+            direction = TranslationDirection.FR_TO_AR,
+            chunks = partialChunks,
+            mode = ExportMode.ARABIC_COMPLETED_ONLY
+        )
+        assertTrue(completedOnlyAr.contains("الجزء الأول."))
+        assertTrue(completedOnlyAr.contains("الجزء الثاني."))
+        assertFalse(completedOnlyAr.contains("[لم يُترجم هذا الجزء بعد]"))
+
+        val completedOnlyBi = DocumentChunker.formatForExport(
+            title = doc.title,
+            direction = TranslationDirection.FR_TO_AR,
+            chunks = partialChunks,
+            mode = ExportMode.BILINGUAL_COMPLETED_ONLY
+        )
+        assertFalse(completedOnlyBi.contains("Troisième partie en attente."))
+        assertFalse(completedOnlyBi.contains("[لم يُترجم هذا الجزء بعد]"))
+
+        val draft = DocumentChunker.formatForExport(
+            title = doc.title,
+            direction = TranslationDirection.FR_TO_AR,
+            chunks = partialChunks,
+            mode = ExportMode.BILINGUAL_WITH_PLACEHOLDERS
+        )
+        assertTrue(draft.contains("Troisième partie en attente."))
+        assertTrue(draft.contains("[لم يُترجم هذا الجزء بعد]"))
+    }
+
+    @Test
+    fun `translation job dao persists partial chunks and guards language change until reset`() = runTest {
         val dao = db.translationJobDao()
+        val repo = FileTranslationRepository(context, dao, BookImporter(context))
+
         val job = TranslationJobEntity(
             id = "job_resume_1",
             title = "Long Article",
@@ -166,10 +313,17 @@ class TranslationAndDocumentChunkerTest {
         dao.resetRunningJobsToPaused()
         assertEquals("PAUSED", dao.getJob(job.id)?.status)
 
-        // Only 2 pending chunks remain
-        val pending = dao.getPendingChunks(job.id)
-        assertEquals(2, pending.size)
-        assertEquals("Paragraph two.", pending[0].originalText)
+        // Direct non-reset language switch is blocked when chunks are already translated
+        assertFalse(repo.updateJobSourceLanguageIfEmpty(job.id, SourceLanguage.FRENCH))
+        assertEquals("en", dao.getJob(job.id)?.sourceLanguage)
+
+        // Full reset clears completed chunks and switches sourceLanguage cleanly
+        repo.resetAndChangeJobSourceLanguage(job.id, SourceLanguage.FRENCH)
+        val resetJob = dao.getJob(job.id)!!
+        assertEquals("fr", resetJob.sourceLanguage)
+        assertEquals(0, resetJob.completedChunks)
+        assertEquals("PENDING", resetJob.status)
+        assertEquals(3, dao.getPendingChunks(job.id).size)
     }
 
     @Test
