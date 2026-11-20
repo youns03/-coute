@@ -1,0 +1,6 @@
+{
+  "name": "Écoute",
+  "description": "Offline French reading and listening studio for Arabic speakers with local neural TTS (Kokoro-82M LiteRT and Piper via Sherpa-ONNX), synchronized sentence highlighting, TXT/EPUB reader, and offline French-Arabic translation.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
