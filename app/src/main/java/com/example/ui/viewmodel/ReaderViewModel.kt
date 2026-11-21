@@ -150,6 +150,10 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
         val bookId = _bookId.value ?: return
         _chapterIndex.value = chapterIndex
         _revealedSentenceIds.value = emptySet()
+        val pState = playbackController.state.value
+        if (pState.bookId == bookId && pState.chapterIndex != chapterIndex) {
+            playbackController.stop()
+        }
         viewModelScope.launch {
             libraryRepo.updateReadingPosition(bookId, chapterIndex, 0)
         }

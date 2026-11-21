@@ -42,20 +42,50 @@ data class EngineRuntimeState(
     val lastError: String? = null
 )
 
-class TtsEngineManager(
+class TtsEngineManager internal constructor(
     private val context: Context,
-    private val storageManager: ModelStorageManager
+    private val storageManager: ModelStorageManager,
+    private val engineFactory: ((ModelSpec) -> TtsEngine)? = null,
+    private val packageVerifier: ((ModelSpec) -> Boolean)? = null
 ) {
+    constructor(context: Context, storageManager: ModelStorageManager) : this(
+        context = context,
+        storageManager = storageManager,
+        engineFactory = null,
+        packageVerifier = null
+    )
+
     private val mutex = Mutex()
     private var activeEngine: TtsEngine? = null
 
     private val _runtimeState = MutableStateFlow(EngineRuntimeState())
     val runtimeState: StateFlow<EngineRuntimeState> = _runtimeState.asStateFlow()
 
+    private fun verifyPackageReady(spec: ModelSpec): Boolean {
+        return packageVerifier?.invoke(spec)
+            ?: storageManager.verifyInstalledPackage(spec, verifyIntegrity = true)
+    }
+
+    private fun createEngine(spec: ModelSpec): TtsEngine {
+        return engineFactory?.invoke(spec) ?: when (spec.engineType) {
+            EngineType.KOKORO_LITERT -> KokoroLiteRtTtsEngine(context, storageManager)
+            EngineType.PIPER_SHERPA_ONNX -> PiperSherpaTtsEngine(storageManager)
+        }
+    }
+
+    private fun releaseActiveLocked(errorMessage: String? = null) {
+        activeEngine?.let { prev ->
+            runCatching { prev.cancel() }
+            runCatching { prev.release() }
+        }
+        activeEngine = null
+        _runtimeState.value = EngineRuntimeState(lastError = errorMessage)
+    }
+
     /**
      * Resolves an installed, device-compatible model supporting [languageCode].
-     * Prefers [preferredModelId]; if it only supports another language (e.g. Piper on an English book),
-     * automatically falls back to another installed compatible model that supports [languageCode] or fails clearly.
+     * Prefers [preferredModelId]; if it only supports another language (e.g. Piper on an English book)
+     * or temporarily lacks free RAM, automatically selects another compatible ready model or fails clearly.
      */
     fun resolveModelForLanguage(
         preferredModelId: String,
@@ -66,9 +96,9 @@ class TtsEngineManager(
         val preferred = ModelCatalog.findById(preferredModelId)
 
         fun isReadyAndCompatible(spec: ModelSpec): Boolean {
-            if (!MemoryDiagnostics.evaluateModelCompatibility(spec, hw).isSupported) return false
-            if (!storageManager.verifyInstalledPackage(spec, verifyIntegrity = true)) return false
-            if (spec.requiresEspeakData &&
+            if (!MemoryDiagnostics.evaluateRuntimeMemoryForLoad(spec, hw).isSupported) return false
+            if (!verifyPackageReady(spec)) return false
+            if (spec.requiresEspeakData && packageVerifier == null &&
                 !storageManager.verifyInstalledPackage(ModelCatalog.espeakNgDataSpec, verifyIntegrity = true)
             ) {
                 return false
@@ -97,8 +127,8 @@ class TtsEngineManager(
                     )
                 )
             }
-            preferred != null && !MemoryDiagnostics.evaluateModelCompatibility(preferred, hw).isSupported -> {
-                val report = MemoryDiagnostics.evaluateModelCompatibility(preferred, hw)
+            preferred != null && !MemoryDiagnostics.evaluateRuntimeMemoryForLoad(preferred, hw).isSupported -> {
+                val report = MemoryDiagnostics.evaluateRuntimeMemoryForLoad(preferred, hw)
                 Result.failure(IllegalStateException(report.detailsAr ?: report.summaryAr))
             }
             else -> {
@@ -131,17 +161,16 @@ class TtsEngineManager(
         modelId: String,
         acceleratorMode: AcceleratorMode
     ): Result<TtsEngine> {
-        // Strictly release any previously loaded model so two voice models never occupy RAM together
-        activeEngine?.let { prev ->
-            prev.cancel()
-            prev.release()
-        }
-        activeEngine = null
+        // Strictly release any previously loaded model so two voice models never occupy RAM together,
+        // and immediately clear runtimeState so UI never displays a released model as still active.
+        releaseActiveLocked()
 
         val spec = ModelCatalog.findById(modelId)
-            ?: return Result.failure(IllegalArgumentException("نموذج غير معروف: $modelId"))
+            ?: return Result.failure(IllegalArgumentException("نموذج غير معروف: $modelId").also {
+                _runtimeState.value = EngineRuntimeState(lastError = it.message)
+            })
 
-        val compat = MemoryDiagnostics.evaluateModelCompatibility(spec, context)
+        val compat = MemoryDiagnostics.evaluateRuntimeMemoryForLoad(spec, context)
         if (!compat.isSupported) {
             val msg = compat.detailsAr ?: compat.summaryAr
             _runtimeState.value = EngineRuntimeState(lastError = msg)
@@ -149,12 +178,12 @@ class TtsEngineManager(
         }
 
         val modelDir = storageManager.getInstalledModelDir(modelId)
-        if (!storageManager.verifyInstalledPackage(spec, verifyIntegrity = true)) {
+        if (!verifyPackageReady(spec)) {
             val msg = "النموذج ${spec.displayName} غير مثبّت أو فشل فحص سلامة الملفات (SHA-256)."
             _runtimeState.value = EngineRuntimeState(lastError = msg)
             return Result.failure(IllegalStateException(msg))
         }
-        if (spec.requiresEspeakData &&
+        if (spec.requiresEspeakData && packageVerifier == null &&
             !storageManager.verifyInstalledPackage(ModelCatalog.espeakNgDataSpec, verifyIntegrity = true)
         ) {
             val msg = "بيانات eSpeak-ng المرافقة مفقودة أو تالفة. أعد تنزيل النموذج من شاشة النماذج."
@@ -169,40 +198,53 @@ class TtsEngineManager(
             lastError = null
         )
 
-        val engine: TtsEngine = when (spec.engineType) {
-            EngineType.KOKORO_LITERT -> KokoroLiteRtTtsEngine(context, storageManager)
-            EngineType.PIPER_SHERPA_ONNX -> PiperSherpaTtsEngine(storageManager)
-        }
+        val engine = createEngine(spec)
 
-        val initResult = engine.initialize(spec, modelDir, acceleratorMode)
-        return if (initResult.isSuccess) {
-            activeEngine = engine
-            val ramAfter = MemoryDiagnostics.getProcessPssMb(context)
-            val loadMs = initResult.getOrDefault(0L)
+        return try {
+            val initResult = engine.initialize(spec, modelDir, acceleratorMode)
+            if (initResult.isSuccess) {
+                activeEngine = engine
+                val ramAfter = MemoryDiagnostics.getProcessPssMb(context)
+                val loadMs = initResult.getOrDefault(0L)
+                _runtimeState.value = EngineRuntimeState(
+                    loadedModelId = spec.id,
+                    loadedModelName = spec.displayName,
+                    engineType = spec.engineType,
+                    acceleratorLabel = engine.activeAccelerator,
+                    fellBackToCpu = engine.fellBackToCpu,
+                    fallbackReason = engine.fallbackReason,
+                    lastLoadTimeMs = loadMs,
+                    ramBeforeLoadMb = ramBefore,
+                    ramAfterLoadMb = ramAfter,
+                    ramPeakSynthesisMb = ramAfter,
+                    isLoading = false,
+                    lastError = null
+                )
+                Result.success(engine)
+            } else {
+                runCatching { engine.release() }
+                val cause = initResult.exceptionOrNull()
+                val err = if (cause is OutOfMemoryError || cause?.cause is OutOfMemoryError) {
+                    "نفدت الذاكرة المتاحة أثناء تحميل ${spec.displayName}. أغلق التطبيقات الخلفية أو استخدم Piper الخفيف."
+                } else {
+                    cause?.message ?: "فشل تحميل النموذج"
+                }
+                _runtimeState.value = EngineRuntimeState(
+                    isLoading = false,
+                    ramBeforeLoadMb = ramBefore,
+                    lastError = err
+                )
+                Result.failure(cause ?: IllegalStateException(err))
+            }
+        } catch (oom: OutOfMemoryError) {
+            runCatching { engine.release() }
+            val msg = "نفدت الذاكرة المتاحة (OOM) أثناء تحميل ${spec.displayName}. أغلق التطبيقات الخلفية أو بدّل إلى Piper."
             _runtimeState.value = EngineRuntimeState(
-                loadedModelId = spec.id,
-                loadedModelName = spec.displayName,
-                engineType = spec.engineType,
-                acceleratorLabel = engine.activeAccelerator,
-                fellBackToCpu = engine.fellBackToCpu,
-                fallbackReason = engine.fallbackReason,
-                lastLoadTimeMs = loadMs,
-                ramBeforeLoadMb = ramBefore,
-                ramAfterLoadMb = ramAfter,
-                ramPeakSynthesisMb = ramAfter,
-                isLoading = false,
-                lastError = null
-            )
-            Result.success(engine)
-        } else {
-            engine.release()
-            val err = initResult.exceptionOrNull()?.message ?: "فشل تحميل النموذج"
-            _runtimeState.value = EngineRuntimeState(
                 isLoading = false,
                 ramBeforeLoadMb = ramBefore,
-                lastError = err
+                lastError = msg
             )
-            Result.failure(initResult.exceptionOrNull() ?: IllegalStateException(err))
+            Result.failure(IllegalStateException(msg, oom))
         }
     }
 
@@ -226,16 +268,23 @@ class TtsEngineManager(
         val locale = spec?.localeFor(languageCode) ?: "fr-FR"
         val resolvedVoice = voiceId.ifBlank { spec?.defaultVoiceFor(languageCode) ?: "ff_siwis" }
 
-        val res = engine.synthesize(spokenText, resolvedVoice, speed, locale)
-        val peakRam = MemoryDiagnostics.getProcessPssMb(context)
-        val synth = res.getOrNull()
-        _runtimeState.value = _runtimeState.value.copy(
-            acceleratorLabel = synth?.usedAccelerator ?: engine.activeAccelerator,
-            fellBackToCpu = synth?.fellBackToCpu ?: engine.fellBackToCpu,
-            fallbackReason = synth?.fallbackReason ?: engine.fallbackReason,
-            ramPeakSynthesisMb = maxOf(_runtimeState.value.ramPeakSynthesisMb, peakRam)
-        )
-        res
+        return@withLock try {
+            val res = engine.synthesize(spokenText, resolvedVoice, speed, locale)
+            val peakRam = MemoryDiagnostics.getProcessPssMb(context)
+            val synth = res.getOrNull()
+            _runtimeState.value = _runtimeState.value.copy(
+                acceleratorLabel = synth?.usedAccelerator ?: engine.activeAccelerator,
+                fellBackToCpu = synth?.fellBackToCpu ?: engine.fellBackToCpu,
+                fallbackReason = synth?.fallbackReason ?: engine.fallbackReason,
+                ramPeakSynthesisMb = maxOf(_runtimeState.value.ramPeakSynthesisMb, peakRam),
+                lastError = res.exceptionOrNull()?.message
+            )
+            res
+        } catch (oom: OutOfMemoryError) {
+            val msg = "نفدت الذاكرة المتاحة أثناء النطق. تم تفريغ المحرك لحماية التطبيق."
+            releaseActiveLocked(errorMessage = msg)
+            Result.failure(IllegalStateException(msg, oom))
+        }
     }
 
     /**
@@ -260,15 +309,30 @@ class TtsEngineManager(
             val locale = spec?.localeFor(languageCode) ?: "fr-FR"
             val resolvedVoice = voiceId.ifBlank { spec?.defaultVoiceFor(languageCode) ?: "ff_siwis" }
 
-            engine.synthesizeStream(spokenText, resolvedVoice, speed, locale).collect { chunk ->
-                send(chunk)
-                val peakRam = MemoryDiagnostics.getProcessPssMb(context)
+            try {
+                engine.synthesizeStream(spokenText, resolvedVoice, speed, locale).collect { chunk ->
+                    send(chunk)
+                    val peakRam = MemoryDiagnostics.getProcessPssMb(context)
+                    _runtimeState.value = _runtimeState.value.copy(
+                        acceleratorLabel = engine.activeAccelerator,
+                        fellBackToCpu = engine.fellBackToCpu,
+                        fallbackReason = engine.fallbackReason,
+                        ramPeakSynthesisMb = maxOf(_runtimeState.value.ramPeakSynthesisMb, peakRam)
+                    )
+                }
+            } catch (oom: OutOfMemoryError) {
+                val msg = "نفدت الذاكرة المتاحة أثناء البث الصوتي. تم تفريغ المحرك لحماية التطبيق."
+                releaseActiveLocked(errorMessage = msg)
+                throw IllegalStateException(msg, oom)
+            } catch (t: Throwable) {
+                if (t is kotlinx.coroutines.CancellationException) throw t
                 _runtimeState.value = _runtimeState.value.copy(
                     acceleratorLabel = engine.activeAccelerator,
                     fellBackToCpu = engine.fellBackToCpu,
                     fallbackReason = engine.fallbackReason,
-                    ramPeakSynthesisMb = maxOf(_runtimeState.value.ramPeakSynthesisMb, peakRam)
+                    lastError = t.message ?: "تعذر بث الجملة صوتياً"
                 )
+                throw t
             }
         }
     }.flowOn(Dispatchers.IO)
@@ -280,20 +344,15 @@ class TtsEngineManager(
     suspend fun verifyModelLoadable(spec: ModelSpec, extractedDir: File): Result<Unit> = withContext(Dispatchers.IO) {
         mutex.withLock {
             runCatching {
-                val compat = MemoryDiagnostics.evaluateModelCompatibility(spec, context)
+                val compat = MemoryDiagnostics.evaluateRuntimeMemoryForLoad(spec, context)
                 if (!compat.isSupported) {
                     error(compat.detailsAr ?: compat.summaryAr)
                 }
 
-                val previous = activeEngine
-                previous?.cancel()
-                previous?.release()
-                activeEngine = null
+                // Evict any currently loaded model BEFORE allocating verification buffers and keep runtimeState accurate
+                releaseActiveLocked()
 
-                val testEngine: TtsEngine = when (spec.engineType) {
-                    EngineType.KOKORO_LITERT -> KokoroLiteRtTtsEngine(context, storageManager)
-                    EngineType.PIPER_SHERPA_ONNX -> PiperSherpaTtsEngine(storageManager)
-                }
+                val testEngine = createEngine(spec)
                 try {
                     val initRes = testEngine.initialize(spec, extractedDir, AcceleratorMode.AUTO_GPU_WITH_CPU_FALLBACK)
                     initRes.getOrThrow()
@@ -307,8 +366,19 @@ class TtsEngineManager(
                     if (audio.samples.isEmpty()) {
                         error("النموذج لم ينتج أي عينات صوتية في اختبار التحقق.")
                     }
+                } catch (oom: OutOfMemoryError) {
+                    val msg = "نفدت الذاكرة أثناء اختبار تحميل ${spec.displayName}. أغلق التطبيقات الخلفية أو استخدم Piper."
+                    _runtimeState.value = EngineRuntimeState(lastError = msg)
+                    throw IllegalStateException(msg, oom)
                 } finally {
-                    testEngine.release()
+                    runCatching { testEngine.cancel() }
+                    runCatching { testEngine.release() }
+                }
+            }.onFailure { err ->
+                if (_runtimeState.value.loadedModelId != null || _runtimeState.value.lastError.isNullOrBlank()) {
+                    _runtimeState.value = EngineRuntimeState(
+                        lastError = err.message ?: "فشل اختبار تحميل ${spec.displayName}."
+                    )
                 }
             }
         }
@@ -336,17 +406,23 @@ class TtsEngineManager(
             val voice = spec.defaultVoiceFor("fr")
             val locale = spec.localeFor("fr")
 
-            for (s in sentences) {
-                var emittedFirst = false
-                engine.synthesizeStream(s.spokenText, voice, speedFactor, locale).collect { chunk ->
-                    if (!emittedFirst && firstChunkTimeMs < 0L) {
-                        firstChunkTimeMs = SystemClock.elapsedRealtime() - totalStartMs
-                        emittedFirst = true
+            try {
+                for (s in sentences) {
+                    var emittedFirst = false
+                    engine.synthesizeStream(s.spokenText, voice, speedFactor, locale).collect { chunk ->
+                        if (!emittedFirst && firstChunkTimeMs < 0L) {
+                            firstChunkTimeMs = SystemClock.elapsedRealtime() - totalStartMs
+                            emittedFirst = true
+                        }
+                        sampleRate = chunk.sampleRateHz
+                        chunk.samples.forEach { allSamples.add(it) }
+                        peakRam = maxOf(peakRam, MemoryDiagnostics.getProcessPssMb(context))
                     }
-                    sampleRate = chunk.sampleRateHz
-                    chunk.samples.forEach { allSamples.add(it) }
-                    peakRam = maxOf(peakRam, MemoryDiagnostics.getProcessPssMb(context))
                 }
+            } catch (oom: OutOfMemoryError) {
+                val msg = "نفدت الذاكرة المتاحة أثناء الاختبار المرجعي لنموذج ${spec.displayName}."
+                releaseActiveLocked(errorMessage = msg)
+                throw IllegalStateException(msg, oom)
             }
             val totalSynthMs = (SystemClock.elapsedRealtime() - totalStartMs).coerceAtLeast(1L)
             val pcmArray = allSamples.toFloatArray()
@@ -400,10 +476,7 @@ class TtsEngineManager(
 
     suspend fun releaseActiveEngine() {
         mutex.withLock {
-            activeEngine?.cancel()
-            activeEngine?.release()
-            activeEngine = null
-            _runtimeState.value = EngineRuntimeState()
+            releaseActiveLocked()
         }
     }
 }

@@ -21,6 +21,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -49,7 +50,7 @@ class PlayerAndLabViewModel(application: Application) : AndroidViewModel(applica
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), UserSettings())
 
     val installedModels: StateFlow<List<ModelUiEntry>> = app.modelRepository
-        .observeModels(kotlinx.coroutines.flow.flowOf(""))
+        .observeModels(settingsRepo.settingsFlow.map { it.activeModelId })
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
     val benchmarkReports: StateFlow<List<BenchmarkReportEntity>> = benchmarkDao.observeAll()

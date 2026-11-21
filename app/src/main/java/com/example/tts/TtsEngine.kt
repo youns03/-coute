@@ -60,6 +60,11 @@ data class DeviceHardwareInfo(
 )
 
 object MemoryDiagnostics {
+    private const val MIN_SAFE_AVAILABLE_RAM_KOKORO_MB = 360L
+    private const val WARN_AVAILABLE_RAM_KOKORO_MB = 700L
+    private const val MIN_SAFE_AVAILABLE_RAM_PIPER_MB = 140L
+    private const val WARN_AVAILABLE_RAM_PIPER_MB = 280L
+
     fun getProcessPssMb(context: Context): Float {
         val am = context.getSystemService(Context.ACTIVITY_SERVICE) as? ActivityManager
         val pid = android.os.Process.myPid()
@@ -124,7 +129,7 @@ object MemoryDiagnostics {
                 detailsAr = "يمكن تشغيل النموذج، لكن يُنصح بإغلاق التطبيقات الأخرى أو التبديل إلى Piper عند البطء."
             )
         }
-        if (hw.availableRamMb in 1L..700L && spec.engineType == EngineType.KOKORO_LITERT) {
+        if (hw.availableRamMb in 1L..WARN_AVAILABLE_RAM_KOKORO_MB && spec.engineType == EngineType.KOKORO_LITERT) {
             return ModelCompatibilityReport(
                 status = ModelCompatibilityStatus.WARNING_LOW_RAM,
                 isSupported = true,
@@ -137,5 +142,54 @@ object MemoryDiagnostics {
             isSupported = true,
             summaryAr = "متوافق مع جهازك (${hw.primaryAbi} • API ${hw.sdkInt})"
         )
+    }
+
+    /**
+     * Checks live available RAM right before allocating native engine buffers so devices with
+     * enough total RAM but temporary background memory pressure fail cleanly instead of OOM/LMKD kills.
+     * Devices reporting availableRamMb == 0L (unpopulated sensor / test host) are never false-blocked.
+     */
+    fun evaluateRuntimeMemoryForLoad(spec: ModelSpec, context: Context): ModelCompatibilityReport =
+        evaluateRuntimeMemoryForLoad(spec, getDeviceHardwareInfo(context))
+
+    fun evaluateRuntimeMemoryForLoad(spec: ModelSpec, hw: DeviceHardwareInfo): ModelCompatibilityReport {
+        val staticReport = evaluateModelCompatibility(spec, hw)
+        if (!staticReport.isSupported) return staticReport
+
+        val avail = hw.availableRamMb
+        if (avail <= 0L) return staticReport
+
+        return when (spec.engineType) {
+            EngineType.KOKORO_LITERT -> when {
+                avail < MIN_SAFE_AVAILABLE_RAM_KOKORO_MB -> ModelCompatibilityReport(
+                    status = ModelCompatibilityStatus.INCOMPATIBLE_RAM,
+                    isSupported = false,
+                    summaryAr = "الذاكرة الحرة المتاحة حالياً منخفضة جداً (${avail} MB)",
+                    detailsAr = "يتطلب تحميل ${spec.displayName} نحو ${MIN_SAFE_AVAILABLE_RAM_KOKORO_MB} MB حرة على الأقل لتجنب الانهيار (${avail} MB متاحة). أغلق التطبيقات الخلفية أو بدّل إلى Piper."
+                )
+                avail <= WARN_AVAILABLE_RAM_KOKORO_MB -> ModelCompatibilityReport(
+                    status = ModelCompatibilityStatus.WARNING_LOW_RAM,
+                    isSupported = true,
+                    summaryAr = "تحذير: الذاكرة الحرة المتاحة محدودة (${avail} MB)",
+                    detailsAr = "سيُجرى التحميل مع مراقبة الذاكرة؛ إذا تعذّر التخصيص أغلق التطبيقات أو بدّل إلى Piper."
+                )
+                else -> staticReport
+            }
+            EngineType.PIPER_SHERPA_ONNX -> when {
+                avail < MIN_SAFE_AVAILABLE_RAM_PIPER_MB -> ModelCompatibilityReport(
+                    status = ModelCompatibilityStatus.INCOMPATIBLE_RAM,
+                    isSupported = false,
+                    summaryAr = "الذاكرة الحرة المتاحة منخفضة جداً (${avail} MB)",
+                    detailsAr = "الذاكرة الحرة غير كافية حالياً لتحميل ${spec.displayName} (${avail} MB متاحة). أغلق التطبيقات الخلفية ثم أعد المحاولة."
+                )
+                avail <= WARN_AVAILABLE_RAM_PIPER_MB -> ModelCompatibilityReport(
+                    status = ModelCompatibilityStatus.WARNING_LOW_RAM,
+                    isSupported = true,
+                    summaryAr = "الذاكرة الحرة منخفضة نسبياً (${avail} MB)",
+                    detailsAr = "يمكن تشغيل Piper الخفيف، ويُستحسن إغلاق التطبيقات غير المستخدمة."
+                )
+                else -> staticReport
+            }
+        }
     }
 }

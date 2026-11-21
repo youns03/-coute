@@ -248,7 +248,10 @@ class KokoroLiteRtTtsEngine internal constructor(
 
     private fun resolveCpuFallbackModelFile(primaryDir: File): Pair<File, Boolean> {
         val cpuSpec = ModelCatalog.findById("kokoro-82m-cpu-fp16")
-        if (cpuSpec != null && storageManager.verifyInstalledPackage(cpuSpec)) {
+        if (cpuSpec != null &&
+            MemoryDiagnostics.evaluateRuntimeMemoryForLoad(cpuSpec, context).isSupported &&
+            storageManager.verifyInstalledPackage(cpuSpec, verifyIntegrity = true)
+        ) {
             val cpuFile = storageManager.resolveKokoroModelFile(storageManager.getInstalledModelDir(cpuSpec.id))
             if (cpuFile != null) return cpuFile to true
         }
@@ -269,7 +272,12 @@ class KokoroLiteRtTtsEngine internal constructor(
         session = null
         val (cpuFile, isDedicatedCpuModel) = resolveCpuFallbackModelFile(primaryDir)
         val clampedRate = speakingRate.coerceIn(0.5f, 2.0f)
-        session = createWithDelegate(cpuFile, cacheDir, Delegate.CPU, voiceId, locale, clampedRate)
+        session = try {
+            createWithDelegate(cpuFile, cacheDir, Delegate.CPU, voiceId, locale, clampedRate)
+        } catch (oom: OutOfMemoryError) {
+            activeAccelerator = "ERROR (OOM)"
+            throw IllegalStateException("نفدت الذاكرة المتاحة أثناء التحويل الاحتياطي إلى CPU لنموذج Kokoro.", oom)
+        }
         activeModelFile = cpuFile
         activeDelegate = Delegate.CPU
         configuredVoiceId = voiceId

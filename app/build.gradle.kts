@@ -53,8 +53,9 @@ android {
 
   buildTypes {
     release {
-      isCrunchPngs = false
-      isMinifyEnabled = false
+      isCrunchPngs = true
+      isMinifyEnabled = true
+      isShrinkResources = true
       proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
       // Do not remove or modify this signingConfig assignment. It is necessary for Android apps in
       // AI Studio.
@@ -64,6 +65,26 @@ android {
       // Do not remove or modify this signingConfig assignment. It is necessary for Android apps in
       // AI Studio.
       signingConfig = signingConfigs.getByName("debugConfig")
+    }
+  }
+  val splitApkByAbi = project.findProperty("splitApkByAbi")?.toString()?.toBoolean() == true
+  val compressReleaseJni = project.findProperty("compressReleaseJni")?.toString()?.toBoolean() ?: true
+  if (splitApkByAbi) {
+    splits {
+      abi {
+        isEnable = true
+        reset()
+        include("arm64-v8a", "armeabi-v7a", "x86_64", "x86")
+        isUniversalApk = false
+      }
+    }
+  }
+  if (compressReleaseJni) {
+    packaging {
+      jniLibs {
+        // Compress large C++ inference shared libraries inside release APK; AAB serves per-ABI slices on Play
+        useLegacyPackaging = true
+      }
     }
   }
   compileOptions {

@@ -458,13 +458,17 @@ class BookImporter internal constructor(
         val cleaned = body
             .replace(Regex("""<script[^>]*>.*?</script>""", setOf(RegexOption.IGNORE_CASE, RegexOption.DOT_MATCHES_ALL)), " ")
             .replace(Regex("""<style[^>]*>.*?</style>""", setOf(RegexOption.IGNORE_CASE, RegexOption.DOT_MATCHES_ALL)), " ")
+            .replace(Regex("""[\r\n]+"""), " ")
             .replace(Regex("""<br\s*/?>""", RegexOption.IGNORE_CASE), "\n")
             .replace(Regex("""</(p|div|h[1-6]|li|blockquote)>""", RegexOption.IGNORE_CASE), "\n\n")
             .replace(Regex("""<[^>]+>"""), "")
 
-        val decoded = decodeHtmlText(cleaned)
-            .lines()
-            .map { it.trim() }
+        val decoded = cleaned
+            .split('\n')
+            .map { line ->
+                val trimmed = line.trim()
+                if (trimmed.isEmpty()) "" else decodeHtmlText(trimmed).trim()
+            }
             .joinToString("\n")
             .replace(Regex("""\n{3,}"""), "\n\n")
             .trim()

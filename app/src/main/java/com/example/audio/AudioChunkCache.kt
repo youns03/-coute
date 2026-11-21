@@ -10,6 +10,7 @@ import java.io.FileInputStream
 import java.io.FileOutputStream
 import java.security.MessageDigest
 import java.util.Locale
+import java.util.concurrent.atomic.AtomicLong
 
 data class CachedAudioPayload(
     val samples: FloatArray,
@@ -19,7 +20,8 @@ data class CachedAudioPayload(
 
 /**
  * Collision-resistant SHA-256 content-addressed disk cache for synthesized PCM sentences,
- * with strict header & file-length validation prior to allocating float arrays.
+ * with striped per-key synchronization, atomic temp-file writes, strict header/EOF validation
+ * prior to allocating float arrays, and bounded disk usage.
  */
 object AudioChunkCache {
 
@@ -30,6 +32,12 @@ object AudioChunkCache {
     internal const val MAX_CACHED_WORDS = 2_048
     internal const val MAX_CACHE_FILE_BYTES = 16L * 1024L * 1024L
     internal const val HEADER_BYTES_WITH_WT_COUNT = 16L // magic(4) + sr(4) + count(4) + wtCount(4)
+    private const val STALE_TMP_AGE_MS = 5L * 60L * 1000L
+
+    private val tmpFileSequence = AtomicLong(0L)
+    private val stripedLocks = Array(16) { Any() }
+
+    private fun lockFor(file: File): Any = stripedLocks[(file.name.hashCode() and 0x7FFFFFFF) % stripedLocks.size]
 
     fun buildCacheKey(
         modelId: String,
@@ -61,6 +69,23 @@ object AudioChunkCache {
         }
     }
 
+    private fun sanitizeTimestamps(timestamps: List<WordTimestampRange>): List<WordTimestampRange> {
+        if (timestamps.isEmpty()) return emptyList()
+        return timestamps.asSequence()
+            .filter { wt ->
+                wt.word.isNotBlank() &&
+                    wt.word.length <= 256 &&
+                    wt.startChar >= 0 &&
+                    wt.endChar > wt.startChar &&
+                    wt.startSec.isFinite() &&
+                    wt.endSec.isFinite() &&
+                    wt.startSec >= 0f &&
+                    wt.endSec >= wt.startSec
+            }
+            .take(MAX_CACHED_WORDS)
+            .toList()
+    }
+
     fun write(targetFile: File, payload: CachedAudioPayload): Boolean {
         if (payload.samples.isEmpty() ||
             payload.samples.size > MAX_CACHED_SAMPLES ||
@@ -69,9 +94,11 @@ object AudioChunkCache {
             return false
         }
         val cleanSamples = sanitizeSamples(payload.samples)
-        val cleanTimestamps = payload.wordTimestamps.take(MAX_CACHED_WORDS)
-        val tmpFile = File(targetFile.parentFile, "${targetFile.name}.${Thread.currentThread().id}.tmp")
-        return runCatching {
+        val cleanTimestamps = sanitizeTimestamps(payload.wordTimestamps)
+        val tmpId = tmpFileSequence.incrementAndGet()
+        val tmpFile = File(targetFile.parentFile, "${targetFile.name}.$tmpId.tmp")
+
+        val wroteTmp = runCatching {
             targetFile.parentFile?.mkdirs()
             DataOutputStream(BufferedOutputStream(FileOutputStream(tmpFile), 32 * 1024)).use { out ->
                 out.writeInt(MAGIC_HEADER)
@@ -89,85 +116,119 @@ object AudioChunkCache {
                     out.writeFloat(wt.endSec)
                 }
             }
-            if (targetFile.exists()) targetFile.delete()
-            if (!tmpFile.renameTo(targetFile)) {
-                tmpFile.copyTo(targetFile, overwrite = true)
-                tmpFile.delete()
-            }
             true
         }.getOrElse {
             tmpFile.delete()
             false
         }
+
+        if (!wroteTmp) return false
+
+        return synchronized(lockFor(targetFile)) {
+            runCatching {
+                if (targetFile.exists()) targetFile.delete()
+                if (!tmpFile.renameTo(targetFile)) {
+                    tmpFile.copyTo(targetFile, overwrite = true)
+                    tmpFile.delete()
+                }
+                true
+            }.getOrElse {
+                tmpFile.delete()
+                false
+            }
+        }
     }
 
     fun readValidated(file: File): CachedAudioPayload? {
-        if (!file.exists() || !file.isFile) return null
-        val fileLen = file.length()
-        if (fileLen !in HEADER_BYTES_WITH_WT_COUNT..MAX_CACHE_FILE_BYTES) {
-            file.delete()
-            return null
-        }
-
-        val parsed = runCatching {
-            DataInputStream(BufferedInputStream(FileInputStream(file), 32 * 1024)).use { inp ->
-                val magic = inp.readInt()
-                if (magic != MAGIC_HEADER) {
-                    error("Invalid audio cache magic header")
-                }
-                val sr = inp.readInt()
-                if (sr !in MIN_SAMPLE_RATE..MAX_SAMPLE_RATE) {
-                    error("Invalid cached sample rate: $sr")
-                }
-                val count = inp.readInt()
-                if (count !in 1..MAX_CACHED_SAMPLES) {
-                    error("Invalid cached sample count: $count")
-                }
-                val requiredSampleBytes = count.toLong() * 4L
-                if (HEADER_BYTES_WITH_WT_COUNT + requiredSampleBytes > fileLen) {
-                    error("Truncated cache payload for $count samples")
-                }
-                val samples = FloatArray(count) {
-                    val v = inp.readFloat()
-                    if (v.isFinite()) v.coerceIn(-1.0f, 1.0f) else 0.0f
-                }
-                val wtCount = inp.readInt()
-                if (wtCount !in 0..MAX_CACHED_WORDS) {
-                    error("Invalid cached word timestamp count: $wtCount")
-                }
-                val wts = ArrayList<WordTimestampRange>(wtCount)
-                repeat(wtCount) {
-                    val w = inp.readUTF()
-                    val sc = inp.readInt()
-                    val ec = inp.readInt()
-                    val ss = inp.readFloat()
-                    val es = inp.readFloat()
-                    if (w.length <= 256 && sc >= 0 && ec >= sc && ss.isFinite() && es.isFinite()) {
-                        wts.add(WordTimestampRange(w, sc, ec, ss, es))
-                    }
-                }
-                CachedAudioPayload(
-                    samples = samples,
-                    sampleRateHz = sr,
-                    wordTimestamps = wts
-                )
+        return synchronized(lockFor(file)) {
+            if (!file.exists() || !file.isFile) return@synchronized null
+            val fileLen = file.length()
+            if (fileLen !in HEADER_BYTES_WITH_WT_COUNT..MAX_CACHE_FILE_BYTES) {
+                file.delete()
+                return@synchronized null
             }
-        }.getOrNull()
 
-        if (parsed == null) {
-            file.delete()
-            return null
+            val parsed = try {
+                DataInputStream(BufferedInputStream(FileInputStream(file), 32 * 1024)).use { inp ->
+                    val magic = inp.readInt()
+                    if (magic != MAGIC_HEADER) {
+                        error("Invalid audio cache magic header")
+                    }
+                    val sr = inp.readInt()
+                    if (sr !in MIN_SAMPLE_RATE..MAX_SAMPLE_RATE) {
+                        error("Invalid cached sample rate: $sr")
+                    }
+                    val count = inp.readInt()
+                    if (count !in 1..MAX_CACHED_SAMPLES) {
+                        error("Invalid cached sample count: $count")
+                    }
+                    val requiredSampleBytes = count.toLong() * 4L
+                    if (HEADER_BYTES_WITH_WT_COUNT + requiredSampleBytes > fileLen) {
+                        error("Truncated cache payload for $count samples")
+                    }
+                    val samples = FloatArray(count) {
+                        val v = inp.readFloat()
+                        if (v.isFinite()) v.coerceIn(-1.0f, 1.0f) else 0.0f
+                    }
+                    val wtCount = inp.readInt()
+                    if (wtCount !in 0..MAX_CACHED_WORDS) {
+                        error("Invalid cached word timestamp count: $wtCount")
+                    }
+                    val wts = ArrayList<WordTimestampRange>(wtCount)
+                    repeat(wtCount) {
+                        val w = inp.readUTF()
+                        val sc = inp.readInt()
+                        val ec = inp.readInt()
+                        val ss = inp.readFloat()
+                        val es = inp.readFloat()
+                        if (w.isNotBlank() &&
+                            w.length <= 256 &&
+                            sc >= 0 &&
+                            ec > sc &&
+                            ss.isFinite() &&
+                            es.isFinite() &&
+                            ss >= 0f &&
+                            es >= ss
+                        ) {
+                            wts.add(WordTimestampRange(w, sc, ec, ss, es))
+                        }
+                    }
+                    CachedAudioPayload(
+                        samples = samples,
+                        sampleRateHz = sr,
+                        wordTimestamps = wts
+                    )
+                }
+            } catch (_: Throwable) {
+                null
+            }
+
+            if (parsed == null) {
+                file.delete()
+                return@synchronized null
+            }
+            file.setLastModified(System.currentTimeMillis())
+            parsed
         }
-        file.setLastModified(System.currentTimeMillis())
-        return parsed
     }
 
     fun pruneIfOversized(cacheRoot: File, maxBytes: Long = 64L * 1024L * 1024L) {
-        val files = cacheRoot.listFiles()?.toMutableList() ?: return
-        var total = files.sumOf { it.length() }
+        val now = System.currentTimeMillis()
+        val allEntries = cacheRoot.listFiles()?.toMutableList() ?: return
+        val cacheFiles = mutableListOf<File>()
+        for (entry in allEntries) {
+            if (entry.name.endsWith(".tmp")) {
+                if (now - entry.lastModified() > STALE_TMP_AGE_MS) {
+                    entry.delete()
+                }
+            } else if (entry.isFile) {
+                cacheFiles.add(entry)
+            }
+        }
+        var total = cacheFiles.sumOf { it.length() }
         if (total <= maxBytes) return
-        files.sortBy { it.lastModified() }
-        for (f in files) {
+        cacheFiles.sortBy { it.lastModified() }
+        for (f in cacheFiles) {
             if (total <= maxBytes * 3 / 4) break
             val len = f.length()
             if (f.delete()) total -= len

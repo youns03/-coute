@@ -799,7 +799,9 @@ private fun ReaderAudioBar(
                     modifier = Modifier.padding(bottom = 4.dp)
                 )
             }
-            if (!playbackState.errorMessage.isNullOrBlank()) {
+            if (!playbackState.errorMessage.isNullOrBlank() &&
+                (isPlayingThisChapter || playbackState.bookId == null || playbackState.bookId == "_standalone_")
+            ) {
                 Text(
                     text = playbackState.errorMessage,
                     style = MaterialTheme.typography.labelSmall,
@@ -817,6 +819,7 @@ private fun ReaderAudioBar(
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     IconButton(
                         onClick = onPrev,
+                        enabled = isPlayingThisChapter,
                         modifier = Modifier.minimumInteractiveComponentSize()
                     ) {
                         Icon(Icons.Rounded.SkipPrevious, contentDescription = "الجملة السابقة")
@@ -846,6 +849,7 @@ private fun ReaderAudioBar(
                     }
                     IconButton(
                         onClick = onNext,
+                        enabled = isPlayingThisChapter,
                         modifier = Modifier.minimumInteractiveComponentSize()
                     ) {
                         Icon(Icons.Rounded.SkipNext, contentDescription = "الجملة التالية")

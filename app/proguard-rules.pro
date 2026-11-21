@@ -1,21 +1,50 @@
-# Add project specific ProGuard rules here.
-# You can control the set of applied configuration files using the
-# proguardFiles setting in build.gradle.
-#
-# For more details, see
-#   http://developer.android.com/guide/developing/tools/proguard.html
+# Preserve debugging stacktrace line numbers while stripping source paths
+-keepattributes SourceFile,LineNumberTable
+-renamesourcefileattribute SourceFile
+-keepattributes *Annotation*,Signature,InnerClasses,EnclosingMethod
 
-# If your project uses WebView with JS, uncomment the following
-# and specify the fully qualified class name to the JavaScript interface
-# class:
-#-keepclassmembers class fqcn.of.javascript.interface.for.webview {
-#   public *;
-#}
+# Core Android Entry Points & WorkManager Reflection
+-keep class com.example.models.ModelDownloadWorker {
+    public <init>(android.content.Context, androidx.work.WorkerParameters);
+}
 
-# Uncomment this to preserve the line number information for
-# debugging stack traces.
-#-keepattributes SourceFile,LineNumberTable
+# Room Database & Entities / DAOs
+-keep class * extends androidx.room.RoomDatabase
+-keep class com.example.data.*Entity { *; }
 
-# If you keep the line number information, uncomment this to
-# hide the original source file name.
-#-renamesourcefileattribute SourceFile
+# Kotlinx Serialization & Type-Safe Navigation Compose Routes
+-keep class com.example.ui.navigation.AppRoute** { *; }
+-keepclassmembers class * {
+    @kotlinx.serialization.Serializable <methods>;
+}
+-if @kotlinx.serialization.Serializable class **
+-keepclassmembers class <1> {
+    static <1>$Companion Companion;
+}
+-if @kotlinx.serialization.Serializable class **
+-keep class <1>$$serializer { *; }
+
+# MediaPipe Tasks Audio & LiteRT-LM (Kokoro-82M) JNI bindings
+-keep class com.google.mediapipe.** { *; }
+-dontwarn com.google.mediapipe.**
+-keepclassmembers class * extends com.google.protobuf.GeneratedMessageLite {
+    <fields>;
+}
+
+# Sherpa-ONNX (Piper VITS) JNI bindings & callback signatures
+-keep class com.k2fsa.sherpa.onnx.** { *; }
+-dontwarn com.k2fsa.sherpa.onnx.**
+
+# ML Kit On-Device Translation
+-keep class com.google.mlkit.** { *; }
+-dontwarn com.google.mlkit.**
+
+# Optional compression codecs referenced dynamically by Commons Compress
+-dontwarn org.tukaani.xz.**
+-dontwarn com.github.luben.zstd.**
+-dontwarn org.brotli.dec.**
+-dontwarn org.apache.commons.codec.**
+-dontwarn org.conscrypt.**
+-dontwarn org.bouncycastle.**
+-dontwarn org.openjsse.**
+-dontwarn okhttp3.**
