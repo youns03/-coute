@@ -14,6 +14,7 @@ import com.example.R
 import com.example.data.ModelRecordEntity
 import com.example.domain.ModelInstallStatus
 import com.example.domain.ModelSpec
+import com.example.tts.MemoryDiagnostics
 import kotlinx.coroutines.CancellationException
 import okhttp3.OkHttpClient
 import okhttp3.Request
@@ -68,6 +69,19 @@ class ModelDownloadWorker(
         val storage = app.storageManager
         val dao = app.database.modelRecordDao()
 
+        val compat = MemoryDiagnostics.evaluateModelCompatibility(spec, applicationContext)
+        if (!compat.isSupported) {
+            dao.upsert(
+                ModelRecordEntity(
+                    modelId = spec.id,
+                    status = ModelInstallStatus.FAILED.name,
+                    totalBytes = spec.expectedSizeBytes,
+                    lastError = compat.detailsAr ?: compat.summaryAr
+                )
+            )
+            return Result.failure()
+        }
+
         if (!storage.hasNetworkConnection()) {
             dao.upsert(
                 ModelRecordEntity(
@@ -81,7 +95,8 @@ class ModelDownloadWorker(
             return Result.retry()
         }
 
-        val needsEspeak = spec.requiresEspeakData && !storage.verifyInstalledPackage(ModelCatalog.espeakNgDataSpec)
+        val needsEspeak = spec.requiresEspeakData &&
+            !storage.verifyInstalledPackage(ModelCatalog.espeakNgDataSpec, verifyIntegrity = true)
         if (!storage.hasEnoughDiskSpace(spec, includeEspeakDependency = needsEspeak)) {
             dao.upsert(
                 ModelRecordEntity(
@@ -98,7 +113,9 @@ class ModelDownloadWorker(
 
         return try {
             // Download shared eSpeak-ng data first if required by Piper and not yet installed
-            if (spec.requiresEspeakData && !storage.verifyInstalledPackage(ModelCatalog.espeakNgDataSpec)) {
+            if (spec.requiresEspeakData &&
+                !storage.verifyInstalledPackage(ModelCatalog.espeakNgDataSpec, verifyIntegrity = true)
+            ) {
                 downloadAndVerifySpec(ModelCatalog.espeakNgDataSpec, dao, isDependency = true)
             }
             downloadAndVerifySpec(spec, dao, isDependency = false)

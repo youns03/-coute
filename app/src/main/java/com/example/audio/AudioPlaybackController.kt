@@ -14,14 +14,15 @@ import com.example.data.BookDao
 import com.example.data.SentenceEntity
 import com.example.data.SettingsRepository
 import com.example.data.UserSettings
-import com.example.domain.FrenchTextPreprocessor
+import com.example.domain.ModelSpec
+import com.example.domain.SpeechTextProcessor
 import com.example.domain.SpeedControlMode
 import com.example.domain.WordTimestampRange
-import com.example.models.ModelCatalog
 import com.example.models.ModelStorageManager
 import com.example.tts.TtsEngineManager
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
@@ -34,11 +35,6 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-import java.io.DataInputStream
-import java.io.DataOutputStream
-import java.io.File
-import java.io.FileInputStream
-import java.io.FileOutputStream
 
 enum class PlaybackStatus {
     IDLE,
@@ -63,14 +59,8 @@ data class PlaybackUiState(
     val repeatCurrentSentence: Boolean = false,
     val bufferedAheadCount: Int = 0,
     val activeModelName: String = "",
+    val activeLanguageCode: String = "fr",
     val errorMessage: String? = null
-)
-
-private data class PreparedAudioChunk(
-    val sentence: SentenceEntity,
-    val samples: FloatArray,
-    val sampleRateHz: Int,
-    val wordTimestamps: List<WordTimestampRange>
 )
 
 class AudioPlaybackController(
@@ -82,6 +72,7 @@ class AudioPlaybackController(
 ) {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
     private val audioManager = context.getSystemService(Context.AUDIO_SERVICE) as AudioManager
+    private val trackLock = Any()
 
     private val _state = MutableStateFlow(PlaybackUiState())
     val state: StateFlow<PlaybackUiState> = _state.asStateFlow()
@@ -92,6 +83,9 @@ class AudioPlaybackController(
 
     @Volatile
     private var isPausedFlag: Boolean = false
+
+    @Volatile
+    private var isStoppingFlag: Boolean = false
 
     @Volatile
     private var queueSentences: List<SentenceEntity> = emptyList()
@@ -105,12 +99,16 @@ class AudioPlaybackController(
     @Volatile
     private var repeatSingle: Boolean = false
 
+    @Volatile
+    private var currentLanguageCode: String = "fr"
+
     fun playChapterFrom(
         bookId: String,
         bookTitle: String,
         chapterIndex: Int,
         chapterTitle: String,
-        startSentenceIndex: Int = 0
+        startSentenceIndex: Int = 0,
+        languageCode: String? = null
     ) {
         scope.launch {
             try {
@@ -122,6 +120,9 @@ class AudioPlaybackController(
                     )
                     return@launch
                 }
+                val resolvedLang = SpeechTextProcessor.normalizeLangCode(
+                    languageCode ?: bookDao.getBook(bookId)?.sourceLanguage
+                )
                 val safeIndex = startSentenceIndex.coerceIn(0, sentences.lastIndex)
                 settingsRepository.setActiveBookId(bookId)
                 startQueuePlayback(
@@ -130,7 +131,8 @@ class AudioPlaybackController(
                     chapterIndex = chapterIndex,
                     chapterTitle = chapterTitle,
                     sentences = sentences,
-                    startIndex = safeIndex
+                    startIndex = safeIndex,
+                    languageCode = resolvedLang
                 )
             } catch (ce: CancellationException) {
                 throw ce
@@ -144,11 +146,16 @@ class AudioPlaybackController(
     }
 
     /**
-     * Synthesizes and plays a single French phrase or word (e.g. from Vocabulary or Word sheet).
+     * Synthesizes and plays a single word or phrase in French or English.
      */
-    fun pronounceStandalone(frenchText: String, title: String = "نطق المفردة") {
+    fun pronounceStandalone(
+        frenchText: String,
+        title: String = "نطق المفردة",
+        languageCode: String = "fr"
+    ) {
         val cleaned = frenchText.trim()
         if (cleaned.isEmpty()) return
+        val normLang = SpeechTextProcessor.normalizeLangCode(languageCode)
         val singleSentence = SentenceEntity(
             id = -1L,
             bookId = "_standalone_",
@@ -156,7 +163,7 @@ class AudioPlaybackController(
             sentenceIndex = 0,
             paragraphIndex = 0,
             originalText = cleaned,
-            spokenText = FrenchTextPreprocessor.prepareForSpeech(cleaned)
+            spokenText = SpeechTextProcessor.prepareForSpeech(cleaned, normLang)
         )
         startQueuePlayback(
             bookId = "_standalone_",
@@ -164,7 +171,8 @@ class AudioPlaybackController(
             chapterIndex = 0,
             chapterTitle = cleaned,
             sentences = listOf(singleSentence),
-            startIndex = 0
+            startIndex = 0,
+            languageCode = normLang
         )
     }
 
@@ -174,7 +182,8 @@ class AudioPlaybackController(
         chapterIndex: Int,
         chapterTitle: String,
         sentences: List<SentenceEntity>,
-        startIndex: Int
+        startIndex: Int,
+        languageCode: String
     ) {
         stopPlaybackInternal(resetPositionState = false)
         if (sentences.isEmpty()) {
@@ -184,17 +193,45 @@ class AudioPlaybackController(
             )
             return
         }
+        val normLang = SpeechTextProcessor.normalizeLangCode(languageCode)
         val safeStart = startIndex.coerceIn(0, sentences.lastIndex)
         ensureServiceStarted()
         queueSentences = sentences
         currentQueuePosition = safeStart
+        currentLanguageCode = normLang
         isPausedFlag = false
+        isStoppingFlag = false
 
         playbackJob = scope.launch {
+            var prefetchedDeferred: Deferred<Result<CachedAudioPayload>>? = null
+            var prefetchedIndex = -1
             try {
                 val settings = settingsRepository.settingsFlow.first()
                 currentSpeed = settings.playbackSpeed
-                val spec = ModelCatalog.findById(settings.activeModelId)
+
+                val modelResolution = ttsEngineManager.resolveModelForLanguage(
+                    preferredModelId = settings.activeModelId,
+                    languageCode = normLang
+                )
+                if (modelResolution.isFailure) {
+                    _state.value = PlaybackUiState(
+                        status = PlaybackStatus.ERROR,
+                        bookId = bookId,
+                        bookTitle = bookTitle,
+                        chapterIndex = chapterIndex,
+                        chapterTitle = chapterTitle,
+                        sentenceIndex = sentences[safeStart].sentenceIndex,
+                        totalSentencesInChapter = sentences.size,
+                        currentSentenceText = sentences[safeStart].originalText,
+                        playbackSpeed = currentSpeed,
+                        repeatCurrentSentence = repeatSingle,
+                        activeLanguageCode = normLang,
+                        errorMessage = modelResolution.exceptionOrNull()?.message
+                            ?: "لا يوجد نموذج متاح للغة ($normLang)."
+                    )
+                    return@launch
+                }
+                val resolvedSpec = modelResolution.getOrThrow()
 
                 _state.value = PlaybackUiState(
                     status = PlaybackStatus.BUFFERING,
@@ -207,7 +244,8 @@ class AudioPlaybackController(
                     currentSentenceText = sentences[safeStart].originalText,
                     playbackSpeed = currentSpeed,
                     repeatCurrentSentence = repeatSingle,
-                    activeModelName = spec?.displayName ?: settings.activeModelId
+                    activeModelName = resolvedSpec.displayName,
+                    activeLanguageCode = normLang
                 )
 
                 if (!requestAudioFocus()) {
@@ -219,14 +257,10 @@ class AudioPlaybackController(
                 }
 
                 var idx = safeStart
-                var prefetchedIndex = -1
-                var prefetchedDeferred: kotlinx.coroutines.Deferred<Result<PreparedAudioChunk>>? = null
-
-                while (isActive && idx < queueSentences.size) {
+                while (isActive && !isStoppingFlag && idx < queueSentences.size) {
                     val currentSentence = queueSentences[idx]
                     currentQueuePosition = idx
 
-                    // Persist reading progress for real books
                     if (bookId != "_standalone_") {
                         bookDao.updateReadingPosition(bookId, chapterIndex, currentSentence.sentenceIndex)
                     }
@@ -240,56 +274,89 @@ class AudioPlaybackController(
                         errorMessage = null
                     )
 
-                    val chunkResult = if (prefetchedIndex == idx && prefetchedDeferred != null) {
+                    while (isActive && !isStoppingFlag && isPausedFlag) {
+                        _state.value = _state.value.copy(status = PlaybackStatus.PAUSED)
+                        delay(80L)
+                    }
+                    if (!isActive || isStoppingFlag) break
+
+                    val nextIdx = if (repeatSingle) idx else idx + 1
+                    val spokenText = SpeechTextProcessor.prepareForSpeech(currentSentence.originalText, normLang)
+                    val voiceId = resolvedSpec.defaultVoiceFor(normLang)
+                    val synthSpeed = if (settings.speedControlMode == SpeedControlMode.MODEL_SYNTHESIS_RATE) {
+                        currentSpeed
+                    } else {
+                        1.0f
+                    }
+                    val cacheKey = AudioChunkCache.buildCacheKey(
+                        modelId = resolvedSpec.id,
+                        languageCode = normLang,
+                        voiceId = voiceId,
+                        speed = synthSpeed,
+                        spokenText = spokenText
+                    )
+                    val cacheFile = AudioChunkCache.cacheFileFor(storageManager.audioCacheRoot, cacheKey)
+
+                    val cachedHit: CachedAudioPayload? = if (prefetchedIndex == idx && prefetchedDeferred != null) {
                         val res = prefetchedDeferred.await()
                         prefetchedDeferred = null
                         prefetchedIndex = -1
-                        res
+                        res.getOrNull()
                     } else {
                         prefetchedDeferred?.cancel()
                         prefetchedDeferred = null
                         prefetchedIndex = -1
-                        synthesizeOrLoadCached(currentSentence, settings)
+                        withContext(Dispatchers.IO) { AudioChunkCache.readValidated(cacheFile) }
                     }
 
-                    if (chunkResult.isFailure) {
-                        val err = chunkResult.exceptionOrNull()?.message ?: "فشل توليد الصوت محلياً"
-                        _state.value = _state.value.copy(
-                            status = PlaybackStatus.ERROR,
-                            errorMessage = err
+                    val scheduleLookahead: () -> Unit = {
+                        if (!repeatSingle && nextIdx < queueSentences.size && isActive && !isStoppingFlag) {
+                            val nextSentence = queueSentences[nextIdx]
+                            prefetchedIndex = nextIdx
+                            prefetchedDeferred = async {
+                                synthesizeAndCacheSentence(
+                                    sentence = nextSentence,
+                                    spec = resolvedSpec,
+                                    languageCode = normLang,
+                                    settings = settings,
+                                    synthSpeed = synthSpeed
+                                )
+                            }
+                            _state.value = _state.value.copy(bufferedAheadCount = 1)
+                        } else {
+                            _state.value = _state.value.copy(bufferedAheadCount = 0)
+                        }
+                    }
+
+                    if (cachedHit != null) {
+                        scheduleLookahead()
+                        playCachedPayloadWithTracking(
+                            sentence = currentSentence,
+                            payload = cachedHit,
+                            speedMode = settings.speedControlMode
                         )
-                        break
-                    }
-
-                    val chunk = chunkResult.getOrThrow()
-
-                    // Start 1-sentence lookahead prefetch in background for gapless playback
-                    val nextIdx = if (repeatSingle) idx else idx + 1
-                    if (!repeatSingle && nextIdx < queueSentences.size) {
-                        val nextSentence = queueSentences[nextIdx]
-                        prefetchedIndex = nextIdx
-                        prefetchedDeferred = async { synthesizeOrLoadCached(nextSentence, settings) }
-                        _state.value = _state.value.copy(bufferedAheadCount = 1)
                     } else {
-                        _state.value = _state.value.copy(bufferedAheadCount = 0)
+                        playSentenceLiveStreaming(
+                            sentence = currentSentence,
+                            spokenText = spokenText,
+                            spec = resolvedSpec,
+                            languageCode = normLang,
+                            voiceId = voiceId,
+                            synthSpeed = synthSpeed,
+                            acceleratorMode = settings.acceleratorMode,
+                            speedMode = settings.speedControlMode,
+                            cacheFile = cacheFile,
+                            onStreamFinishedBeforeDrain = scheduleLookahead
+                        )
                     }
 
-                    // Wait if user paused while buffering
-                    while (isActive && isPausedFlag) {
-                        _state.value = _state.value.copy(status = PlaybackStatus.PAUSED)
-                        delay(80L)
-                    }
-                    if (!isActive) break
-
-                    playChunkWithTracking(chunk, settings.speedControlMode)
-
-                    if (!isActive) break
+                    if (!isActive || isStoppingFlag) break
                     if (!repeatSingle) {
                         idx++
                     }
                 }
 
-                if (isActive && _state.value.status != PlaybackStatus.ERROR) {
+                if (isActive && !isStoppingFlag && _state.value.status != PlaybackStatus.ERROR) {
                     _state.value = _state.value.copy(
                         status = PlaybackStatus.IDLE,
                         activeWordStartChar = -1,
@@ -305,58 +372,189 @@ class AudioPlaybackController(
                     errorMessage = t.message ?: "خطأ غير متوقع أثناء التشغيل"
                 )
             } finally {
+                prefetchedDeferred?.cancel()
                 releaseAudioTrack()
                 abandonAudioFocus()
             }
         }
     }
 
-    private suspend fun synthesizeOrLoadCached(
+    private suspend fun synthesizeAndCacheSentence(
         sentence: SentenceEntity,
-        settings: UserSettings
-    ): Result<PreparedAudioChunk> {
-        val synthSpeed = if (settings.speedControlMode == SpeedControlMode.MODEL_SYNTHESIS_RATE) {
-            currentSpeed
-        } else {
-            1.0f
-        }
-        val cacheKey = "${settings.activeModelId}_${synthSpeed}_${sentence.spokenText.hashCode()}"
-        val cacheFile = File(storageManager.audioCacheRoot, "$cacheKey.pcmbin")
+        spec: ModelSpec,
+        languageCode: String,
+        settings: UserSettings,
+        synthSpeed: Float
+    ): Result<CachedAudioPayload> = withContext(Dispatchers.IO) {
+        val spokenText = SpeechTextProcessor.prepareForSpeech(sentence.originalText, languageCode)
+        val voiceId = spec.defaultVoiceFor(languageCode)
+        val cacheKey = AudioChunkCache.buildCacheKey(spec.id, languageCode, voiceId, synthSpeed, spokenText)
+        val cacheFile = AudioChunkCache.cacheFileFor(storageManager.audioCacheRoot, cacheKey)
 
-        if (cacheFile.exists() && cacheFile.length() > 16L) {
-            val cached = readCachedChunk(sentence, cacheFile)
-            if (cached != null) return Result.success(cached)
-        }
+        AudioChunkCache.readValidated(cacheFile)?.let { return@withContext Result.success(it) }
 
-        val spec = ModelCatalog.findById(settings.activeModelId)
-        val voiceId = spec?.voiceId ?: "ff_siwis"
         val res = ttsEngineManager.synthesizeSentence(
-            modelId = settings.activeModelId,
+            modelId = spec.id,
             acceleratorMode = settings.acceleratorMode,
-            spokenText = sentence.spokenText,
+            spokenText = spokenText,
             voiceId = voiceId,
-            speed = synthSpeed
+            speed = synthSpeed,
+            languageCode = languageCode
         )
-        return res.map { synth ->
-            val chunk = PreparedAudioChunk(
-                sentence = sentence,
-                samples = synth.samples,
-                sampleRateHz = synth.sampleRateHz,
+        res.map { synth ->
+            val payload = CachedAudioPayload(
+                samples = AudioChunkCache.sanitizeSamples(synth.samples),
+                sampleRateHz = synth.sampleRateHz.coerceIn(AudioChunkCache.MIN_SAMPLE_RATE, AudioChunkCache.MAX_SAMPLE_RATE),
                 wordTimestamps = synth.wordTimestamps
             )
-            writeCachedChunk(cacheFile, chunk)
-            pruneAudioCacheIfOversized()
-            chunk
+            AudioChunkCache.write(cacheFile, payload)
+            AudioChunkCache.pruneIfOversized(storageManager.audioCacheRoot)
+            payload
         }
     }
 
-    private suspend fun playChunkWithTracking(
-        chunk: PreparedAudioChunk,
+    /**
+     * Streams TTS chunks directly into AudioTrack as soon as the first chunk arrives
+     * instead of blocking until full-sentence generation completes.
+     */
+    private suspend fun playSentenceLiveStreaming(
+        sentence: SentenceEntity,
+        spokenText: String,
+        spec: ModelSpec,
+        languageCode: String,
+        voiceId: String,
+        synthSpeed: Float,
+        acceleratorMode: com.example.domain.AcceleratorMode,
+        speedMode: SpeedControlMode,
+        cacheFile: java.io.File,
+        onStreamFinishedBeforeDrain: () -> Unit
+    ) = withContext(Dispatchers.IO) {
+        var activeTrack: AudioTrack? = null
+        var usePcm16 = false
+        var activeSampleRate = 24_000
+        var totalFramesWritten = 0
+        val sampleSegments = mutableListOf<FloatArray>()
+        var totalSamplesCollected = 0
+        val collectedTimestamps = mutableListOf<WordTimestampRange>()
+
+        try {
+            ttsEngineManager.synthesizeSentenceStream(
+                modelId = spec.id,
+                acceleratorMode = acceleratorMode,
+                spokenText = spokenText,
+                languageCode = languageCode,
+                voiceId = voiceId,
+                speed = synthSpeed
+            ).collect { chunk ->
+                if (!isActive || isStoppingFlag) return@collect
+
+                val cleanSamples = AudioChunkCache.sanitizeSamples(chunk.samples)
+                if (cleanSamples.isEmpty() && chunk.wordTimestamps.isEmpty()) return@collect
+
+                val chunkRate = chunk.sampleRateHz.coerceIn(
+                    AudioChunkCache.MIN_SAMPLE_RATE,
+                    AudioChunkCache.MAX_SAMPLE_RATE
+                )
+
+                if (activeTrack == null && cleanSamples.isNotEmpty()) {
+                    val opened = openStreamingTrack(chunkRate, speedMode)
+                    activeTrack = opened.first
+                    usePcm16 = opened.second
+                    activeSampleRate = chunkRate
+                    _state.value = _state.value.copy(
+                        status = if (isPausedFlag) PlaybackStatus.PAUSED else PlaybackStatus.PLAYING,
+                        sentenceIndex = sentence.sentenceIndex,
+                        currentSentenceText = sentence.originalText
+                    )
+                }
+
+                if (chunk.wordTimestamps.isNotEmpty()) {
+                    collectedTimestamps.addAll(chunk.wordTimestamps)
+                }
+
+                if (cleanSamples.isNotEmpty() && totalSamplesCollected < AudioChunkCache.MAX_CACHED_SAMPLES) {
+                    sampleSegments.add(cleanSamples)
+                    totalSamplesCollected += cleanSamples.size
+                }
+
+                val track = activeTrack ?: return@collect
+                if (cleanSamples.isNotEmpty()) {
+                    val written = writeSamplesToTrack(
+                        track = track,
+                        samples = cleanSamples,
+                        usePcm16 = usePcm16,
+                        sampleRate = activeSampleRate,
+                        speedMode = speedMode,
+                        timestamps = collectedTimestamps
+                    )
+                    totalFramesWritten += written
+                }
+            }
+
+            if (!isActive || isStoppingFlag) return@withContext
+
+            if (totalSamplesCollected in 1..AudioChunkCache.MAX_CACHED_SAMPLES) {
+                val merged = FloatArray(totalSamplesCollected)
+                var pos = 0
+                for (seg in sampleSegments) {
+                    seg.copyInto(merged, pos)
+                    pos += seg.size
+                }
+                AudioChunkCache.write(
+                    cacheFile,
+                    CachedAudioPayload(merged, activeSampleRate, collectedTimestamps)
+                )
+                AudioChunkCache.pruneIfOversized(storageManager.audioCacheRoot)
+            }
+
+            onStreamFinishedBeforeDrain()
+
+            val track = activeTrack
+            if (track != null && totalFramesWritten > 0) {
+                drainAudioTrack(track, activeSampleRate, totalFramesWritten, collectedTimestamps)
+            }
+        } finally {
+            releaseAudioTrack()
+        }
+    }
+
+    private suspend fun playCachedPayloadWithTracking(
+        sentence: SentenceEntity,
+        payload: CachedAudioPayload,
         speedMode: SpeedControlMode
     ) = withContext(Dispatchers.IO) {
-        if (chunk.samples.isEmpty()) return@withContext
-        val sampleRate = chunk.sampleRateHz.coerceIn(8000, 96000)
+        if (payload.samples.isEmpty()) return@withContext
+        val sampleRate = payload.sampleRateHz.coerceIn(
+            AudioChunkCache.MIN_SAMPLE_RATE,
+            AudioChunkCache.MAX_SAMPLE_RATE
+        )
+        val (track, usePcm16) = openStreamingTrack(sampleRate, speedMode)
+        try {
+            _state.value = _state.value.copy(
+                status = if (isPausedFlag) PlaybackStatus.PAUSED else PlaybackStatus.PLAYING,
+                sentenceIndex = sentence.sentenceIndex,
+                currentSentenceText = sentence.originalText
+            )
+            val written = writeSamplesToTrack(
+                track = track,
+                samples = payload.samples,
+                usePcm16 = usePcm16,
+                sampleRate = sampleRate,
+                speedMode = speedMode,
+                timestamps = payload.wordTimestamps
+            )
+            if (isActive && !isStoppingFlag && written > 0) {
+                drainAudioTrack(track, sampleRate, written, payload.wordTimestamps)
+            }
+        } finally {
+            releaseAudioTrack()
+        }
+    }
 
+    private fun openStreamingTrack(
+        sampleRate: Int,
+        speedMode: SpeedControlMode
+    ): Pair<AudioTrack, Boolean> {
         var usePcm16 = false
         var track = createAudioTrackOrNull(sampleRate, AudioFormat.ENCODING_PCM_FLOAT)
         if (track == null) {
@@ -366,63 +564,114 @@ class AudioPlaybackController(
         val activeTrack = track
             ?: error("تعذر تهيئة مخرج الصوت AudioTrack بمعدل $sampleRate Hz.")
 
-        currentAudioTrack = activeTrack
-        applyPlaybackSpeedToTrack(activeTrack, speedMode)
-        activeTrack.play()
+        synchronized(trackLock) {
+            if (isStoppingFlag) {
+                runCatching { activeTrack.release() }
+                throw CancellationException("Stopped before track start")
+            }
+            currentAudioTrack = activeTrack
+            applyPlaybackSpeedToTrack(activeTrack, speedMode)
+            activeTrack.play()
+        }
+        return activeTrack to usePcm16
+    }
 
-        _state.value = _state.value.copy(
-            status = PlaybackStatus.PLAYING,
-            sentenceIndex = chunk.sentence.sentenceIndex,
-            currentSentenceText = chunk.sentence.originalText
-        )
-
+    private fun writeSamplesToTrack(
+        track: AudioTrack,
+        samples: FloatArray,
+        usePcm16: Boolean,
+        sampleRate: Int,
+        speedMode: SpeedControlMode,
+        timestamps: List<WordTimestampRange>
+    ): Int {
         val pcm16Samples = if (usePcm16) {
-            ShortArray(chunk.samples.size) { i ->
-                (chunk.samples[i].coerceIn(-1f, 1f) * 32767f).toInt().toShort()
+            ShortArray(samples.size) { i ->
+                (samples[i].coerceIn(-1f, 1f) * 32767f).toInt().toShort()
             }
         } else {
             null
         }
 
         var offset = 0
-        val step = 2048
-        while (offset < chunk.samples.size && playbackJob?.isActive == true) {
+        val stepFrames = 512
+        var zeroWriteCount = 0
+
+        while (offset < samples.size && playbackJob?.isActive == true && !isStoppingFlag) {
             if (isPausedFlag) {
-                if (activeTrack.playState == AudioTrack.PLAYSTATE_PLAYING) activeTrack.pause()
-                _state.value = _state.value.copy(status = PlaybackStatus.PAUSED)
-                while (isPausedFlag && playbackJob?.isActive == true) {
-                    Thread.sleep(50)
+                synchronized(trackLock) {
+                    if (currentAudioTrack === track) {
+                        runCatching {
+                            if (track.playState == AudioTrack.PLAYSTATE_PLAYING) track.pause()
+                        }
+                    }
                 }
-                if (playbackJob?.isActive != true) break
-                applyPlaybackSpeedToTrack(activeTrack, speedMode)
-                activeTrack.play()
+                _state.value = _state.value.copy(status = PlaybackStatus.PAUSED)
+                while (isPausedFlag && playbackJob?.isActive == true && !isStoppingFlag) {
+                    Thread.sleep(45L)
+                }
+                if (playbackJob?.isActive != true || isStoppingFlag) break
+                synchronized(trackLock) {
+                    if (currentAudioTrack === track) {
+                        applyPlaybackSpeedToTrack(track, speedMode)
+                        runCatching { track.play() }
+                    }
+                }
                 _state.value = _state.value.copy(status = PlaybackStatus.PLAYING)
             }
 
-            val count = minOf(step, chunk.samples.size - offset)
-            val written = if (pcm16Samples != null) {
-                activeTrack.write(pcm16Samples, offset, count, AudioTrack.WRITE_BLOCKING)
-            } else {
-                activeTrack.write(chunk.samples, offset, count, AudioTrack.WRITE_BLOCKING)
+            val count = minOf(stepFrames, samples.size - offset)
+            val written = synchronized(trackLock) {
+                if (isStoppingFlag || currentAudioTrack !== track || track.state != AudioTrack.STATE_INITIALIZED) {
+                    -1
+                } else {
+                    runCatching {
+                        if (pcm16Samples != null) {
+                            track.write(pcm16Samples, offset, count, AudioTrack.WRITE_BLOCKING)
+                        } else {
+                            track.write(samples, offset, count, AudioTrack.WRITE_BLOCKING)
+                        }
+                    }.getOrDefault(-1)
+                }
             }
+
             if (written < 0) break
+            if (written == 0) {
+                zeroWriteCount++
+                if (zeroWriteCount > 50) break
+                Thread.sleep(10L)
+                continue
+            }
+            zeroWriteCount = 0
             offset += written
-
-            updateWordHighlightIfAvailable(activeTrack, sampleRate, chunk)
+            updateWordHighlightIfAvailable(track, sampleRate, timestamps)
         }
+        return offset
+    }
 
-        // Wait until buffered audio finishes playing (with a safety wall-clock ceiling so HAL stalls cannot hang)
-        val totalFrames = chunk.samples.size
+    private fun drainAudioTrack(
+        track: AudioTrack,
+        sampleRate: Int,
+        totalFrames: Int,
+        timestamps: List<WordTimestampRange>
+    ) {
         val estimatedDurationMs = ((totalFrames.toLong() * 1000L) / sampleRate.toLong()).coerceAtLeast(300L)
         val drainDeadlineMs = System.currentTimeMillis() + estimatedDurationMs + 1500L
-        while (playbackJob?.isActive == true && !isPausedFlag && System.currentTimeMillis() < drainDeadlineMs) {
-            val head = activeTrack.playbackHeadPosition
-            updateWordHighlightIfAvailable(activeTrack, sampleRate, chunk)
-            if (head >= totalFrames - 256 || activeTrack.playState != AudioTrack.PLAYSTATE_PLAYING) break
-            Thread.sleep(30)
+        while (playbackJob?.isActive == true && !isStoppingFlag && !isPausedFlag &&
+            System.currentTimeMillis() < drainDeadlineMs
+        ) {
+            val (head, isPlaying) = synchronized(trackLock) {
+                if (isStoppingFlag || currentAudioTrack !== track || track.state != AudioTrack.STATE_INITIALIZED) {
+                    totalFrames to false
+                } else {
+                    runCatching {
+                        track.playbackHeadPosition to (track.playState == AudioTrack.PLAYSTATE_PLAYING)
+                    }.getOrDefault(totalFrames to false)
+                }
+            }
+            updateWordHighlightIfAvailable(track, sampleRate, timestamps)
+            if (head >= totalFrames - 256 || !isPlaying) break
+            Thread.sleep(25L)
         }
-
-        releaseAudioTrack()
     }
 
     private fun createAudioTrackOrNull(sampleRate: Int, encoding: Int): AudioTrack? {
@@ -434,7 +683,7 @@ class AudioPlaybackController(
                 encoding
             )
             if (rawMin <= 0) return null
-            val minBuf = rawMin.coerceAtLeast(sampleRate / 5 * bytesPerSample)
+            val minBuf = rawMin.coerceAtLeast((sampleRate / 5) * bytesPerSample)
 
             val track = AudioTrack.Builder()
                 .setAudioAttributes(
@@ -466,11 +715,16 @@ class AudioPlaybackController(
     private fun updateWordHighlightIfAvailable(
         track: AudioTrack,
         sampleRate: Int,
-        chunk: PreparedAudioChunk
+        timestamps: List<WordTimestampRange>
     ) {
-        if (chunk.wordTimestamps.isEmpty()) return
-        val sec = track.playbackHeadPosition.toFloat() / sampleRate.toFloat()
-        val match = chunk.wordTimestamps.firstOrNull { sec >= it.startSec && sec <= it.endSec }
+        if (timestamps.isEmpty()) return
+        val head = synchronized(trackLock) {
+            if (currentAudioTrack !== track || track.state != AudioTrack.STATE_INITIALIZED) -1
+            else runCatching { track.playbackHeadPosition }.getOrDefault(-1)
+        }
+        if (head < 0) return
+        val sec = head.toFloat() / sampleRate.toFloat()
+        val match = timestamps.firstOrNull { sec >= it.startSec && sec <= it.endSec }
         if (match != null) {
             _state.value = _state.value.copy(
                 activeWordStartChar = match.startChar,
@@ -489,7 +743,13 @@ class AudioPlaybackController(
 
     fun pause() {
         isPausedFlag = true
-        runCatching { currentAudioTrack?.pause() }
+        synchronized(trackLock) {
+            runCatching {
+                if (currentAudioTrack?.playState == AudioTrack.PLAYSTATE_PLAYING) {
+                    currentAudioTrack?.pause()
+                }
+            }
+        }
         _state.value = _state.value.copy(status = PlaybackStatus.PAUSED)
     }
 
@@ -507,7 +767,8 @@ class AudioPlaybackController(
                 bookTitle = st.bookTitle,
                 chapterIndex = st.chapterIndex,
                 chapterTitle = st.chapterTitle,
-                startSentenceIndex = st.sentenceIndex
+                startSentenceIndex = st.sentenceIndex,
+                languageCode = st.activeLanguageCode
             )
         }
     }
@@ -528,7 +789,15 @@ class AudioPlaybackController(
         val bId = st.bookId ?: return
         if (bId == "_standalone_" || queueSentences.isEmpty()) return
         val nextPos = (currentQueuePosition + 1).coerceAtMost(queueSentences.lastIndex)
-        startQueuePlayback(bId, st.bookTitle, st.chapterIndex, st.chapterTitle, queueSentences, nextPos)
+        startQueuePlayback(
+            bookId = bId,
+            bookTitle = st.bookTitle,
+            chapterIndex = st.chapterIndex,
+            chapterTitle = st.chapterTitle,
+            sentences = queueSentences,
+            startIndex = nextPos,
+            languageCode = currentLanguageCode
+        )
     }
 
     fun previousSentence() {
@@ -536,7 +805,15 @@ class AudioPlaybackController(
         val bId = st.bookId ?: return
         if (bId == "_standalone_" || queueSentences.isEmpty()) return
         val prevPos = (currentQueuePosition - 1).coerceAtLeast(0)
-        startQueuePlayback(bId, st.bookTitle, st.chapterIndex, st.chapterTitle, queueSentences, prevPos)
+        startQueuePlayback(
+            bookId = bId,
+            bookTitle = st.bookTitle,
+            chapterIndex = st.chapterIndex,
+            chapterTitle = st.chapterTitle,
+            sentences = queueSentences,
+            startIndex = prevPos,
+            languageCode = currentLanguageCode
+        )
     }
 
     fun replayCurrentSentence() {
@@ -544,12 +821,13 @@ class AudioPlaybackController(
         val bId = st.bookId ?: return
         if (queueSentences.isEmpty()) return
         startQueuePlayback(
-            bId,
-            st.bookTitle,
-            st.chapterIndex,
-            st.chapterTitle,
-            queueSentences,
-            currentQueuePosition.coerceIn(0, queueSentences.lastIndex)
+            bookId = bId,
+            bookTitle = st.bookTitle,
+            chapterIndex = st.chapterIndex,
+            chapterTitle = st.chapterTitle,
+            sentences = queueSentences,
+            startIndex = currentQueuePosition.coerceIn(0, queueSentences.lastIndex),
+            languageCode = currentLanguageCode
         )
     }
 
@@ -557,11 +835,17 @@ class AudioPlaybackController(
         currentSpeed = speed
         scope.launch { settingsRepository.setPlaybackSpeed(speed) }
         _state.value = _state.value.copy(playbackSpeed = speed)
-        currentAudioTrack?.let { track ->
-            scope.launch {
-                val mode = settingsRepository.settingsFlow.first().speedControlMode
-                if (mode == SpeedControlMode.AUDIO_TRACK_TIME_STRETCH) {
-                    applyPlaybackSpeedToTrack(track, mode)
+        synchronized(trackLock) {
+            currentAudioTrack?.let { track ->
+                scope.launch {
+                    val mode = settingsRepository.settingsFlow.first().speedControlMode
+                    if (mode == SpeedControlMode.AUDIO_TRACK_TIME_STRETCH) {
+                        synchronized(trackLock) {
+                            if (currentAudioTrack === track) {
+                                applyPlaybackSpeedToTrack(track, mode)
+                            }
+                        }
+                    }
                 }
             }
         }
@@ -574,6 +858,7 @@ class AudioPlaybackController(
 
     private fun stopPlaybackInternal(resetPositionState: Boolean) {
         isPausedFlag = false
+        isStoppingFlag = true
         ttsEngineManager.cancelActiveSynthesis()
         playbackJob?.cancel()
         playbackJob = null
@@ -590,8 +875,11 @@ class AudioPlaybackController(
     }
 
     private fun releaseAudioTrack() {
-        val track = currentAudioTrack ?: return
-        currentAudioTrack = null
+        val track = synchronized(trackLock) {
+            val t = currentAudioTrack
+            currentAudioTrack = null
+            t
+        } ?: return
         runCatching {
             if (track.playState == AudioTrack.PLAYSTATE_PLAYING) track.pause()
             track.flush()
@@ -637,59 +925,6 @@ class AudioPlaybackController(
         runCatching {
             val intent = Intent(context, PlaybackService::class.java)
             ContextCompat.startForegroundService(context, intent)
-        }
-    }
-
-    private fun writeCachedChunk(file: File, chunk: PreparedAudioChunk) {
-        runCatching {
-            DataOutputStream(FileOutputStream(file)).use { out ->
-                out.writeInt(chunk.sampleRateHz)
-                out.writeInt(chunk.samples.size)
-                for (s in chunk.samples) out.writeFloat(s)
-                out.writeInt(chunk.wordTimestamps.size)
-                for (wt in chunk.wordTimestamps) {
-                    out.writeUTF(wt.word)
-                    out.writeInt(wt.startChar)
-                    out.writeInt(wt.endChar)
-                    out.writeFloat(wt.startSec)
-                    out.writeFloat(wt.endSec)
-                }
-            }
-        }
-    }
-
-    private fun readCachedChunk(sentence: SentenceEntity, file: File): PreparedAudioChunk? {
-        return runCatching {
-            DataInputStream(FileInputStream(file)).use { inp ->
-                val sr = inp.readInt()
-                val count = inp.readInt()
-                val samples = FloatArray(count) { inp.readFloat() }
-                val wtCount = inp.readInt()
-                val wts = List(wtCount) {
-                    WordTimestampRange(
-                        word = inp.readUTF(),
-                        startChar = inp.readInt(),
-                        endChar = inp.readInt(),
-                        startSec = inp.readFloat(),
-                        endSec = inp.readFloat()
-                    )
-                }
-                file.setLastModified(System.currentTimeMillis())
-                PreparedAudioChunk(sentence, samples, sr, wts)
-            }
-        }.getOrNull()
-    }
-
-    private fun pruneAudioCacheIfOversized() {
-        val maxBytes = 64L * 1024L * 1024L
-        val files = storageManager.audioCacheRoot.listFiles()?.toMutableList() ?: return
-        var total = files.sumOf { it.length() }
-        if (total <= maxBytes) return
-        files.sortBy { it.lastModified() }
-        for (f in files) {
-            if (total <= maxBytes * 3 / 4) break
-            val len = f.length()
-            if (f.delete()) total -= len
         }
     }
 }

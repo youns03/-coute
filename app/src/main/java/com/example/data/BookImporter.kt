@@ -4,7 +4,7 @@ import android.content.Context
 import android.net.Uri
 import android.provider.OpenableColumns
 import android.text.Html
-import com.example.domain.FrenchTextPreprocessor
+import com.example.domain.SpeechTextProcessor
 import com.example.translation.SourceLanguage
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -325,7 +325,7 @@ class BookImporter internal constructor(
         var totalSentences = 0
 
         sections.forEachIndexed { idx, section ->
-            val processed = FrenchTextPreprocessor.splitAndPreprocess(section.body)
+            val processed = SpeechTextProcessor.splitAndPreprocess(section.body, sourceLanguage)
             if (processed.isNotEmpty()) {
                 val realChIndex = chapters.size
                 val chTitle = section.title.ifBlank { "Section ${idx + 1}" }
@@ -345,7 +345,7 @@ class BookImporter internal constructor(
                             sentenceIndex = s.index,
                             paragraphIndex = s.paragraphIndex,
                             originalText = s.originalText,
-                            spokenText = if (sourceLanguage == "fr") s.spokenText else s.originalText
+                            spokenText = s.spokenText
                         )
                     )
                 }

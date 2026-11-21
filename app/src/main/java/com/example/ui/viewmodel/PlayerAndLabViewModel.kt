@@ -99,7 +99,10 @@ class PlayerAndLabViewModel(application: Application) : AndroidViewModel(applica
         if (_labState.value.isRunning) return
         viewModelScope.launch {
             playbackController.stop()
-            val readyModels = ModelCatalog.ttsModels.filter { app.storageManager.verifyInstalledPackage(it) }
+            val readyModels = ModelCatalog.ttsModels.filter {
+                app.storageManager.verifyInstalledPackage(it, verifyIntegrity = true) &&
+                    com.example.tts.MemoryDiagnostics.evaluateModelCompatibility(it, app).isSupported
+            }
             if (readyModels.isEmpty()) {
                 _labState.value = BenchmarkLabUiState(
                     lastError = "لا يوجد أي نموذج صوتي مثبت بعد. نزّل Kokoro أو Piper من إدارة النماذج أولاً."

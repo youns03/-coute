@@ -54,6 +54,14 @@ class ModelsAndSettingsViewModel(application: Application) : AndroidViewModel(ap
     }
 
     fun startOrResumeDownload(modelId: String) {
+        val spec = com.example.models.ModelCatalog.findById(modelId)
+        if (spec != null) {
+            val compat = MemoryDiagnostics.evaluateModelCompatibility(spec, app)
+            if (!compat.isSupported) {
+                _actionMessage.value = compat.detailsAr ?: compat.summaryAr
+                return
+            }
+        }
         modelRepo.startOrResumeDownload(modelId)
     }
 
@@ -67,18 +75,22 @@ class ModelsAndSettingsViewModel(application: Application) : AndroidViewModel(ap
     }
 
     fun activateModel(entry: ModelUiEntry) {
+        if (!entry.compatibility.isSupported) {
+            _actionMessage.value = entry.compatibility.detailsAr ?: entry.compatibility.summaryAr
+            return
+        }
         if (entry.status != ModelInstallStatus.INSTALLED) {
             _actionMessage.value = "يجب تثبيت النموذج والتحقق منه أولاً قبل تفعيله."
             return
         }
         viewModelScope.launch {
             app.playbackController.stop()
-            settingsRepo.setActiveModelId(entry.spec.id)
             val res = ttsEngineManager.switchModel(entry.spec.id, settings.value.acceleratorMode)
             res.onSuccess {
+                settingsRepo.setActiveModelId(entry.spec.id)
                 _actionMessage.value = "تم تفعيل وتحميل ${entry.spec.displayName} (${it.activeAccelerator})."
             }.onFailure { err ->
-                _actionMessage.value = "فشل تحميل النموذج: ${err.message}"
+                _actionMessage.value = "فشل تحميل النموذج (تم الإبقاء على الاختيار السابق): ${err.message}"
             }
             _storageBreakdown.value = modelRepo.getStorageBreakdown()
         }
@@ -101,7 +113,10 @@ class ModelsAndSettingsViewModel(application: Application) : AndroidViewModel(ap
             settingsRepo.setAcceleratorMode(mode)
             val loadedId = ttsEngineManager.runtimeState.value.loadedModelId
             if (loadedId != null) {
-                ttsEngineManager.switchModel(loadedId, mode)
+                val res = ttsEngineManager.switchModel(loadedId, mode)
+                res.onFailure { err ->
+                    _actionMessage.value = "تعذر تطبيق وضع التسريع الجديد: ${err.message}"
+                }
             }
         }
     }

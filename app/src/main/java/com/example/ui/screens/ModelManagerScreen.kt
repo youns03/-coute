@@ -49,6 +49,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.unit.dp
+import com.example.domain.ModelCompatibilityStatus
 import com.example.domain.ModelInstallStatus
 import com.example.domain.StorageBreakdown
 import com.example.models.ModelUiEntry
@@ -243,6 +244,7 @@ private fun ModelCatalogCard(
     onDelete: () -> Unit
 ) {
     val spec = entry.spec
+    val compat = entry.compatibility
     Card(
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
         elevation = CardDefaults.cardElevation(defaultElevation = if (entry.isActive) 3.dp else 1.dp),
@@ -266,6 +268,50 @@ private fun ModelCatalogCard(
                 }
                 if (spec.isPrimaryCandidate) {
                     AssistChip(onClick = {}, label = { Text("مرشح رئيسي") })
+                }
+            }
+
+            // Capability & device compatibility summary row
+            val langsLabel = if (spec.supportedLanguageCodes.size > 1) "FR • EN" else "FR فقط"
+            val capabilityLabel = buildString {
+                append(langsLabel)
+                if (!spec.supportsGpuDelegate) append(" • CPU فقط")
+                if (spec.singleSpeakerOnly) append(" • متحدث واحد (sid=0)")
+                if (spec.supportsWordTimestamps) append(" • توقيت كلمات")
+            }
+            Text(
+                text = capabilityLabel,
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.secondary
+            )
+
+            Surface(
+                color = when (compat.status) {
+                    ModelCompatibilityStatus.COMPATIBLE -> MaterialTheme.colorScheme.tertiaryContainer.copy(alpha = 0.55f)
+                    ModelCompatibilityStatus.WARNING_LOW_RAM -> MaterialTheme.colorScheme.secondaryContainer
+                    else -> MaterialTheme.colorScheme.errorContainer
+                },
+                shape = MaterialTheme.shapes.small,
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Column(modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp)) {
+                    Text(
+                        text = compat.summaryAr,
+                        style = MaterialTheme.typography.labelSmall,
+                        color = when (compat.status) {
+                            ModelCompatibilityStatus.COMPATIBLE -> MaterialTheme.colorScheme.onTertiaryContainer
+                            ModelCompatibilityStatus.WARNING_LOW_RAM -> MaterialTheme.colorScheme.onSecondaryContainer
+                            else -> MaterialTheme.colorScheme.onErrorContainer
+                        }
+                    )
+                    if (!compat.detailsAr.isNullOrBlank()) {
+                        Text(
+                            text = compat.detailsAr,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = if (compat.isSupported) MaterialTheme.colorScheme.onSecondaryContainer
+                            else MaterialTheme.colorScheme.onErrorContainer
+                        )
+                    }
                 }
             }
 
@@ -309,7 +355,7 @@ private fun ModelCatalogCard(
                 Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                     Icon(Icons.Rounded.VerifiedUser, contentDescription = null, tint = MaterialTheme.colorScheme.tertiary, modifier = Modifier.size(16.dp))
                     Text(
-                        "مثبّت في الذاكرة الدائمة • SHA-256: ✓ • اختبار التحميل: ✓",
+                        "مثبّت في الذاكرة الدائمة • SHA-256: ${if (entry.verifiedSha256) "✓" else "✗"} • اختبار التحميل: ${if (entry.verifiedLoadTest) "✓" else "✗"}",
                         style = MaterialTheme.typography.labelSmall,
                         color = MaterialTheme.colorScheme.tertiary
                     )
@@ -325,6 +371,7 @@ private fun ModelCatalogCard(
                     ModelInstallStatus.NOT_INSTALLED, ModelInstallStatus.FAILED, ModelInstallStatus.CORRUPTED -> {
                         Button(
                             onClick = onDownloadOrResume,
+                            enabled = compat.isSupported,
                             modifier = Modifier
                                 .minimumInteractiveComponentSize()
                                 .testTag("download_model_${spec.id}")
@@ -335,7 +382,13 @@ private fun ModelCatalogCard(
                                 modifier = Modifier.size(18.dp)
                             )
                             Spacer(Modifier.width(6.dp))
-                            Text(if (entry.status == ModelInstallStatus.NOT_INSTALLED) "تنزيل" else "إعادة المحاولة")
+                            Text(
+                                when {
+                                    !compat.isSupported -> "غير متوافق مع الجهاز"
+                                    entry.status == ModelInstallStatus.NOT_INSTALLED -> "تنزيل"
+                                    else -> "إعادة المحاولة"
+                                }
+                            )
                         }
                     }
                     ModelInstallStatus.DOWNLOADING -> {
@@ -351,7 +404,7 @@ private fun ModelCatalogCard(
                         }
                     }
                     ModelInstallStatus.PAUSED -> {
-                        Button(onClick = onDownloadOrResume) {
+                        Button(onClick = onDownloadOrResume, enabled = compat.isSupported) {
                             Icon(Icons.Rounded.PlayArrow, contentDescription = null, modifier = Modifier.size(18.dp))
                             Spacer(Modifier.width(6.dp))
                             Text("استكمال")
@@ -365,7 +418,7 @@ private fun ModelCatalogCard(
                     }
                     ModelInstallStatus.INSTALLED -> {
                         if (entry.isActive) {
-                            FilledTonalButton(onClick = onActivate) {
+                            FilledTonalButton(onClick = onActivate, enabled = compat.isSupported) {
                                 Icon(Icons.Rounded.CheckCircle, contentDescription = null, modifier = Modifier.size(18.dp))
                                 Spacer(Modifier.width(6.dp))
                                 Text("نشط حالياً")
@@ -373,6 +426,7 @@ private fun ModelCatalogCard(
                         } else {
                             Button(
                                 onClick = onActivate,
+                                enabled = compat.isSupported,
                                 modifier = Modifier.testTag("activate_model_${spec.id}")
                             ) {
                                 Text("تفعيل النموذج")

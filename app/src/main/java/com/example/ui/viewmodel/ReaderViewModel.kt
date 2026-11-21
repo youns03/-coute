@@ -160,6 +160,9 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
         val current = SourceLanguage.fromCode(book.sourceLanguage)
         val next = if (current == SourceLanguage.FRENCH) SourceLanguage.ENGLISH else SourceLanguage.FRENCH
         viewModelScope.launch {
+            if (playbackController.state.value.bookId == book.id) {
+                playbackController.stop()
+            }
             libraryRepo.updateBookSourceLanguage(book.id, next.code)
         }
     }
@@ -173,7 +176,8 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
             bookTitle = book.title,
             chapterIndex = st.activeChapterIndex,
             chapterTitle = chTitle,
-            startSentenceIndex = sentence.sentenceIndex
+            startSentenceIndex = sentence.sentenceIndex,
+            languageCode = book.sourceLanguage
         )
     }
 
@@ -190,7 +194,8 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
                 bookTitle = book.title,
                 chapterIndex = st.activeChapterIndex,
                 chapterTitle = chTitle,
-                startSentenceIndex = book.currentSentenceIndex
+                startSentenceIndex = book.currentSentenceIndex,
+                languageCode = book.sourceLanguage
             )
         }
     }
@@ -296,7 +301,13 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
     }
 
     fun pronounceSelectedWord(word: String) {
-        playbackController.pronounceStandalone(word, title = "نطق الكلمة")
+        val lang = _wordLookupSheet.value?.sourceLanguage
+            ?: SourceLanguage.fromCode(readerState.value.book?.sourceLanguage)
+        playbackController.pronounceStandalone(
+            frenchText = word,
+            title = "نطق الكلمة",
+            languageCode = lang.code
+        )
     }
 
     fun saveSelectedWordToVocab() {

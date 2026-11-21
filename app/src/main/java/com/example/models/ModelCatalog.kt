@@ -32,9 +32,9 @@ object ModelCatalog {
         ModelSpec(
             id = "kokoro-82m-gpu-fp16",
             displayName = "Kokoro-82M (GPU FP16 + CPU Fallback)",
-            language = "fr-FR",
+            language = "fr-FR / en-US",
             voiceId = "ff_siwis",
-            voiceDescriptionAr = "المرشح الأساسي: صوت نسائي فرنسي طبيعي جداً (ff_siwis) بسرعة 24 kHz مع دعم التوقيت التقريبي للكلمات",
+            voiceDescriptionAr = "المرشح الأساسي: صوت فرنسي طبيعي (ff_siwis) + دعم الإنجليزية (af_heart) بسرعة 24 kHz مع بث مباشر وتوقيت كلمات",
             format = "LiteRT-LM (.litertlm) INT8/FP16",
             engineType = EngineType.KOKORO_LITERT,
             version = "1.0-litert",
@@ -47,15 +47,28 @@ object ModelCatalog {
             ownerName = "hexgrad / Google LiteRT Community",
             sourceUrl = "https://huggingface.co/litert-community/Kokoro-82M",
             commercialAllowed = true,
-            attributionNotes = "Weights & LiteRT-LM bundle licensed under Apache 2.0. French voice ff_siwis derived from SIWIS corpus.",
-            isPrimaryCandidate = true
+            attributionNotes = "Weights & LiteRT-LM bundle licensed under Apache 2.0. French voice ff_siwis derived from SIWIS corpus; English voice af_heart.",
+            isPrimaryCandidate = true,
+            supportedLanguageCodes = listOf("fr", "en"),
+            localesByLanguage = mapOf("fr" to "fr-FR", "en" to "en-US"),
+            voicesByLanguage = mapOf(
+                "fr" to listOf("ff_siwis"),
+                "en" to listOf("af_heart", "af_bella", "bf_emma")
+            ),
+            minSdkRequired = 26,
+            minTotalRamMb = 1800L,
+            recommendedRamMb = 3072L,
+            requires64BitAbi = true,
+            singleSpeakerOnly = false,
+            supportsGpuDelegate = true,
+            supportsWordTimestamps = true
         ),
         ModelSpec(
             id = "kokoro-82m-cpu-fp16",
             displayName = "Kokoro-82M (CPU INT8/FP16)",
-            language = "fr-FR",
+            language = "fr-FR / en-US",
             voiceId = "ff_siwis",
-            voiceDescriptionAr = "نسخة Kokoro المخصصة للمعالجات التي لا تدعم OpenCL GPU بشكل مستقر (ff_siwis)",
+            voiceDescriptionAr = "نسخة Kokoro على المعالج (CPU) — ثبات عالٍ على الأجهزة التي لا تدعم OpenCL مع دعم الفرنسية والإنجليزية",
             format = "LiteRT-LM (.litertlm) CPU",
             engineType = EngineType.KOKORO_LITERT,
             version = "1.0-litert-cpu",
@@ -68,14 +81,27 @@ object ModelCatalog {
             ownerName = "hexgrad / Google LiteRT Community",
             sourceUrl = "https://huggingface.co/litert-community/Kokoro-82M",
             commercialAllowed = true,
-            attributionNotes = "Apache 2.0 license. CPU-tuned Kokoro-82M bundle."
+            attributionNotes = "Apache 2.0 license. CPU-tuned Kokoro-82M bundle.",
+            supportedLanguageCodes = listOf("fr", "en"),
+            localesByLanguage = mapOf("fr" to "fr-FR", "en" to "en-US"),
+            voicesByLanguage = mapOf(
+                "fr" to listOf("ff_siwis"),
+                "en" to listOf("af_heart", "af_bella", "bf_emma")
+            ),
+            minSdkRequired = 26,
+            minTotalRamMb = 1800L,
+            recommendedRamMb = 3072L,
+            requires64BitAbi = true,
+            singleSpeakerOnly = false,
+            supportsGpuDelegate = false,
+            supportsWordTimestamps = true
         ),
         ModelSpec(
             id = "piper-fr-siwis-medium",
             displayName = "Piper French SIWIS (Medium)",
             language = "fr-FR",
-            voiceId = "siwis",
-            voiceDescriptionAr = "المرشح المقارن 1: صوت نسائي فرنسي خفيف وسريع على المعالج (67 MB) عبر Sherpa-ONNX",
+            voiceId = "siwis (sid=0)",
+            voiceDescriptionAr = "نموذج فرنسي خفيف وسريع (67 MB) بمتحدث أنثوي واحد (CPU فقط via Sherpa-ONNX)",
             format = "VITS ONNX (.tar.bz2)",
             engineType = EngineType.PIPER_SHERPA_ONNX,
             version = "medium-1.0",
@@ -88,14 +114,24 @@ object ModelCatalog {
             ownerName = "Rhasspy Piper / k2-fsa Sherpa-ONNX",
             sourceUrl = "https://github.com/k2-fsa/sherpa-onnx/releases/tag/tts-models",
             commercialAllowed = false,
-            attributionNotes = "VITS ONNX weights under MIT; SIWIS French speech dataset CC-BY-4.0; uses eSpeak-ng phonemizer data (GPL-3.0+)."
+            attributionNotes = "VITS ONNX weights under MIT; SIWIS French speech dataset CC-BY-4.0; uses eSpeak-ng phonemizer data (GPL-3.0+).",
+            supportedLanguageCodes = listOf("fr"),
+            localesByLanguage = mapOf("fr" to "fr-FR"),
+            voicesByLanguage = mapOf("fr" to listOf("siwis")),
+            minSdkRequired = 24,
+            minTotalRamMb = 768L,
+            recommendedRamMb = 1500L,
+            requires64BitAbi = false,
+            singleSpeakerOnly = true,
+            supportsGpuDelegate = false,
+            supportsWordTimestamps = false
         ),
         ModelSpec(
             id = "piper-fr-tom-medium",
             displayName = "Piper French Tom (Medium)",
             language = "fr-FR",
-            voiceId = "tom",
-            voiceDescriptionAr = "المرشح المقارن 2: صوت رجالي فرنسي واضح للنصوص التعليمية (67 MB) عبر Sherpa-ONNX",
+            voiceId = "tom (sid=0)",
+            voiceDescriptionAr = "نموذج فرنسي خفيف (67 MB) بمتحدث ذكوري واحد للنصوص التعليمية (CPU فقط via Sherpa-ONNX)",
             format = "VITS ONNX (.tar.bz2)",
             engineType = EngineType.PIPER_SHERPA_ONNX,
             version = "medium-1.0",
@@ -108,7 +144,17 @@ object ModelCatalog {
             ownerName = "Rhasspy Piper / k2-fsa Sherpa-ONNX",
             sourceUrl = "https://github.com/k2-fsa/sherpa-onnx/releases/tag/tts-models",
             commercialAllowed = false,
-            attributionNotes = "Piper French Tom voice packaged for Sherpa-ONNX; verify commercial clearance of eSpeak-ng before commercial release."
+            attributionNotes = "Piper French Tom voice packaged for Sherpa-ONNX; verify commercial clearance of eSpeak-ng before commercial release.",
+            supportedLanguageCodes = listOf("fr"),
+            localesByLanguage = mapOf("fr" to "fr-FR"),
+            voicesByLanguage = mapOf("fr" to listOf("tom")),
+            minSdkRequired = 24,
+            minTotalRamMb = 768L,
+            recommendedRamMb = 1500L,
+            requires64BitAbi = false,
+            singleSpeakerOnly = true,
+            supportsGpuDelegate = false,
+            supportsWordTimestamps = false
         )
     )
 

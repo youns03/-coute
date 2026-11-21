@@ -26,6 +26,21 @@ enum class ModelInstallStatus {
     FAILED
 }
 
+enum class ModelCompatibilityStatus {
+    COMPATIBLE,
+    WARNING_LOW_RAM,
+    INCOMPATIBLE_API,
+    INCOMPATIBLE_ABI,
+    INCOMPATIBLE_RAM
+}
+
+data class ModelCompatibilityReport(
+    val status: ModelCompatibilityStatus,
+    val isSupported: Boolean,
+    val summaryAr: String,
+    val detailsAr: String? = null
+)
+
 data class ModelSpec(
     val id: String,
     val displayName: String,
@@ -45,8 +60,31 @@ data class ModelSpec(
     val sourceUrl: String,
     val commercialAllowed: Boolean,
     val attributionNotes: String,
-    val isPrimaryCandidate: Boolean = false
-)
+    val isPrimaryCandidate: Boolean = false,
+    val supportedLanguageCodes: List<String> = listOf("fr"),
+    val localesByLanguage: Map<String, String> = mapOf("fr" to "fr-FR"),
+    val voicesByLanguage: Map<String, List<String>> = mapOf("fr" to listOf(voiceId)),
+    val minSdkRequired: Int = 24,
+    val minTotalRamMb: Long = 0L,
+    val recommendedRamMb: Long = 0L,
+    val requires64BitAbi: Boolean = false,
+    val singleSpeakerOnly: Boolean = false,
+    val supportsGpuDelegate: Boolean = false,
+    val supportsWordTimestamps: Boolean = false
+) {
+    fun supportsLanguage(langCode: String): Boolean =
+        supportedLanguageCodes.any { it.equals(langCode.trim(), ignoreCase = true) }
+
+    fun localeFor(langCode: String): String {
+        val norm = langCode.lowercase()
+        return localesByLanguage[norm] ?: if (norm == "en") "en-US" else "fr-FR"
+    }
+
+    fun defaultVoiceFor(langCode: String): String {
+        val norm = langCode.lowercase()
+        return voicesByLanguage[norm]?.firstOrNull() ?: voiceId
+    }
+}
 
 enum class ArchiveType {
     SINGLE_LITERTLM,
@@ -60,6 +98,13 @@ data class WordTimestampRange(
     val endChar: Int,
     val startSec: Float,
     val endSec: Float
+)
+
+data class TtsStreamChunk(
+    val samples: FloatArray,
+    val sampleRateHz: Int,
+    val wordTimestamps: List<WordTimestampRange> = emptyList(),
+    val isFinal: Boolean = false
 )
 
 data class TtsSynthesisResult(

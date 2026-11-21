@@ -643,18 +643,16 @@ private fun SentenceReaderItem(
                 horizontalArrangement = Arrangement.End,
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                if (sourceLanguage == SourceLanguage.FRENCH) {
-                    IconButton(
-                        onClick = onPlaySentence,
-                        modifier = Modifier.minimumInteractiveComponentSize()
-                    ) {
-                        Icon(
-                            Icons.Rounded.VolumeUp,
-                            contentDescription = "تشغيل من هذه الجملة",
-                            tint = if (isCurrent) MaterialTheme.colorScheme.secondary else MaterialTheme.colorScheme.onSurfaceVariant,
-                            modifier = Modifier.size(18.dp)
-                        )
-                    }
+                IconButton(
+                    onClick = onPlaySentence,
+                    modifier = Modifier.minimumInteractiveComponentSize()
+                ) {
+                    Icon(
+                        Icons.Rounded.VolumeUp,
+                        contentDescription = "تشغيل من هذه الجملة",
+                        tint = if (isCurrent) MaterialTheme.colorScheme.secondary else MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.size(18.dp)
+                    )
                 }
                 IconButton(
                     onClick = onToggleTranslateSentence,
@@ -795,7 +793,7 @@ private fun ReaderAudioBar(
         Column(modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp)) {
             if (bookSourceLanguage == SourceLanguage.ENGLISH) {
                 Text(
-                    text = "كتاب إنجليزي: القراءة والترجمة (EN → AR) مفعّلتان • محركات النطق الحالية مخصصة للفرنسية.",
+                    text = "كتاب إنجليزي: القراءة والترجمة (EN → AR) والنطق متاح عبر Kokoro-82M (نماذج Piper تدعم الفرنسية فقط).",
                     style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     modifier = Modifier.padding(bottom = 4.dp)
@@ -819,14 +817,12 @@ private fun ReaderAudioBar(
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     IconButton(
                         onClick = onPrev,
-                        enabled = bookSourceLanguage == SourceLanguage.FRENCH,
                         modifier = Modifier.minimumInteractiveComponentSize()
                     ) {
                         Icon(Icons.Rounded.SkipPrevious, contentDescription = "الجملة السابقة")
                     }
                     FilledTonalButton(
                         onClick = onTogglePlay,
-                        enabled = bookSourceLanguage == SourceLanguage.FRENCH,
                         modifier = Modifier
                             .minimumInteractiveComponentSize()
                             .testTag("reader_play_pause_button")
@@ -850,7 +846,6 @@ private fun ReaderAudioBar(
                     }
                     IconButton(
                         onClick = onNext,
-                        enabled = bookSourceLanguage == SourceLanguage.FRENCH,
                         modifier = Modifier.minimumInteractiveComponentSize()
                     ) {
                         Icon(Icons.Rounded.SkipNext, contentDescription = "الجملة التالية")
@@ -907,15 +902,13 @@ private fun WordLookupModalSheet(
                         color = MaterialTheme.colorScheme.primary
                     )
                 }
-                if (sheet.sourceLanguage == SourceLanguage.FRENCH) {
-                    FilledTonalButton(
-                        onClick = onPronounce,
-                        modifier = Modifier.testTag("pronounce_word_button")
-                    ) {
-                        Icon(Icons.Rounded.VolumeUp, contentDescription = null)
-                        Spacer(Modifier.width(6.dp))
-                        Text("نطق")
-                    }
+                FilledTonalButton(
+                    onClick = onPronounce,
+                    modifier = Modifier.testTag("pronounce_word_button")
+                ) {
+                    Icon(Icons.Rounded.VolumeUp, contentDescription = null)
+                    Spacer(Modifier.width(6.dp))
+                    Text("نطق")
                 }
             }
 

@@ -139,6 +139,7 @@ class ModelStorageManager(private val context: Context) {
             }
 
             verifyExtractedStructure(spec, stagingDir)
+            writeIntegrityManifest(spec, stagingDir)
 
             val finalDir = getInstalledModelDir(spec.id)
             if (finalDir.exists()) finalDir.deleteRecursively()
@@ -152,13 +153,103 @@ class ModelStorageManager(private val context: Context) {
         }
     }
 
-    fun verifyInstalledPackage(spec: ModelSpec): Boolean {
+    fun verifyInstalledPackage(spec: ModelSpec, verifyIntegrity: Boolean = false): Boolean {
         val dir = getInstalledModelDir(spec.id)
         if (!dir.exists() || !dir.isDirectory) return false
         return runCatching {
             verifyExtractedStructure(spec, dir)
+            if (verifyIntegrity) {
+                verifyIntegrityManifest(spec, dir)
+            }
             true
         }.getOrDefault(false)
+    }
+
+    private fun writeIntegrityManifest(spec: ModelSpec, dir: File) {
+        val manifestFile = File(dir, INTEGRITY_MANIFEST_FILE)
+        val rootPath = dir.canonicalFile.toPath()
+        val files = dir.walkTopDown()
+            .filter { it.isFile && it.name != INTEGRITY_MANIFEST_FILE }
+            .sortedBy { rootPath.relativize(it.canonicalFile.toPath()).toString().replace('\\', '/') }
+            .toList()
+        if (files.isEmpty()) error("لا توجد ملفات لإنشاء سجل التحقق التشفيري.")
+
+        val content = buildString {
+            appendLine("version=${spec.version}")
+            appendLine("packageSha256=${spec.sha256.lowercase()}")
+            for (file in files) {
+                val rel = rootPath.relativize(file.canonicalFile.toPath()).toString().replace('\\', '/')
+                val sha = computeSha256(file)
+                appendLine("file|$rel|${file.length()}|$sha")
+            }
+        }
+        manifestFile.writeText(content, Charsets.UTF_8)
+    }
+
+    private fun verifyIntegrityManifest(spec: ModelSpec, dir: File) {
+        if (spec.archiveType == ArchiveType.SINGLE_LITERTLM) {
+            val litertFile = resolveKokoroModelFile(dir)
+                ?: error("ملف .litertlm مفقود.")
+            val actualPkgSha = computeSha256(litertFile)
+            if (!actualPkgSha.equals(spec.sha256, ignoreCase = true)) {
+                error("بصمة SHA-256 لملف .litertlm لا تطابق المرجع الموثّق.")
+            }
+        }
+
+        val manifestFile = File(dir, INTEGRITY_MANIFEST_FILE)
+        if (!manifestFile.exists() || !manifestFile.isFile) {
+            error("ملف التحقق $INTEGRITY_MANIFEST_FILE مفقود.")
+        }
+        val lines = manifestFile.readLines(Charsets.UTF_8)
+            .map { it.trim() }
+            .filter { it.isNotEmpty() }
+
+        val recordedVersion = lines.firstOrNull { it.startsWith("version=") }?.removePrefix("version=")
+        val recordedPkgSha = lines.firstOrNull { it.startsWith("packageSha256=") }?.removePrefix("packageSha256=")
+        if (recordedVersion != spec.version) {
+            error("عدم تطابق إصدار النموذج: المسجل=$recordedVersion والمطلوب=${spec.version}.")
+        }
+        if (!recordedPkgSha.equals(spec.sha256, ignoreCase = true)) {
+            error("بصمة الحزمة في سجل التحقق لا تطابق SHA-256 المعتمد.")
+        }
+
+        val fileLines = lines.filter { it.startsWith("file|") }
+        if (fileLines.isEmpty()) error("سجل التحقق فارغ من الملفات.")
+
+        val recordedPaths = HashSet<String>(fileLines.size)
+        for (line in fileLines) {
+            val parts = line.split('|')
+            if (parts.size != 4) error("تنسيق تالف في سجل التحقق.")
+            val relPath = parts[1]
+            val expectedLen = parts[2].toLongOrNull() ?: error("طول غير صالح في سجل التحقق.")
+            val expectedSha = parts[3]
+            if (relPath.contains("..") || relPath.startsWith("/")) {
+                error("مسار غير آمن في سجل التحقق.")
+            }
+            val target = File(dir, relPath)
+            if (!target.exists() || !target.isFile) {
+                error("ملف مفقود من النموذج: $relPath")
+            }
+            if (target.length() != expectedLen) {
+                error("تغيّر حجم الملف $relPath عن المسجل.")
+            }
+            val actualSha = computeSha256(target)
+            if (!actualSha.equals(expectedSha, ignoreCase = true)) {
+                error("تلف أو تعديل محتوى الملف $relPath (SHA-256 غير مطابق).")
+            }
+            recordedPaths.add(relPath)
+        }
+
+        // Reject tampered/unrecorded payload files inside the model directory
+        val rootPath = dir.canonicalFile.toPath()
+        val unexpectedFiles = dir.walkTopDown()
+            .filter { it.isFile && it.name != INTEGRITY_MANIFEST_FILE }
+            .map { rootPath.relativize(it.canonicalFile.toPath()).toString().replace('\\', '/') }
+            .filter { it !in recordedPaths }
+            .toList()
+        if (unexpectedFiles.isNotEmpty()) {
+            error("وجود ملفات غير موثّقة داخل مجلد النموذج: ${unexpectedFiles.first()}")
+        }
     }
 
     private fun verifyExtractedStructure(spec: ModelSpec, dir: File) {
@@ -185,6 +276,10 @@ class ModelStorageManager(private val context: Context) {
                 }
             }
         }
+    }
+
+    companion object {
+        const val INTEGRITY_MANIFEST_FILE = ".integrity.sha256"
     }
 
     fun resolveKokoroModelFile(modelDir: File): File? =

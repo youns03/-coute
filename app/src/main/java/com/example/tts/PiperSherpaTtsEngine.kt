@@ -4,6 +4,7 @@ import android.os.SystemClock
 import com.example.domain.AcceleratorMode
 import com.example.domain.EngineType
 import com.example.domain.ModelSpec
+import com.example.domain.TtsStreamChunk
 import com.example.domain.TtsSynthesisResult
 import com.example.models.ModelStorageManager
 import com.k2fsa.sherpa.onnx.OfflineTts
@@ -11,12 +12,81 @@ import com.k2fsa.sherpa.onnx.OfflineTtsConfig
 import com.k2fsa.sherpa.onnx.OfflineTtsModelConfig
 import com.k2fsa.sherpa.onnx.OfflineTtsVitsModelConfig
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.channels.awaitClose
+import kotlinx.coroutines.channels.trySendBlocking
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.callbackFlow
+import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.withContext
 import java.io.File
 
-class PiperSherpaTtsEngine(
-    private val storageManager: ModelStorageManager
+internal interface PiperNativeSession {
+    val sampleRateHz: Int
+    fun generate(text: String, sid: Int, speed: Float): FloatArray
+    fun generateWithCallback(text: String, sid: Int, speed: Float, callback: (FloatArray) -> Int)
+    fun release()
+}
+
+internal fun interface PiperSessionFactory {
+    fun create(onnxFile: File, tokensFile: File, espeakDir: File, threads: Int): PiperNativeSession
+}
+
+private object DefaultPiperSessionFactory : PiperSessionFactory {
+    override fun create(
+        onnxFile: File,
+        tokensFile: File,
+        espeakDir: File,
+        threads: Int
+    ): PiperNativeSession {
+        val vitsConfig = OfflineTtsVitsModelConfig(
+            model = onnxFile.absolutePath,
+            tokens = tokensFile.absolutePath,
+            dataDir = espeakDir.absolutePath
+        )
+        val modelConfig = OfflineTtsModelConfig(
+            vits = vitsConfig,
+            numThreads = threads,
+            debug = false,
+            provider = "cpu"
+        )
+        val ttsConfig = OfflineTtsConfig(
+            model = modelConfig,
+            maxNumSentences = 1
+        )
+        val created = OfflineTts(assetManager = null, config = ttsConfig)
+        return object : PiperNativeSession {
+            override val sampleRateHz: Int
+                get() = created.sampleRate().takeIf { it in 8000..96000 } ?: 22050
+
+            override fun generate(text: String, sid: Int, speed: Float): FloatArray {
+                return created.generate(text = text, sid = sid, speed = speed).samples
+            }
+
+            override fun generateWithCallback(
+                text: String,
+                sid: Int,
+                speed: Float,
+                callback: (FloatArray) -> Int
+            ) {
+                created.generateWithCallback(text = text, sid = sid, speed = speed, callback = callback)
+            }
+
+            override fun release() {
+                created.release()
+            }
+        }
+    }
+}
+
+class PiperSherpaTtsEngine internal constructor(
+    private val storageManager: ModelStorageManager,
+    private val sessionFactory: PiperSessionFactory
 ) : TtsEngine {
+
+    constructor(storageManager: ModelStorageManager) : this(
+        storageManager = storageManager,
+        sessionFactory = DefaultPiperSessionFactory
+    )
 
     override val engineType: EngineType = EngineType.PIPER_SHERPA_ONNX
     override var modelId: String = ""
@@ -24,7 +94,7 @@ class PiperSherpaTtsEngine(
     override var sampleRateHz: Int = 22050
         private set
     override val isLoaded: Boolean
-        get() = offlineTts != null
+        get() = session != null
     override var activeAccelerator: String = "UNINITIALIZED"
         private set
     override var fellBackToCpu: Boolean = false
@@ -32,7 +102,8 @@ class PiperSherpaTtsEngine(
     override var fallbackReason: String? = null
         private set
 
-    private var offlineTts: OfflineTts? = null
+    private var session: PiperNativeSession? = null
+    private var activeSpec: ModelSpec? = null
 
     @Volatile
     private var cancelled: Boolean = false
@@ -47,31 +118,17 @@ class PiperSherpaTtsEngine(
             val (onnxFile, tokensFile, espeakDir) = storageManager.resolvePiperPaths(modelDir)
                 ?: error("ملفات Piper ONNX أو espeak-ng-data غير مكتملة في ${modelDir.absolutePath}")
             modelId = spec.id
+            activeSpec = spec
             val startMs = SystemClock.elapsedRealtime()
             val threads = Runtime.getRuntime().availableProcessors().coerceIn(2, 4)
 
-            val vitsConfig = OfflineTtsVitsModelConfig(
-                model = onnxFile.absolutePath,
-                tokens = tokensFile.absolutePath,
-                dataDir = espeakDir.absolutePath
-            )
-            val modelConfig = OfflineTtsModelConfig(
-                vits = vitsConfig,
-                numThreads = threads,
-                debug = false,
-                provider = "cpu"
-            )
-            val ttsConfig = OfflineTtsConfig(
-                model = modelConfig,
-                maxNumSentences = 1
-            )
-            val created = OfflineTts(assetManager = null, config = ttsConfig)
-            sampleRateHz = created.sampleRate().takeIf { it > 0 } ?: 22050
-            offlineTts = created
+            val created = sessionFactory.create(onnxFile, tokensFile, espeakDir, threads)
+            sampleRateHz = created.sampleRateHz.takeIf { it in 8000..96000 } ?: 22050
+            session = created
             if (acceleratorMode == AcceleratorMode.GPU_ONLY) {
-                activeAccelerator = "CPU (ONNX VITS)"
+                activeAccelerator = "CPU فقط (ONNX VITS)"
                 fellBackToCpu = true
-                fallbackReason = "Piper VITS via Sherpa-ONNX runs on CPU provider"
+                fallbackReason = "نموذج Piper يعمل على CPU دائماً (لا يدعم GPU)"
             } else {
                 activeAccelerator = "CPU ($threads threads)"
                 fellBackToCpu = false
@@ -81,16 +138,27 @@ class PiperSherpaTtsEngine(
         }
     }
 
+    private fun validateLocaleSupported(locale: String) {
+        val langCode = if (locale.startsWith("en", ignoreCase = true)) "en" else "fr"
+        val spec = activeSpec
+        if (spec != null && !spec.supportsLanguage(langCode)) {
+            error("نموذج ${spec.displayName} مخصّص للفرنسية فقط ولا يدعم قراءة الإنجليزية. فعّل Kokoro-82M للكتب الإنجليزية.")
+        }
+    }
+
     override suspend fun synthesize(
         spokenText: String,
         voiceId: String,
-        speed: Float
+        speed: Float,
+        locale: String
     ): Result<TtsSynthesisResult> = withContext(Dispatchers.IO) {
         runCatching {
-            val engine = offlineTts ?: error("محرك Sherpa-ONNX غير مهيأ.")
+            validateLocaleSupported(locale)
+            val engine = session ?: error("محرك Sherpa-ONNX غير مهيأ.")
             cancelled = false
             val startMs = SystemClock.elapsedRealtime()
-            val generated = engine.generate(
+            // Piper VITS single-speaker models always encode their speaker in the ONNX weights (sid = 0)
+            val rawSamples = engine.generate(
                 text = spokenText,
                 sid = 0,
                 speed = speed.coerceIn(0.5f, 2.0f)
@@ -99,12 +167,12 @@ class PiperSherpaTtsEngine(
                 error("تم إلغاء التوليد")
             }
             val elapsedMs = SystemClock.elapsedRealtime() - startMs
-            val rate = generated.sampleRate.takeIf { it > 0 } ?: sampleRateHz
+            val rate = engine.sampleRateHz.takeIf { it in 8000..96000 } ?: sampleRateHz
             sampleRateHz = rate
             TtsSynthesisResult(
-                samples = generated.samples,
+                samples = sanitizeSamples(rawSamples),
                 sampleRateHz = rate,
-                wordTimestamps = emptyList(), // Piper VITS does not provide word-level timestamps
+                wordTimestamps = emptyList(),
                 synthesisTimeMs = elapsedMs,
                 usedAccelerator = activeAccelerator,
                 fellBackToCpu = fellBackToCpu,
@@ -113,13 +181,80 @@ class PiperSherpaTtsEngine(
         }
     }
 
+    override fun synthesizeStream(
+        spokenText: String,
+        voiceId: String,
+        speed: Float,
+        locale: String
+    ): Flow<TtsStreamChunk> = callbackFlow {
+        validateLocaleSupported(locale)
+        val engine = session ?: throw IllegalStateException("محرك Sherpa-ONNX غير مهيأ.")
+        cancelled = false
+        val rate = engine.sampleRateHz.takeIf { it in 8000..96000 } ?: sampleRateHz
+        sampleRateHz = rate
+
+        var totalEmittedSamples = 0
+        try {
+            engine.generateWithCallback(
+                text = spokenText,
+                sid = 0,
+                speed = speed.coerceIn(0.5f, 2.0f)
+            ) { chunk ->
+                if (cancelled) return@generateWithCallback 0
+                val clean = sanitizeSamples(chunk)
+                if (clean.isNotEmpty()) {
+                    totalEmittedSamples += clean.size
+                    val sendResult = trySendBlocking(
+                        TtsStreamChunk(
+                            samples = clean,
+                            sampleRateHz = rate,
+                            wordTimestamps = emptyList(),
+                            isFinal = false
+                        )
+                    )
+                    if (sendResult.isFailure) return@generateWithCallback 0
+                }
+                1
+            }
+            if (!cancelled && totalEmittedSamples > 0) {
+                trySendBlocking(
+                    TtsStreamChunk(
+                        samples = FloatArray(0),
+                        sampleRateHz = rate,
+                        wordTimestamps = emptyList(),
+                        isFinal = true
+                    )
+                )
+            }
+            close()
+        } catch (t: Throwable) {
+            close(t)
+        }
+        awaitClose { cancelled = true }
+    }.flowOn(Dispatchers.IO)
+
+    private fun sanitizeSamples(raw: FloatArray): FloatArray {
+        var needsCopy = false
+        for (s in raw) {
+            if (!s.isFinite() || s < -1f || s > 1f) {
+                needsCopy = true
+                break
+            }
+        }
+        if (!needsCopy) return raw
+        return FloatArray(raw.size) { i ->
+            val v = raw[i]
+            if (v.isFinite()) v.coerceIn(-1f, 1f) else 0f
+        }
+    }
+
     override fun cancel() {
         cancelled = true
     }
 
     override fun release() {
-        runCatching { offlineTts?.release() }
-        offlineTts = null
+        runCatching { session?.release() }
+        session = null
         activeAccelerator = "RELEASED"
     }
 }

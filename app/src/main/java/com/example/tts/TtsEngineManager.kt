@@ -6,15 +6,19 @@ import com.example.data.BenchmarkReportEntity
 import com.example.domain.AcceleratorMode
 import com.example.domain.BenchmarkItem
 import com.example.domain.EngineType
-import com.example.domain.FrenchTextPreprocessor
 import com.example.domain.ModelSpec
+import com.example.domain.SpeechTextProcessor
+import com.example.domain.TtsStreamChunk
 import com.example.domain.TtsSynthesisResult
 import com.example.models.ModelCatalog
 import com.example.models.ModelStorageManager
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.channelFlow
+import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
@@ -48,6 +52,63 @@ class TtsEngineManager(
     private val _runtimeState = MutableStateFlow(EngineRuntimeState())
     val runtimeState: StateFlow<EngineRuntimeState> = _runtimeState.asStateFlow()
 
+    /**
+     * Resolves an installed, device-compatible model supporting [languageCode].
+     * Prefers [preferredModelId]; if it only supports another language (e.g. Piper on an English book),
+     * automatically falls back to another installed compatible model that supports [languageCode] or fails clearly.
+     */
+    fun resolveModelForLanguage(
+        preferredModelId: String,
+        languageCode: String
+    ): Result<ModelSpec> {
+        val normLang = SpeechTextProcessor.normalizeLangCode(languageCode)
+        val hw = MemoryDiagnostics.getDeviceHardwareInfo(context)
+        val preferred = ModelCatalog.findById(preferredModelId)
+
+        fun isReadyAndCompatible(spec: ModelSpec): Boolean {
+            if (!MemoryDiagnostics.evaluateModelCompatibility(spec, hw).isSupported) return false
+            if (!storageManager.verifyInstalledPackage(spec, verifyIntegrity = true)) return false
+            if (spec.requiresEspeakData &&
+                !storageManager.verifyInstalledPackage(ModelCatalog.espeakNgDataSpec, verifyIntegrity = true)
+            ) {
+                return false
+            }
+            return true
+        }
+
+        if (preferred != null && isReadyAndCompatible(preferred) && preferred.supportsLanguage(normLang)) {
+            return Result.success(preferred)
+        }
+
+        val alternate = ModelCatalog.ttsModels.firstOrNull { candidate ->
+            candidate.id != preferredModelId &&
+                candidate.supportsLanguage(normLang) &&
+                isReadyAndCompatible(candidate)
+        }
+        if (alternate != null) {
+            return Result.success(alternate)
+        }
+
+        return when {
+            preferred != null && isReadyAndCompatible(preferred) && !preferred.supportsLanguage(normLang) -> {
+                Result.failure(
+                    IllegalStateException(
+                        "النموذج النشط (${preferred.displayName}) يدعم الفرنسية فقط ولا يدعم ${if (normLang == "en") "الإنجليزية" else normLang}. ثبّت نموذج Kokoro-82M من شاشة النماذج لقراءة النصوص الإنجليزية."
+                    )
+                )
+            }
+            preferred != null && !MemoryDiagnostics.evaluateModelCompatibility(preferred, hw).isSupported -> {
+                val report = MemoryDiagnostics.evaluateModelCompatibility(preferred, hw)
+                Result.failure(IllegalStateException(report.detailsAr ?: report.summaryAr))
+            }
+            else -> {
+                Result.failure(
+                    IllegalStateException("لا يوجد نموذج صوتي مثبّت ومتحقق منه للغة ($normLang). افتح شاشة النماذج ونزّل نموذجاً متوافقاً.")
+                )
+            }
+        }
+    }
+
     suspend fun ensureLoaded(
         modelId: String,
         acceleratorMode: AcceleratorMode
@@ -79,12 +140,26 @@ class TtsEngineManager(
 
         val spec = ModelCatalog.findById(modelId)
             ?: return Result.failure(IllegalArgumentException("نموذج غير معروف: $modelId"))
+
+        val compat = MemoryDiagnostics.evaluateModelCompatibility(spec, context)
+        if (!compat.isSupported) {
+            val msg = compat.detailsAr ?: compat.summaryAr
+            _runtimeState.value = EngineRuntimeState(lastError = msg)
+            return Result.failure(IllegalStateException(msg))
+        }
+
         val modelDir = storageManager.getInstalledModelDir(modelId)
-        if (!storageManager.verifyInstalledPackage(spec)) {
-            _runtimeState.value = EngineRuntimeState(
-                lastError = "النموذج ${spec.displayName} غير مثبت أو ملفاته ناقصة."
-            )
-            return Result.failure(IllegalStateException("النموذج غير مثبت: ${spec.displayName}"))
+        if (!storageManager.verifyInstalledPackage(spec, verifyIntegrity = true)) {
+            val msg = "النموذج ${spec.displayName} غير مثبّت أو فشل فحص سلامة الملفات (SHA-256)."
+            _runtimeState.value = EngineRuntimeState(lastError = msg)
+            return Result.failure(IllegalStateException(msg))
+        }
+        if (spec.requiresEspeakData &&
+            !storageManager.verifyInstalledPackage(ModelCatalog.espeakNgDataSpec, verifyIntegrity = true)
+        ) {
+            val msg = "بيانات eSpeak-ng المرافقة مفقودة أو تالفة. أعد تنزيل النموذج من شاشة النماذج."
+            _runtimeState.value = EngineRuntimeState(lastError = msg)
+            return Result.failure(IllegalStateException(msg))
         }
 
         val ramBefore = MemoryDiagnostics.getProcessPssMb(context)
@@ -136,7 +211,8 @@ class TtsEngineManager(
         acceleratorMode: AcceleratorMode,
         spokenText: String,
         voiceId: String,
-        speed: Float
+        speed: Float,
+        languageCode: String = "fr"
     ): Result<TtsSynthesisResult> = mutex.withLock {
         val engine = if (activeEngine != null && activeEngine!!.isLoaded && activeEngine!!.modelId == modelId) {
             activeEngine!!
@@ -146,7 +222,11 @@ class TtsEngineManager(
             loaded.getOrThrow()
         }
 
-        val res = engine.synthesize(spokenText, voiceId, speed)
+        val spec = ModelCatalog.findById(modelId)
+        val locale = spec?.localeFor(languageCode) ?: "fr-FR"
+        val resolvedVoice = voiceId.ifBlank { spec?.defaultVoiceFor(languageCode) ?: "ff_siwis" }
+
+        val res = engine.synthesize(spokenText, resolvedVoice, speed, locale)
         val peakRam = MemoryDiagnostics.getProcessPssMb(context)
         val synth = res.getOrNull()
         _runtimeState.value = _runtimeState.value.copy(
@@ -159,12 +239,52 @@ class TtsEngineManager(
     }
 
     /**
+     * True chunk-by-chunk audio streaming flow serialized safely per engine instance.
+     */
+    fun synthesizeSentenceStream(
+        modelId: String,
+        acceleratorMode: AcceleratorMode,
+        spokenText: String,
+        languageCode: String = "fr",
+        voiceId: String = "",
+        speed: Float = 1.0f
+    ): Flow<TtsStreamChunk> = channelFlow {
+        mutex.withLock {
+            val engine = if (activeEngine != null && activeEngine!!.isLoaded && activeEngine!!.modelId == modelId) {
+                activeEngine!!
+            } else {
+                loadModelLocked(modelId, acceleratorMode).getOrThrow()
+            }
+
+            val spec = ModelCatalog.findById(modelId)
+            val locale = spec?.localeFor(languageCode) ?: "fr-FR"
+            val resolvedVoice = voiceId.ifBlank { spec?.defaultVoiceFor(languageCode) ?: "ff_siwis" }
+
+            engine.synthesizeStream(spokenText, resolvedVoice, speed, locale).collect { chunk ->
+                send(chunk)
+                val peakRam = MemoryDiagnostics.getProcessPssMb(context)
+                _runtimeState.value = _runtimeState.value.copy(
+                    acceleratorLabel = engine.activeAccelerator,
+                    fellBackToCpu = engine.fellBackToCpu,
+                    fallbackReason = engine.fallbackReason,
+                    ramPeakSynthesisMb = maxOf(_runtimeState.value.ramPeakSynthesisMb, peakRam)
+                )
+            }
+        }
+    }.flowOn(Dispatchers.IO)
+
+    /**
      * Runs a real load + short synthesis verification test right after download/extraction
      * before marking a model as permanently installed.
      */
     suspend fun verifyModelLoadable(spec: ModelSpec, extractedDir: File): Result<Unit> = withContext(Dispatchers.IO) {
         mutex.withLock {
             runCatching {
+                val compat = MemoryDiagnostics.evaluateModelCompatibility(spec, context)
+                if (!compat.isSupported) {
+                    error(compat.detailsAr ?: compat.summaryAr)
+                }
+
                 val previous = activeEngine
                 previous?.cancel()
                 previous?.release()
@@ -177,7 +297,12 @@ class TtsEngineManager(
                 try {
                     val initRes = testEngine.initialize(spec, extractedDir, AcceleratorMode.AUTO_GPU_WITH_CPU_FALLBACK)
                     initRes.getOrThrow()
-                    val synRes = testEngine.synthesize("Bonjour.", spec.voiceId, 1.0f)
+                    val synRes = testEngine.synthesize(
+                        spokenText = "Bonjour.",
+                        voiceId = spec.defaultVoiceFor("fr"),
+                        speed = 1.0f,
+                        locale = spec.localeFor("fr")
+                    )
                     val audio = synRes.getOrThrow()
                     if (audio.samples.isEmpty()) {
                         error("النموذج لم ينتج أي عينات صوتية في اختبار التحقق.")
@@ -202,21 +327,26 @@ class TtsEngineManager(
             val ramAfterLoad = MemoryDiagnostics.getProcessPssMb(context)
             val loadTimeMs = _runtimeState.value.lastLoadTimeMs
 
-            val sentences = FrenchTextPreprocessor.splitAndPreprocess(item.frenchText)
+            val sentences = SpeechTextProcessor.splitAndPreprocess(item.frenchText, "fr")
             val allSamples = mutableListOf<Float>()
             var sampleRate = engine.sampleRateHz
             var firstChunkTimeMs = -1L
             val totalStartMs = SystemClock.elapsedRealtime()
             var peakRam = ramAfterLoad
+            val voice = spec.defaultVoiceFor("fr")
+            val locale = spec.localeFor("fr")
 
             for (s in sentences) {
-                val res = engine.synthesize(s.spokenText, spec.voiceId, speedFactor).getOrThrow()
-                if (firstChunkTimeMs < 0L) {
-                    firstChunkTimeMs = SystemClock.elapsedRealtime() - totalStartMs
+                var emittedFirst = false
+                engine.synthesizeStream(s.spokenText, voice, speedFactor, locale).collect { chunk ->
+                    if (!emittedFirst && firstChunkTimeMs < 0L) {
+                        firstChunkTimeMs = SystemClock.elapsedRealtime() - totalStartMs
+                        emittedFirst = true
+                    }
+                    sampleRate = chunk.sampleRateHz
+                    chunk.samples.forEach { allSamples.add(it) }
+                    peakRam = maxOf(peakRam, MemoryDiagnostics.getProcessPssMb(context))
                 }
-                sampleRate = res.sampleRateHz
-                res.samples.forEach { allSamples.add(it) }
-                peakRam = maxOf(peakRam, MemoryDiagnostics.getProcessPssMb(context))
             }
             val totalSynthMs = (SystemClock.elapsedRealtime() - totalStartMs).coerceAtLeast(1L)
             val pcmArray = allSamples.toFloatArray()

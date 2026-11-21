@@ -7,9 +7,12 @@ import androidx.work.OneTimeWorkRequestBuilder
 import androidx.work.WorkManager
 import com.example.data.ModelRecordDao
 import com.example.data.ModelRecordEntity
+import com.example.domain.ModelCompatibilityReport
+import com.example.domain.ModelCompatibilityStatus
 import com.example.domain.ModelInstallStatus
 import com.example.domain.ModelSpec
 import com.example.domain.StorageBreakdown
+import com.example.tts.MemoryDiagnostics
 import com.example.tts.TtsEngineManager
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -25,7 +28,12 @@ data class ModelUiEntry(
     val verifiedSha256: Boolean,
     val verifiedLoadTest: Boolean,
     val lastError: String?,
-    val isActive: Boolean
+    val isActive: Boolean,
+    val compatibility: ModelCompatibilityReport = ModelCompatibilityReport(
+        status = ModelCompatibilityStatus.COMPATIBLE,
+        isSupported = true,
+        summaryAr = "متوافق"
+    )
 ) {
     val progressFraction: Float
         get() = if (totalBytes > 0L) (downloadedBytes.toFloat() / totalBytes.toFloat()).coerceIn(0f, 1f) else 0f
@@ -42,6 +50,7 @@ class ModelRepository(
     fun observeModels(activeModelIdFlow: Flow<String>): Flow<List<ModelUiEntry>> {
         return combine(modelRecordDao.observeAll(), activeModelIdFlow) { records, activeId ->
             val byId = records.associateBy { it.modelId }
+            val hw = MemoryDiagnostics.getDeviceHardwareInfo(context)
             ModelCatalog.ttsModels.map { spec ->
                 val rec = byId[spec.id]
                 val status = rec?.let {
@@ -52,6 +61,7 @@ class ModelRepository(
                 } else {
                     rec?.downloadedBytes ?: 0L
                 }
+                val compat = MemoryDiagnostics.evaluateModelCompatibility(spec, hw)
                 ModelUiEntry(
                     spec = spec,
                     status = status,
@@ -60,7 +70,8 @@ class ModelRepository(
                     verifiedSha256 = rec?.verifiedSha256 ?: false,
                     verifiedLoadTest = rec?.verifiedLoadTest ?: false,
                     lastError = rec?.lastError,
-                    isActive = spec.id == activeId
+                    isActive = spec.id == activeId,
+                    compatibility = compat
                 )
             }
         }
@@ -68,33 +79,102 @@ class ModelRepository(
 
     /**
      * Reconciles database status against actual files in permanent filesDir after app restart/reboot.
+     * Enforces cryptographic SHA-256 manifest checks, hardware compatibility, and genuine engine load verification.
      */
     suspend fun reconcileStorageOnStartup() {
+        val hw = MemoryDiagnostics.getDeviceHardwareInfo(context)
         for (spec in ModelCatalog.ttsModels) {
             val rec = modelRecordDao.getRecord(spec.id)
-            val validOnDisk = storageManager.verifyInstalledPackage(spec)
-            if (rec?.status == ModelInstallStatus.INSTALLED.name && !validOnDisk) {
-                modelRecordDao.upsert(
-                    rec.copy(
-                        status = ModelInstallStatus.CORRUPTED.name,
-                        verifiedLoadTest = false,
-                        lastError = "ملفات النموذج مفقودة أو تالفة على القرص."
+            val modelDir = storageManager.getInstalledModelDir(spec.id)
+            val cryptoValid = storageManager.verifyInstalledPackage(spec, verifyIntegrity = true)
+            val espeakValid = !spec.requiresEspeakData ||
+                storageManager.verifyInstalledPackage(ModelCatalog.espeakNgDataSpec, verifyIntegrity = true)
+            val compat = MemoryDiagnostics.evaluateModelCompatibility(spec, hw)
+
+            if (rec?.status == ModelInstallStatus.INSTALLED.name) {
+                if (!cryptoValid || !espeakValid) {
+                    modelRecordDao.upsert(
+                        rec.copy(
+                            status = ModelInstallStatus.CORRUPTED.name,
+                            verifiedSha256 = false,
+                            verifiedLoadTest = false,
+                            lastError = "فشل التحقق التشفيري (SHA-256) لملفات النموذج أو بيانات eSpeak. أعد التنزيل."
+                        )
                     )
-                )
-            } else if (rec == null && validOnDisk) {
-                modelRecordDao.upsert(
-                    ModelRecordEntity(
-                        modelId = spec.id,
-                        status = ModelInstallStatus.INSTALLED.name,
-                        downloadedBytes = spec.expectedSizeBytes,
-                        totalBytes = spec.expectedSizeBytes,
-                        installedDirPath = storageManager.getInstalledModelDir(spec.id).absolutePath,
-                        verifiedSha256 = true,
-                        verifiedLoadTest = true
+                } else if (!compat.isSupported) {
+                    modelRecordDao.upsert(
+                        rec.copy(
+                            status = ModelInstallStatus.FAILED.name,
+                            verifiedLoadTest = false,
+                            lastError = compat.detailsAr ?: compat.summaryAr
+                        )
                     )
-                )
-            } else if (rec?.status == ModelInstallStatus.DOWNLOADING.name) {
-                // App was killed mid-download; mark paused so user can resume cleanly
+                } else if (!rec.verifiedLoadTest) {
+                    val loadRes = ttsEngineManager.verifyModelLoadable(spec, modelDir)
+                    if (loadRes.isSuccess) {
+                        modelRecordDao.upsert(
+                            rec.copy(
+                                status = ModelInstallStatus.INSTALLED.name,
+                                verifiedSha256 = true,
+                                verifiedLoadTest = true,
+                                lastError = null
+                            )
+                        )
+                    } else {
+                        modelRecordDao.upsert(
+                            rec.copy(
+                                status = ModelInstallStatus.FAILED.name,
+                                verifiedLoadTest = false,
+                                lastError = loadRes.exceptionOrNull()?.message ?: "فشل اختبار تحميل النموذج."
+                            )
+                        )
+                    }
+                }
+            } else if (rec == null && modelDir.exists() && !modelDir.listFiles().isNullOrEmpty()) {
+                if (!cryptoValid || !espeakValid) {
+                    modelRecordDao.upsert(
+                        ModelRecordEntity(
+                            modelId = spec.id,
+                            status = ModelInstallStatus.CORRUPTED.name,
+                            downloadedBytes = 0L,
+                            totalBytes = spec.expectedSizeBytes,
+                            installedDirPath = modelDir.absolutePath,
+                            verifiedSha256 = false,
+                            verifiedLoadTest = false,
+                            lastError = "ملفات غير موثّقة أو معدّلة بدون سجل SHA-256 صالح."
+                        )
+                    )
+                } else if (!compat.isSupported) {
+                    modelRecordDao.upsert(
+                        ModelRecordEntity(
+                            modelId = spec.id,
+                            status = ModelInstallStatus.FAILED.name,
+                            downloadedBytes = spec.expectedSizeBytes,
+                            totalBytes = spec.expectedSizeBytes,
+                            installedDirPath = modelDir.absolutePath,
+                            verifiedSha256 = true,
+                            verifiedLoadTest = false,
+                            lastError = compat.detailsAr ?: compat.summaryAr
+                        )
+                    )
+                } else {
+                    val loadRes = ttsEngineManager.verifyModelLoadable(spec, modelDir)
+                    modelRecordDao.upsert(
+                        ModelRecordEntity(
+                            modelId = spec.id,
+                            status = if (loadRes.isSuccess) ModelInstallStatus.INSTALLED.name else ModelInstallStatus.FAILED.name,
+                            downloadedBytes = spec.expectedSizeBytes,
+                            totalBytes = spec.expectedSizeBytes,
+                            installedDirPath = modelDir.absolutePath,
+                            verifiedSha256 = true,
+                            verifiedLoadTest = loadRes.isSuccess,
+                            lastError = loadRes.exceptionOrNull()?.message
+                        )
+                    )
+                }
+            } else if (rec?.status == ModelInstallStatus.DOWNLOADING.name ||
+                rec?.status == ModelInstallStatus.VERIFYING.name
+            ) {
                 modelRecordDao.upsert(
                     rec.copy(
                         status = ModelInstallStatus.PAUSED.name,

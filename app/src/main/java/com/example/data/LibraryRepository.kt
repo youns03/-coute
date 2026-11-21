@@ -2,7 +2,7 @@ package com.example.data
 
 import android.net.Uri
 import com.example.domain.BenchmarkCorpus
-import com.example.domain.FrenchTextPreprocessor
+import com.example.domain.SpeechTextProcessor
 import kotlinx.coroutines.flow.Flow
 
 class LibraryRepository(
@@ -29,7 +29,7 @@ class LibraryRepository(
             val sentences = mutableListOf<SentenceEntity>()
             var totalSentences = 0
             seed.chapters.forEachIndexed { chIdx, (chTitle, rawBody) ->
-                val processed = FrenchTextPreprocessor.splitAndPreprocess(rawBody)
+                val processed = SpeechTextProcessor.splitAndPreprocess(rawBody, seed.sourceLanguage)
                 chapters.add(
                     ChapterEntity(
                         bookId = seed.id,

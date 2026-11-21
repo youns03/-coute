@@ -23,6 +23,9 @@ import com.example.tts.KokoroSynthesisOutput
 import com.example.tts.TtsEngineManager
 import com.google.mediapipe.tasks.core.Delegate
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.flow
+import kotlinx.coroutines.flow.toList
 import kotlinx.coroutines.test.runTest
 import org.junit.After
 import org.junit.Assert.assertEquals
@@ -67,8 +70,10 @@ class KokoroAndPlaybackTest {
     @Test
     fun `kokoro falls back to CPU on runtime synthesis throw and speed change throws on GPU`() = runTest {
         val createdDelegates = mutableListOf<Pair<Delegate, Float>>()
-        val factory = KokoroSessionFactory { _, _, delegate, _, speakingRate ->
+        val createdLocales = mutableListOf<String>()
+        val factory = KokoroSessionFactory { _, _, delegate, _, locale, speakingRate ->
             createdDelegates.add(delegate to speakingRate)
+            createdLocales.add(locale)
             if (delegate == Delegate.GPU && speakingRate > 1.1f) {
                 throw IllegalStateException("OpenCL shader failure at high speed")
             }
@@ -88,6 +93,32 @@ class KokoroAndPlaybackTest {
                     )
                 }
 
+                override fun synthesizeStream(
+                    spokenText: String,
+                    voiceId: String,
+                    locale: String
+                ): Flow<KokoroSynthesisOutput> = flow {
+                    if (delegate == Delegate.GPU) {
+                        throw RuntimeException("GPU streaming runtime error")
+                    }
+                    emit(
+                        KokoroSynthesisOutput(
+                            samples = FloatArray(512) { 0.1f },
+                            sampleRateHz = 24000,
+                            wordTimestamps = emptyList(),
+                            isFinal = false
+                        )
+                    )
+                    emit(
+                        KokoroSynthesisOutput(
+                            samples = FloatArray(512) { 0.2f },
+                            sampleRateHz = 24000,
+                            wordTimestamps = listOf(WordTimestampRange("Hello", 0, 5, 0f, 0.15f)),
+                            isFinal = true
+                        )
+                    )
+                }
+
                 override fun cancel() {}
                 override fun close() {}
             }
@@ -103,12 +134,17 @@ class KokoroAndPlaybackTest {
         assertTrue(initRes.isSuccess)
         assertFalse(engineRuntimeFallback.fellBackToCpu)
 
-        val synthRes = engineRuntimeFallback.synthesize("Bonjour tout le monde.", "ff_siwis", 1.0f)
+        val synthRes = engineRuntimeFallback.synthesize("Bonjour tout le monde.", "ff_siwis", 1.0f, "fr-FR")
         assertTrue(synthRes.isSuccess)
         val output = synthRes.getOrThrow()
         assertTrue(output.fellBackToCpu)
         assertTrue(output.usedAccelerator.contains("CPU"))
         assertEquals(1024, output.samples.size)
+
+        // Streaming English routing after fallback
+        val streamChunks = engineRuntimeFallback.synthesizeStream("Hello world.", "af_heart", 1.0f, "en-US").toList()
+        assertEquals(2, streamChunks.size)
+        assertTrue(createdLocales.contains("en-US"))
         engineRuntimeFallback.release()
 
         // Case 2: GPU init succeeds at 1.0f, then speed change to 1.5f fails on GPU -> falls back to CPU at 1.5f
@@ -116,7 +152,7 @@ class KokoroAndPlaybackTest {
         val speedEngine = KokoroLiteRtTtsEngine(context, storageManager, factory)
         speedEngine.initialize(baseGpuSpec, installedGpuDir, AcceleratorMode.AUTO_GPU_WITH_CPU_FALLBACK).getOrThrow()
 
-        val speedSynthRes = speedEngine.synthesize("Bonjour à vitesse rapide.", "ff_siwis", 1.5f)
+        val speedSynthRes = speedEngine.synthesize("Bonjour à vitesse rapide.", "ff_siwis", 1.5f, "fr-FR")
         assertTrue(speedSynthRes.isSuccess)
         assertTrue(speedSynthRes.getOrThrow().fellBackToCpu)
         assertTrue(createdDelegates.any { it.first == Delegate.CPU && kotlin.math.abs(it.second - 1.5f) < 0.01f })
