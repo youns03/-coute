@@ -317,13 +317,139 @@ class TranslationAndDocumentChunkerTest {
         assertFalse(repo.updateJobSourceLanguageIfEmpty(job.id, SourceLanguage.FRENCH))
         assertEquals("en", dao.getJob(job.id)?.sourceLanguage)
 
-        // Full reset clears completed chunks and switches sourceLanguage cleanly
+        // Full reset clears completed chunks, bumps jobEpoch, and switches sourceLanguage cleanly
         repo.resetAndChangeJobSourceLanguage(job.id, SourceLanguage.FRENCH)
         val resetJob = dao.getJob(job.id)!!
         assertEquals("fr", resetJob.sourceLanguage)
         assertEquals(0, resetJob.completedChunks)
         assertEquals("PENDING", resetJob.status)
+        assertEquals(1, resetJob.jobEpoch)
         assertEquals(3, dao.getPendingChunks(job.id).size)
+
+        // Stale worker holding old epoch 0 must be rejected without touching reset chunks
+        val staleChunkRowsUpdated = dao.markChunkTranslatedIfEpochMatches(
+            chunkId = inserted[1].id,
+            jobId = job.id,
+            expectedEpoch = 0,
+            translatedText = "STALE_OVERWRITE"
+        )
+        assertEquals(0, staleChunkRowsUpdated)
+        val staleJobRowsUpdated = dao.updateJobProgressIfEpochMatches(
+            jobId = job.id,
+            expectedEpoch = 0,
+            completedChunks = 2,
+            status = "COMPLETED",
+            lastError = null
+        )
+        assertEquals(0, staleJobRowsUpdated)
+        assertEquals("PENDING", dao.getJob(job.id)?.status)
+        assertEquals(3, dao.getPendingChunks(job.id).size)
+    }
+
+    @Test
+    fun `document chunker honors caller maxCharsPerChunk even below 40`() {
+        val doc = ParsedSourceDocument(
+            fileName = "tiny_limit.txt",
+            title = "Tiny",
+            author = "TXT",
+            sourceType = "TXT",
+            detectedLanguage = SourceLanguage.FRENCH,
+            sections = listOf(
+                ExtractedDocumentSection("", "Bonjour tout le monde voici un texte assez long sans retour.")
+            )
+        )
+        val chunks = DocumentChunker.buildChunks("job_tiny", doc, maxCharsPerChunk = 15)
+        assertTrue(chunks.size >= 4)
+        chunks.forEach { chunk ->
+            assertTrue(
+                "Chunk exceeded 15 chars: '${chunk.originalText}' (${chunk.originalText.length})",
+                chunk.originalText.length <= 15
+            )
+        }
+    }
+
+    @Test
+    fun `book importer enforces bounded byte and line limits on TXT without knowing URI size`() = runTest {
+        // Test byte bound with unknown OpenableColumns.SIZE via small internal byte limit
+        val largeTxt = File(context.cacheDir, "oversized_txt.txt").apply {
+            writeText("Bonjour " + "a".repeat(2048))
+        }
+        val tightByteImporter = BookImporter(
+            context = context,
+            maxImportFileBytes = 512L,
+            maxExtractedTextChars = 10_000,
+            maxLineChars = 256
+        )
+        val byteRes = tightByteImporter.parseDocumentFromUri(Uri.fromFile(largeTxt))
+        assertTrue(byteRes.isFailure)
+        largeTxt.delete()
+
+        // Test single giant line without newlines does not trigger OOM and parses cleanly within caps
+        val singleLineNoBreakFile = File(context.cacheDir, "single_giant_line.txt").apply {
+            writeText((1..40).joinToString(" ") { "bonjour$it" })
+        }
+        val lineSegImporter = BookImporter(
+            context = context,
+            maxImportFileBytes = 1024L * 1024L,
+            maxExtractedTextChars = 10_000,
+            maxLineChars = 40
+        )
+        val parsed = lineSegImporter.parseDocumentFromUri(Uri.fromFile(singleLineNoBreakFile)).getOrThrow()
+        assertEquals("TXT", parsed.sourceType)
+        assertTrue(parsed.sections.first().body.contains("bonjour1"))
+        assertTrue(parsed.sections.first().body.contains("bonjour40"))
+        singleLineNoBreakFile.delete()
+    }
+
+    @Test
+    fun `book importer rejects EPUB whose cumulative uncompressed spine exceeds cap`() = runTest {
+        val epubFile = File(context.cacheDir, "cumulative_cap.epub")
+        ZipOutputStream(FileOutputStream(epubFile)).use { zos ->
+            zos.putNextEntry(ZipEntry("META-INF/container.xml"))
+            zos.write(
+                """
+                <?xml version="1.0"?>
+                <container version="1.0" xmlns="urn:oasis:names:tc:opendocument:xmlns:container">
+                  <rootfiles><rootfile full-path="content.opf" media-type="application/oebps-package+xml"/></rootfiles>
+                </container>
+                """.trimIndent().toByteArray()
+            )
+            zos.closeEntry()
+
+            zos.putNextEntry(ZipEntry("content.opf"))
+            zos.write(
+                """
+                <?xml version="1.0"?>
+                <package xmlns="http://www.idpf.org/2007/opf" version="3.0">
+                  <manifest>
+                    <item id="c1" href="c1.xhtml" media-type="application/xhtml+xml"/>
+                    <item id="c2" href="c2.xhtml" media-type="application/xhtml+xml"/>
+                  </manifest>
+                  <spine><itemref idref="c1"/><itemref idref="c2"/></spine>
+                </package>
+                """.trimIndent().toByteArray()
+            )
+            zos.closeEntry()
+
+            val body = "<p>${"Bonjour tout le monde. ".repeat(40)}</p>"
+            zos.putNextEntry(ZipEntry("c1.xhtml"))
+            zos.write("<html><body>$body</body></html>".toByteArray())
+            zos.closeEntry()
+            zos.putNextEntry(ZipEntry("c2.xhtml"))
+            zos.write("<html><body>$body</body></html>".toByteArray())
+            zos.closeEntry()
+        }
+
+        val cappedImporter = BookImporter(
+            context = context,
+            maxImportFileBytes = 5 * 1024 * 1024L,
+            maxExtractedTextChars = 2_000_000,
+            maxLineChars = 16_384,
+            maxEpubTotalUncompressedBytes = 1200L
+        )
+        val res = cappedImporter.parseDocumentFromUri(Uri.fromFile(epubFile))
+        assertTrue(res.isFailure)
+        epubFile.delete()
     }
 
     @Test

@@ -171,8 +171,52 @@ interface TranslationJobDao {
     @Query("UPDATE translation_chunks SET translatedText = :translatedText, isCompleted = 1 WHERE id = :chunkId")
     suspend fun markChunkTranslated(chunkId: Long, translatedText: String)
 
+    @Query(
+        """
+        UPDATE translation_chunks
+        SET translatedText = :translatedText, isCompleted = 1
+        WHERE id = :chunkId
+          AND jobId = :jobId
+          AND EXISTS (SELECT 1 FROM translation_jobs WHERE id = :jobId AND jobEpoch = :expectedEpoch)
+        """
+    )
+    suspend fun markChunkTranslatedIfEpochMatches(
+        chunkId: Long,
+        jobId: String,
+        expectedEpoch: Int,
+        translatedText: String
+    ): Int
+
     @Query("UPDATE translation_chunks SET translatedText = NULL, isCompleted = 0 WHERE jobId = :jobId")
     suspend fun resetChunksForJob(jobId: String)
+
+    @Query(
+        """
+        UPDATE translation_jobs
+        SET sourceLanguage = :sourceLanguage,
+            status = 'PENDING',
+            completedChunks = 0,
+            jobEpoch = jobEpoch + 1,
+            lastError = NULL,
+            updatedAt = :updatedAt
+        WHERE id = :jobId
+        """
+    )
+    suspend fun resetJobMetadataAndBumpEpoch(
+        jobId: String,
+        sourceLanguage: String,
+        updatedAt: Long = System.currentTimeMillis()
+    )
+
+    @Transaction
+    suspend fun resetJobAtomically(
+        jobId: String,
+        sourceLanguage: String,
+        updatedAt: Long = System.currentTimeMillis()
+    ) {
+        resetChunksForJob(jobId)
+        resetJobMetadataAndBumpEpoch(jobId, sourceLanguage, updatedAt)
+    }
 
     @Query(
         "UPDATE translation_jobs SET completedChunks = :completedChunks, status = :status, lastError = :lastError, updatedAt = :updatedAt WHERE id = :jobId"
@@ -184,6 +228,25 @@ interface TranslationJobDao {
         lastError: String? = null,
         updatedAt: Long = System.currentTimeMillis()
     )
+
+    @Query(
+        """
+        UPDATE translation_jobs
+        SET completedChunks = :completedChunks,
+            status = :status,
+            lastError = :lastError,
+            updatedAt = :updatedAt
+        WHERE id = :jobId AND jobEpoch = :expectedEpoch
+        """
+    )
+    suspend fun updateJobProgressIfEpochMatches(
+        jobId: String,
+        expectedEpoch: Int,
+        completedChunks: Int,
+        status: String,
+        lastError: String? = null,
+        updatedAt: Long = System.currentTimeMillis()
+    ): Int
 
     @Query("UPDATE translation_jobs SET status = 'PAUSED' WHERE status = 'RUNNING'")
     suspend fun resetRunningJobsToPaused()

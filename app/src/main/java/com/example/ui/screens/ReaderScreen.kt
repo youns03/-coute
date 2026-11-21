@@ -1,5 +1,10 @@
 package com.example.ui.screens
 
+import android.Manifest
+import android.content.pm.PackageManager
+import android.os.Build
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -64,8 +69,10 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.platform.testTag
+import androidx.core.content.ContextCompat
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.buildAnnotatedString
@@ -125,6 +132,18 @@ fun ReaderScreen(
     var showChaptersSheet by remember { mutableStateOf(false) }
     var showAppearanceSheet by remember { mutableStateOf(false) }
     val listState = rememberLazyListState()
+    val context = LocalContext.current
+    val notificationPermissionLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestPermission()
+    ) { _ -> }
+
+    val requestNotificationIfNeeded = {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
+            ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED
+        ) {
+            notificationPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+        }
+    }
 
     val bookSourceLang = SourceLanguage.fromCode(state.book?.sourceLanguage)
     val bookDirection = TranslationDirection.forSource(bookSourceLang)
@@ -363,7 +382,10 @@ fun ReaderScreen(
                                 isTranslating = isTranslating,
                                 fontSizeSp = settings.readerFontSizeSp,
                                 lineHeightMultiplier = settings.readerLineHeightMultiplier,
-                                onPlaySentence = { onPlayFromSentence(sentence) },
+                                onPlaySentence = {
+                                    requestNotificationIfNeeded()
+                                    onPlayFromSentence(sentence)
+                                },
                                 onToggleTranslateSentence = { onTranslateOrToggleSentence(sentence) },
                                 onSaveSentenceVocab = { arabic -> onSaveSentenceVocab(sentence, arabic) },
                                 onWordTapped = { word -> onWordTapped(word, sentence) }
@@ -380,7 +402,10 @@ fun ReaderScreen(
                 bookSourceLanguage = bookSourceLang,
                 isPlayingThisChapter = isPlayingThisChapter,
                 currentSpeed = settings.playbackSpeed,
-                onTogglePlay = onTogglePlayChapter,
+                onTogglePlay = {
+                    requestNotificationIfNeeded()
+                    onTogglePlayChapter()
+                },
                 onPrev = onPrevSentence,
                 onNext = onNextSentence,
                 onSpeedSelected = onSpeedSelected,

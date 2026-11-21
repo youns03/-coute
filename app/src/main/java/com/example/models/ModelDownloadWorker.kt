@@ -30,6 +30,28 @@ class ModelDownloadWorker(
         const val KEY_MODEL_ID = "model_id"
         private const val CHANNEL_ID = "model_downloads"
         private const val NOTIFICATION_ID = 4102
+        private val CONTENT_RANGE_REGEX = Regex("""^bytes\s+(\d+)-(\d+)/(\d+|\*)$""", RegexOption.IGNORE_CASE)
+
+        internal fun isValidContentRangeHeader(
+            header: String?,
+            expectedStart: Long,
+            expectedTotalBytes: Long
+        ): Boolean {
+            if (header.isNullOrBlank()) return false
+            val match = CONTENT_RANGE_REGEX.matchEntire(header.trim()) ?: return false
+            val start = match.groupValues[1].toLongOrNull() ?: return false
+            val end = match.groupValues[2].toLongOrNull() ?: return false
+            val totalStr = match.groupValues[3]
+            val totalOk = if (totalStr == "*") {
+                true
+            } else {
+                totalStr.toLongOrNull() == expectedTotalBytes
+            }
+            return start == expectedStart &&
+                end >= start &&
+                end == expectedTotalBytes - 1L &&
+                totalOk
+        }
     }
 
     private val client = OkHttpClient.Builder()
@@ -142,9 +164,13 @@ class ModelDownloadWorker(
                 if (!response.isSuccessful && response.code != 206) {
                     error("خطأ من الخادم: HTTP ${response.code}")
                 }
-                val contentRange = response.header("Content-Range").orEmpty()
+                val contentRange = response.header("Content-Range")
                 val validRangeResume = response.code == 206 &&
-                    contentRange.startsWith("bytes $existingBytes-", ignoreCase = true)
+                    isValidContentRangeHeader(
+                        header = contentRange,
+                        expectedStart = existingBytes,
+                        expectedTotalBytes = spec.expectedSizeBytes
+                    )
                 if (existingBytes > 0L && !validRangeResume) {
                     if (response.code == 206) {
                         partFile.delete()

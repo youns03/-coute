@@ -27,7 +27,7 @@ object DocumentChunker {
         doc: ParsedSourceDocument,
         maxCharsPerChunk: Int = 650
     ): List<TranslationChunkEntity> {
-        val effectiveLimit = maxCharsPerChunk.coerceAtLeast(40)
+        val effectiveLimit = maxCharsPerChunk.coerceAtLeast(1)
         val chunks = mutableListOf<TranslationChunkEntity>()
         var chunkIdx = 0
 

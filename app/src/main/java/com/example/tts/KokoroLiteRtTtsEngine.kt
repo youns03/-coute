@@ -20,10 +20,95 @@ import kotlinx.coroutines.withContext
 import java.io.File
 import kotlin.math.abs
 
-class KokoroLiteRtTtsEngine(
+internal data class KokoroSynthesisOutput(
+    val samples: FloatArray,
+    val sampleRateHz: Int,
+    val wordTimestamps: List<WordTimestampRange>
+)
+
+internal interface KokoroNativeSession {
+    fun synthesize(spokenText: String, voiceId: String, locale: String): KokoroSynthesisOutput
+    fun cancel()
+    fun close()
+}
+
+internal fun interface KokoroSessionFactory {
+    fun create(
+        modelFile: File,
+        cacheDir: File,
+        delegate: Delegate,
+        voiceId: String,
+        speakingRate: Float
+    ): KokoroNativeSession
+}
+
+private object DefaultKokoroSessionFactory : KokoroSessionFactory {
+    override fun create(
+        modelFile: File,
+        cacheDir: File,
+        delegate: Delegate,
+        voiceId: String,
+        speakingRate: Float
+    ): KokoroNativeSession {
+        val baseOptions = BaseOptions.builder()
+            .setModelAssetPath(modelFile.absolutePath)
+            .setDelegate(delegate)
+            .build()
+        val options = TextToSpeechOptions(
+            baseOptions = baseOptions,
+            defaultVoiceId = voiceId,
+            defaultLocale = "fr-FR",
+            speakingRate = speakingRate.coerceIn(0.5f, 2.0f),
+            cacheDirectory = cacheDir.absolutePath
+        )
+        val delegateTts = TextToSpeech.create(options)
+        return object : KokoroNativeSession {
+            override fun synthesize(
+                spokenText: String,
+                voiceId: String,
+                locale: String
+            ): KokoroSynthesisOutput {
+                val res = delegateTts.synthesize(
+                    spokenText,
+                    SynthesisOptions(voiceId = voiceId, locale = locale)
+                )
+                return KokoroSynthesisOutput(
+                    samples = res.samples,
+                    sampleRateHz = res.sampleRateHz,
+                    wordTimestamps = res.wordTimestamps.map {
+                        WordTimestampRange(
+                            word = it.word,
+                            startChar = it.startChar,
+                            endChar = it.endChar,
+                            startSec = it.startSec,
+                            endSec = it.endSec
+                        )
+                    }
+                )
+            }
+
+            override fun cancel() {
+                delegateTts.cancel()
+            }
+
+            override fun close() {
+                delegateTts.close()
+            }
+        }
+    }
+}
+
+class KokoroLiteRtTtsEngine internal constructor(
     private val context: Context,
-    private val storageManager: ModelStorageManager
+    private val storageManager: ModelStorageManager,
+    private val sessionFactory: KokoroSessionFactory
 ) : TtsEngine {
+
+    constructor(context: Context, storageManager: ModelStorageManager) : this(
+        context = context,
+        storageManager = storageManager,
+        sessionFactory = DefaultKokoroSessionFactory
+    )
 
     override val engineType: EngineType = EngineType.KOKORO_LITERT
     override var modelId: String = ""
@@ -31,7 +116,7 @@ class KokoroLiteRtTtsEngine(
     override var sampleRateHz: Int = 24000
         private set
     override val isLoaded: Boolean
-        get() = tts != null
+        get() = session != null
     override var activeAccelerator: String = "UNINITIALIZED"
         private set
     override var fellBackToCpu: Boolean = false
@@ -39,7 +124,7 @@ class KokoroLiteRtTtsEngine(
     override var fallbackReason: String? = null
         private set
 
-    private var tts: TextToSpeech? = null
+    private var session: KokoroNativeSession? = null
     private var defaultVoiceId: String = "ff_siwis"
     private var activeSpec: ModelSpec? = null
     private var activeModelDir: File? = null
@@ -76,7 +161,7 @@ class KokoroLiteRtTtsEngine(
                 acceleratorMode == AcceleratorMode.CPU_ONLY || isCpuVariant -> {
                     activeModelFile = primaryModelFile
                     activeDelegate = Delegate.CPU
-                    tts = createWithDelegate(primaryModelFile, cacheDir, Delegate.CPU, spec.voiceId, 1.0f)
+                    session = createWithDelegate(primaryModelFile, cacheDir, Delegate.CPU, spec.voiceId, 1.0f)
                     activeAccelerator = "CPU (LiteRT)"
                     fellBackToCpu = false
                     fallbackReason = null
@@ -85,7 +170,7 @@ class KokoroLiteRtTtsEngine(
                 acceleratorMode == AcceleratorMode.GPU_ONLY -> {
                     activeModelFile = primaryModelFile
                     activeDelegate = Delegate.GPU
-                    tts = createWithDelegate(primaryModelFile, cacheDir, Delegate.GPU, spec.voiceId, 1.0f)
+                    session = createWithDelegate(primaryModelFile, cacheDir, Delegate.GPU, spec.voiceId, 1.0f)
                     activeAccelerator = "GPU (OpenCL FP16)"
                     fellBackToCpu = false
                     fallbackReason = null
@@ -99,7 +184,7 @@ class KokoroLiteRtTtsEngine(
                     if (gpuAttempt.isSuccess) {
                         activeModelFile = primaryModelFile
                         activeDelegate = Delegate.GPU
-                        tts = gpuAttempt.getOrThrow()
+                        session = gpuAttempt.getOrThrow()
                         activeAccelerator = "GPU (OpenCL FP16)"
                         fellBackToCpu = false
                         fallbackReason = null
@@ -138,12 +223,14 @@ class KokoroLiteRtTtsEngine(
         speakingRate: Float,
         reason: String
     ) {
-        runCatching { tts?.close() }
-        tts = null
+        runCatching { session?.close() }
+        session = null
         val (cpuFile, isDedicatedCpuModel) = resolveCpuFallbackModelFile(primaryDir)
-        tts = createWithDelegate(cpuFile, cacheDir, Delegate.CPU, voiceId, speakingRate)
+        val clampedRate = speakingRate.coerceIn(0.5f, 2.0f)
+        session = createWithDelegate(cpuFile, cacheDir, Delegate.CPU, voiceId, clampedRate)
         activeModelFile = cpuFile
         activeDelegate = Delegate.CPU
+        configuredSpeakingRate = clampedRate
         cpuFallbackExhausted = true
         fellBackToCpu = true
         activeAccelerator = if (isDedicatedCpuModel) {
@@ -164,19 +251,14 @@ class KokoroLiteRtTtsEngine(
         delegate: Delegate,
         voiceId: String,
         speakingRate: Float
-    ): TextToSpeech {
-        val baseOptions = BaseOptions.builder()
-            .setModelAssetPath(modelFile.absolutePath)
-            .setDelegate(delegate)
-            .build()
-        val options = TextToSpeechOptions(
-            baseOptions = baseOptions,
-            defaultVoiceId = voiceId,
-            defaultLocale = "fr-FR",
-            speakingRate = speakingRate.coerceIn(0.5f, 2.0f),
-            cacheDirectory = cacheDir.absolutePath
+    ): KokoroNativeSession {
+        return sessionFactory.create(
+            modelFile = modelFile,
+            cacheDir = cacheDir,
+            delegate = delegate,
+            voiceId = voiceId,
+            speakingRate = speakingRate.coerceIn(0.5f, 2.0f)
         )
-        return TextToSpeech.create(options)
     }
 
     override suspend fun synthesize(
@@ -188,26 +270,21 @@ class KokoroLiteRtTtsEngine(
             val effectiveVoice = voiceId.ifBlank { defaultVoiceId }
             val targetRate = speed.coerceIn(0.5f, 2.0f)
 
-            // Apply speakingRate via TextToSpeechOptions when user/benchmark speed changes
-            if (abs(targetRate - configuredSpeakingRate) > 0.02f) {
-                val modelFile = activeModelFile
-                val cacheDir = activeCacheDir
-                if (modelFile != null && cacheDir != null) {
-                    runCatching { tts?.close() }
-                    tts = createWithDelegate(modelFile, cacheDir, activeDelegate, effectiveVoice, targetRate)
-                    configuredSpeakingRate = targetRate
-                }
-            }
-
-            val synthesisOptions = SynthesisOptions(
-                voiceId = effectiveVoice,
-                locale = "fr-FR"
-            )
-
             val startMs = SystemClock.elapsedRealtime()
             val result = try {
-                val engine = tts ?: error("محرك Kokoro غير مهيأ.")
-                engine.synthesize(spokenText, synthesisOptions)
+                // Apply speakingRate inside the GPU->CPU fallback guard so delegate re-creation errors also fall back cleanly
+                if (abs(targetRate - configuredSpeakingRate) > 0.02f) {
+                    val modelFile = activeModelFile
+                    val cacheDir = activeCacheDir
+                    if (modelFile != null && cacheDir != null) {
+                        runCatching { session?.close() }
+                        session = null
+                        session = createWithDelegate(modelFile, cacheDir, activeDelegate, effectiveVoice, targetRate)
+                        configuredSpeakingRate = targetRate
+                    }
+                }
+                val engine = session ?: error("محرك Kokoro غير مهيأ.")
+                engine.synthesize(spokenText, effectiveVoice, "fr-FR")
             } catch (ce: CancellationException) {
                 throw ce
             } catch (t: Throwable) {
@@ -226,8 +303,8 @@ class KokoroLiteRtTtsEngine(
                         speakingRate = targetRate,
                         reason = "Runtime GPU synthesis error: ${t.message ?: t::class.java.simpleName}"
                     )
-                    val cpuEngine = tts ?: error("فشل التهيئة الاحتياطية على CPU.")
-                    cpuEngine.synthesize(spokenText, synthesisOptions)
+                    val cpuEngine = session ?: error("فشل التهيئة الاحتياطية على CPU.")
+                    cpuEngine.synthesize(spokenText, effectiveVoice, "fr-FR")
                 } else {
                     throw t
                 }
@@ -235,19 +312,10 @@ class KokoroLiteRtTtsEngine(
 
             val elapsedMs = SystemClock.elapsedRealtime() - startMs
             sampleRateHz = result.sampleRateHz.takeIf { it > 0 } ?: 24000
-            val timestamps = result.wordTimestamps.map {
-                WordTimestampRange(
-                    word = it.word,
-                    startChar = it.startChar,
-                    endChar = it.endChar,
-                    startSec = it.startSec,
-                    endSec = it.endSec
-                )
-            }
             TtsSynthesisResult(
                 samples = result.samples,
                 sampleRateHz = sampleRateHz,
-                wordTimestamps = timestamps,
+                wordTimestamps = result.wordTimestamps,
                 synthesisTimeMs = elapsedMs,
                 usedAccelerator = activeAccelerator,
                 fellBackToCpu = fellBackToCpu,
@@ -257,12 +325,12 @@ class KokoroLiteRtTtsEngine(
     }
 
     override fun cancel() {
-        runCatching { tts?.cancel() }
+        runCatching { session?.cancel() }
     }
 
     override fun release() {
-        runCatching { tts?.close() }
-        tts = null
+        runCatching { session?.close() }
+        session = null
         activeAccelerator = "RELEASED"
     }
 }

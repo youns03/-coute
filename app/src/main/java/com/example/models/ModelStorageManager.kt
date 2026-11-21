@@ -53,19 +53,25 @@ class ModelStorageManager(private val context: Context) {
         return stat.availableBytes
     }
 
-    fun requiredPeakBytes(spec: ModelSpec, includeEspeakDependency: Boolean): Long {
+    fun requiredPeakBytes(
+        spec: ModelSpec,
+        includeEspeakDependency: Boolean,
+        alreadyDownloadedBytes: Long = 0L
+    ): Long {
         val depBytes = if (includeEspeakDependency) ModelCatalog.espeakNgDataSpec.expectedSizeBytes * 3L else 0L
         val safetyMargin = 100L * 1024L * 1024L
-        val modelPeak = when (spec.archiveType) {
-            // SINGLE_LITERTLM uses atomic renameTo on the same internal filesystem, avoiding full 2x copy
-            ArchiveType.SINGLE_LITERTLM -> spec.expectedSizeBytes + 25L * 1024L * 1024L
-            ArchiveType.TAR_BZ2, ArchiveType.ZIP -> (spec.expectedSizeBytes * 2.6).toLong()
+        val remainingDownload = (spec.expectedSizeBytes - alreadyDownloadedBytes).coerceAtLeast(0L)
+        val installStagePeak = when (spec.archiveType) {
+            // Even though renameTo avoids copying on same filesystem, reserve full copy fallback peak safely
+            ArchiveType.SINGLE_LITERTLM -> spec.expectedSizeBytes
+            ArchiveType.TAR_BZ2, ArchiveType.ZIP -> (spec.expectedSizeBytes * 1.6).toLong()
         }
-        return modelPeak + depBytes + safetyMargin
+        return remainingDownload + installStagePeak + depBytes + safetyMargin
     }
 
     fun hasEnoughDiskSpace(spec: ModelSpec, includeEspeakDependency: Boolean = false): Boolean {
-        return getFreeInternalBytes() >= requiredPeakBytes(spec, includeEspeakDependency)
+        val partBytes = getTempPartFile(spec.id).takeIf { it.exists() }?.length() ?: 0L
+        return getFreeInternalBytes() >= requiredPeakBytes(spec, includeEspeakDependency, partBytes)
     }
 
     fun hasEnoughDiskSpace(requiredBytes: Long): Boolean {

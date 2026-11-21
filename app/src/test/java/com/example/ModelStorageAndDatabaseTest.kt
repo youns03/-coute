@@ -11,6 +11,7 @@ import com.example.domain.BenchmarkCorpus
 import com.example.domain.EngineType
 import com.example.domain.ModelSpec
 import com.example.models.ModelCatalog
+import com.example.models.ModelDownloadWorker
 import com.example.models.ModelRepository
 import com.example.models.ModelStorageManager
 import com.example.tts.TtsEngineManager
@@ -138,12 +139,64 @@ class ModelStorageAndDatabaseTest {
         assertFalse("Size-mismatched .part file must be deleted", wrongSizeFile.exists())
 
         val kokoroPeak = storageManager.requiredPeakBytes(spec, includeEspeakDependency = false)
+        val kokoroResumedPeak = storageManager.requiredPeakBytes(
+            spec,
+            includeEspeakDependency = false,
+            alreadyDownloadedBytes = spec.expectedSizeBytes / 2L
+        )
         val piperSpec = ModelCatalog.findById("piper-fr-siwis-medium")!!
         val piperPeak = storageManager.requiredPeakBytes(piperSpec, includeEspeakDependency = true)
 
-        assertTrue(kokoroPeak > spec.expectedSizeBytes)
-        assertTrue(kokoroPeak < spec.expectedSizeBytes * 2L)
+        // Worst-case copy fallback reserves remaining download + full copy size + 100 MB safety margin
+        assertTrue(kokoroPeak >= spec.expectedSizeBytes * 2L)
+        assertTrue(kokoroResumedPeak < kokoroPeak)
         assertTrue(piperPeak > piperSpec.expectedSizeBytes * 2L)
+    }
+
+    @Test
+    fun `content range header validation strictly enforces offset end and total bytes`() {
+        val total = 309_517_248L
+        assertTrue(
+            ModelDownloadWorker.isValidContentRangeHeader(
+                header = "bytes 1000-${total - 1}/$total",
+                expectedStart = 1000L,
+                expectedTotalBytes = total
+            )
+        )
+        assertTrue(
+            ModelDownloadWorker.isValidContentRangeHeader(
+                header = "bytes 1000-${total - 1}/*",
+                expectedStart = 1000L,
+                expectedTotalBytes = total
+            )
+        )
+        // Wrong start offset
+        assertFalse(
+            ModelDownloadWorker.isValidContentRangeHeader(
+                header = "bytes 0-${total - 1}/$total",
+                expectedStart = 1000L,
+                expectedTotalBytes = total
+            )
+        )
+        // Truncated range end offset
+        assertFalse(
+            ModelDownloadWorker.isValidContentRangeHeader(
+                header = "bytes 1000-${total - 2}/$total",
+                expectedStart = 1000L,
+                expectedTotalBytes = total
+            )
+        )
+        // Mismatched total length
+        assertFalse(
+            ModelDownloadWorker.isValidContentRangeHeader(
+                header = "bytes 1000-${total - 1}/${total + 5}",
+                expectedStart = 1000L,
+                expectedTotalBytes = total
+            )
+        )
+        // Malformed / missing headers
+        assertFalse(ModelDownloadWorker.isValidContentRangeHeader(null, 1000L, total))
+        assertFalse(ModelDownloadWorker.isValidContentRangeHeader("items 1000-2000/2001", 1000L, 2001L))
     }
 
     @Test

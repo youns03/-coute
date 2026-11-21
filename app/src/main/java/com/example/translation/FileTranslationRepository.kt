@@ -12,6 +12,8 @@ import com.example.data.TranslationJobDao
 import com.example.data.TranslationJobEntity
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import java.util.UUID
 
@@ -21,6 +23,7 @@ class FileTranslationRepository(
     private val bookImporter: BookImporter
 ) {
     private val workManager: WorkManager by lazy { WorkManager.getInstance(context) }
+    private val jobMutationMutex = Mutex()
 
     fun observeAllJobs(): Flow<List<TranslationJobEntity>> = jobDao.observeAllJobs()
 
@@ -57,19 +60,22 @@ class FileTranslationRepository(
     }
 
     suspend fun updateJobSourceLanguageIfEmpty(jobId: String, language: SourceLanguage): Boolean {
-        val job = jobDao.getJob(jobId) ?: return false
-        if (job.status == "RUNNING") return false
-        val actualDone = jobDao.countCompletedChunks(jobId)
-        if (actualDone > 0 || job.completedChunks > 0) return false
-        jobDao.updateJob(
-            job.copy(
-                sourceLanguage = language.code,
-                status = "PENDING",
-                lastError = null,
-                updatedAt = System.currentTimeMillis()
+        return jobMutationMutex.withLock {
+            val job = jobDao.getJob(jobId) ?: return@withLock false
+            if (job.status == "RUNNING") return@withLock false
+            val actualDone = jobDao.countCompletedChunks(jobId)
+            if (actualDone > 0 || job.completedChunks > 0) return@withLock false
+            jobDao.updateJob(
+                job.copy(
+                    sourceLanguage = language.code,
+                    status = "PENDING",
+                    jobEpoch = job.jobEpoch + 1,
+                    lastError = null,
+                    updatedAt = System.currentTimeMillis()
+                )
             )
-        )
-        return true
+            true
+        }
     }
 
     private fun cancelWorkSafely(uniqueWorkName: String) {
@@ -77,18 +83,16 @@ class FileTranslationRepository(
     }
 
     suspend fun resetAndChangeJobSourceLanguage(jobId: String, language: SourceLanguage) {
-        cancelWorkSafely("file_tx_$jobId")
-        val job = jobDao.getJob(jobId) ?: return
-        jobDao.resetChunksForJob(jobId)
-        jobDao.updateJob(
-            job.copy(
-                sourceLanguage = language.code,
-                status = "PENDING",
-                completedChunks = 0,
-                lastError = null,
-                updatedAt = System.currentTimeMillis()
-            )
-        )
+        jobMutationMutex.lock()
+        try {
+            cancelWorkSafely("file_tx_$jobId")
+            val exists = jobDao.getJob(jobId) != null
+            if (exists) {
+                jobDao.resetJobAtomically(jobId, language.code)
+            }
+        } finally {
+            jobMutationMutex.unlock()
+        }
     }
 
     suspend fun startOrResumeJob(jobId: String) {

@@ -42,7 +42,20 @@ data class ImportedBookPayload(
     val sentences: List<SentenceEntity>
 )
 
-class BookImporter(private val context: Context) {
+class BookImporter internal constructor(
+    private val context: Context,
+    private val maxImportFileBytes: Long = MAX_IMPORT_FILE_BYTES,
+    private val maxExtractedTextChars: Int = MAX_EXTRACTED_TEXT_CHARS,
+    private val maxLineChars: Int = MAX_TXT_LINE_CHARS,
+    private val maxEpubTotalUncompressedBytes: Long = MAX_EPUB_TOTAL_UNCOMPRESSED_BYTES
+) {
+    constructor(context: Context) : this(
+        context = context,
+        maxImportFileBytes = MAX_IMPORT_FILE_BYTES,
+        maxExtractedTextChars = MAX_EXTRACTED_TEXT_CHARS,
+        maxLineChars = MAX_TXT_LINE_CHARS,
+        maxEpubTotalUncompressedBytes = MAX_EPUB_TOTAL_UNCOMPRESSED_BYTES
+    )
 
     suspend fun parseDocumentFromUri(uri: Uri): Result<ParsedSourceDocument> = withContext(Dispatchers.IO) {
         runCatching {
@@ -55,8 +68,8 @@ class BookImporter(private val context: Context) {
                 error("استيراد ملفات PDF غير متاح حالياً — يدعم التطبيق ملفات TXT وEPUB الآن مع قابلية إضافة PDF لاحقاً.")
             }
 
-            if (declaredSize > MAX_IMPORT_FILE_BYTES) {
-                error("حجم الملف يتجاوز الحد الأقصى المسموح للاستيراد (${MAX_IMPORT_FILE_BYTES / (1024 * 1024)} MB).")
+            if (declaredSize > maxImportFileBytes) {
+                error("حجم الملف يتجاوز الحد الأقصى المسموح للاستيراد (${maxImportFileBytes / (1024 * 1024)} MB).")
             }
 
             val isEpub = fileName.endsWith(".epub", ignoreCase = true) ||
@@ -66,7 +79,7 @@ class BookImporter(private val context: Context) {
                 val tempEpub = File(context.cacheDir, "epub_import_${UUID.randomUUID()}.tmp")
                 try {
                     context.contentResolver.openInputStream(uri)?.use { stream ->
-                        copyBoundedToTempFile(stream, tempEpub, MAX_IMPORT_FILE_BYTES)
+                        copyBoundedToTempFile(stream, tempEpub, maxImportFileBytes)
                     } ?: error("تعذر فتح الملف المحدد.")
                     parseEpubFileStreaming(tempEpub, fileName)
                 } finally {
@@ -74,7 +87,8 @@ class BookImporter(private val context: Context) {
                 }
             } else {
                 context.contentResolver.openInputStream(uri)?.use { stream ->
-                    parseTxtDocumentStreaming(stream, fileName)
+                    val boundedStream = BoundedInputStream(stream, maxImportFileBytes)
+                    parseTxtDocumentStreaming(boundedStream, fileName)
                 } ?: error("تعذر فتح الملف المحدد.")
             }
         }
@@ -134,9 +148,10 @@ class BookImporter(private val context: Context) {
         }
 
         BufferedReader(InputStreamReader(BufferedInputStream(input, 64 * 1024), Charsets.UTF_8)).use { reader ->
+            val lineReader = BoundedLineReader(reader, maxLineChars)
             var isFirstLine = true
             while (true) {
-                val rawLine = reader.readLine() ?: break
+                val rawLine = lineReader.readNextSegment() ?: break
                 val line = if (isFirstLine) {
                     isFirstLine = false
                     rawLine.removePrefix("\uFEFF")
@@ -145,8 +160,8 @@ class BookImporter(private val context: Context) {
                 }
 
                 totalChars += line.length + 1
-                if (totalChars > MAX_EXTRACTED_TEXT_CHARS) {
-                    error("النص يتجاوز الحد الأقصى المسموح للمعالجة (${MAX_EXTRACTED_TEXT_CHARS / 1_000_000} مليون حرف).")
+                if (totalChars > maxExtractedTextChars) {
+                    error("النص يتجاوز الحد الأقصى المسموح للمعالجة ($maxExtractedTextChars حرفاً).")
                 }
 
                 if (languageSampleBuf.length < 2500 && line.isNotBlank()) {
@@ -198,9 +213,12 @@ class BookImporter(private val context: Context) {
             }
             if (entryByName.isEmpty()) error("ملف EPUB غير صالح أو فارغ.")
 
+            var cumulativeUncompressedBytes = 0L
+
             val containerEntry = findZipEntry(entryByName, "META-INF/container.xml")
                 ?: error("ملف EPUB يفتقد META-INF/container.xml")
             val containerBytes = readZipEntryBounded(zip, containerEntry, MAX_EPUB_SPINE_ENTRY_BYTES)
+            cumulativeUncompressedBytes += containerBytes.size
 
             val opfPath = parseContainerOpfPath(containerBytes)
                 ?: entryByName.keys.firstOrNull { it.endsWith(".opf", ignoreCase = true) }
@@ -210,6 +228,10 @@ class BookImporter(private val context: Context) {
             val opfEntry = findZipEntry(entryByName, opfPath)
                 ?: error("تعذر قراءة $opfPath")
             val opfBytes = readZipEntryBounded(zip, opfEntry, MAX_EPUB_SPINE_ENTRY_BYTES)
+            cumulativeUncompressedBytes += opfBytes.size
+            if (cumulativeUncompressedBytes > maxEpubTotalUncompressedBytes) {
+                error("إجمالي حجم نصوص EPUB المفكوك يتجاوز الحد المسموح.")
+            }
 
             val opfMeta = parseOpf(opfBytes)
             val bookTitle = opfMeta.title.ifBlank { rawFileName.substringBeforeLast('.') }
@@ -223,12 +245,21 @@ class BookImporter(private val context: Context) {
                 val fullPath = normalizeZipPath(opfDir + relHref)
                 val spineEntry = findZipEntry(entryByName, fullPath)
                 if (spineEntry != null) {
-                    val htmlBytes = readZipEntryBounded(zip, spineEntry, MAX_EPUB_SPINE_ENTRY_BYTES)
+                    val remainingBudget = (maxEpubTotalUncompressedBytes - cumulativeUncompressedBytes).coerceAtLeast(0L)
+                    if (remainingBudget == 0L) {
+                        error("إجمالي حجم نصوص EPUB المفكوك يتجاوز الحد المسموح.")
+                    }
+                    val htmlBytes = readZipEntryBounded(
+                        zip,
+                        spineEntry,
+                        minOf(MAX_EPUB_SPINE_ENTRY_BYTES, remainingBudget)
+                    )
+                    cumulativeUncompressedBytes += htmlBytes.size
                     val xhtml = decodeUtf8WithBom(htmlBytes)
                     val extracted = extractReadableTextFromXhtml(xhtml)
                     if (extracted.second.isNotBlank()) {
                         totalExtractedChars += extracted.second.length
-                        if (totalExtractedChars > MAX_EXTRACTED_TEXT_CHARS) {
+                        if (totalExtractedChars > maxExtractedTextChars) {
                             error("حجم النص المستخرج من EPUB يتجاوز الحد المسموح للمعالجة.")
                         }
                         val chTitle = extracted.first.ifBlank { "Chapter ${idx + 1}" }
@@ -473,11 +504,86 @@ class BookImporter(private val context: Context) {
         return (resolved?.first ?: uri.lastPathSegment) to (resolved?.second ?: -1L)
     }
 
+    private class BoundedInputStream(
+        private val delegate: InputStream,
+        private val maxBytes: Long
+    ) : InputStream() {
+        private var bytesRead = 0L
+
+        override fun read(): Int {
+            val b = delegate.read()
+            if (b != -1) recordRead(1)
+            return b
+        }
+
+        override fun read(b: ByteArray, off: Int, len: Int): Int {
+            val read = delegate.read(b, off, len)
+            if (read > 0) recordRead(read.toLong())
+            return read
+        }
+
+        override fun close() {
+            delegate.close()
+        }
+
+        private fun recordRead(delta: Long) {
+            bytesRead += delta
+            if (bytesRead > maxBytes) {
+                error("حجم الملف يتجاوز الحد الأقصى المسموح للاستيراد ($maxBytes بايت).")
+            }
+        }
+    }
+
+    private class BoundedLineReader(
+        private val reader: BufferedReader,
+        private val maxCharsPerSegment: Int
+    ) {
+        private var pending = StringBuilder()
+
+        fun readNextSegment(): String? {
+            while (true) {
+                if (pending.length >= maxCharsPerSegment) {
+                    val slice = pending.substring(0, maxCharsPerSegment)
+                    val searchStart = (maxCharsPerSegment - 512).coerceAtLeast(0)
+                    val wsIdx = slice.lastIndexOf(' ', maxCharsPerSegment - 1)
+                    if (wsIdx >= searchStart && wsIdx > 0) {
+                        val segment = pending.substring(0, wsIdx)
+                        pending.delete(0, wsIdx + 1)
+                        return segment
+                    }
+                    pending.delete(0, maxCharsPerSegment)
+                    return slice
+                }
+
+                val chInt = reader.read()
+                if (chInt == -1) {
+                    return if (pending.isNotEmpty()) {
+                        val out = pending.toString()
+                        pending.clear()
+                        out
+                    } else {
+                        null
+                    }
+                }
+                val ch = chInt.toChar()
+                if (ch == '\r') continue
+                if (ch == '\n') {
+                    val out = pending.toString()
+                    pending.clear()
+                    return out
+                }
+                pending.append(ch)
+            }
+        }
+    }
+
     companion object {
         const val MAX_IMPORT_FILE_BYTES = 50L * 1024L * 1024L
         const val MAX_EPUB_ENTRIES = 2000
         const val MAX_EPUB_SPINE_ENTRY_BYTES = 5L * 1024L * 1024L
-        const val MAX_EXTRACTED_TEXT_CHARS = 15_000_000
+        const val MAX_EPUB_TOTAL_UNCOMPRESSED_BYTES = 10L * 1024L * 1024L
+        const val MAX_EXTRACTED_TEXT_CHARS = 2_000_000
+        const val MAX_TXT_LINE_CHARS = 16_384
 
         fun detectSourceLanguage(sampleText: String, opfLangHint: String?): SourceLanguage {
             val hint = opfLangHint.orEmpty().lowercase()

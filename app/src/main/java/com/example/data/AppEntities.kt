@@ -126,6 +126,7 @@ data class TranslationJobEntity(
     val status: String, // "PENDING", "RUNNING", "PAUSED", "COMPLETED", "FAILED"
     val totalChunks: Int,
     val completedChunks: Int = 0,
+    val jobEpoch: Int = 0,
     val lastError: String? = null,
     val createdAt: Long = System.currentTimeMillis(),
     val updatedAt: Long = System.currentTimeMillis()

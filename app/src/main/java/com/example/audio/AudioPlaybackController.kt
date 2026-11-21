@@ -113,24 +113,33 @@ class AudioPlaybackController(
         startSentenceIndex: Int = 0
     ) {
         scope.launch {
-            val sentences = bookDao.getChapterSentences(bookId, chapterIndex)
-            if (sentences.isEmpty()) {
+            try {
+                val sentences = bookDao.getChapterSentences(bookId, chapterIndex)
+                if (sentences.isEmpty()) {
+                    _state.value = _state.value.copy(
+                        status = PlaybackStatus.ERROR,
+                        errorMessage = "لا توجد جمل في هذا الفصل."
+                    )
+                    return@launch
+                }
+                val safeIndex = startSentenceIndex.coerceIn(0, sentences.lastIndex)
+                settingsRepository.setActiveBookId(bookId)
+                startQueuePlayback(
+                    bookId = bookId,
+                    bookTitle = bookTitle,
+                    chapterIndex = chapterIndex,
+                    chapterTitle = chapterTitle,
+                    sentences = sentences,
+                    startIndex = safeIndex
+                )
+            } catch (ce: CancellationException) {
+                throw ce
+            } catch (t: Throwable) {
                 _state.value = _state.value.copy(
                     status = PlaybackStatus.ERROR,
-                    errorMessage = "لا توجد جمل في هذا الفصل."
+                    errorMessage = t.message ?: "تعذر بدء تشغيل هذا الفصل."
                 )
-                return@launch
             }
-            val safeIndex = startSentenceIndex.coerceIn(0, sentences.lastIndex)
-            settingsRepository.setActiveBookId(bookId)
-            startQueuePlayback(
-                bookId = bookId,
-                bookTitle = bookTitle,
-                chapterIndex = chapterIndex,
-                chapterTitle = chapterTitle,
-                sentences = sentences,
-                startIndex = safeIndex
-            )
         }
     }
 
@@ -168,40 +177,48 @@ class AudioPlaybackController(
         startIndex: Int
     ) {
         stopPlaybackInternal(resetPositionState = false)
+        if (sentences.isEmpty()) {
+            _state.value = _state.value.copy(
+                status = PlaybackStatus.ERROR,
+                errorMessage = "لا توجد جمل صالحة للتشغيل."
+            )
+            return
+        }
+        val safeStart = startIndex.coerceIn(0, sentences.lastIndex)
         ensureServiceStarted()
         queueSentences = sentences
-        currentQueuePosition = startIndex
+        currentQueuePosition = safeStart
         isPausedFlag = false
 
         playbackJob = scope.launch {
-            val settings = settingsRepository.settingsFlow.first()
-            currentSpeed = settings.playbackSpeed
-            val spec = ModelCatalog.findById(settings.activeModelId)
-
-            _state.value = PlaybackUiState(
-                status = PlaybackStatus.BUFFERING,
-                bookId = bookId,
-                bookTitle = bookTitle,
-                chapterIndex = chapterIndex,
-                chapterTitle = chapterTitle,
-                sentenceIndex = sentences[startIndex].sentenceIndex,
-                totalSentencesInChapter = sentences.size,
-                currentSentenceText = sentences[startIndex].originalText,
-                playbackSpeed = currentSpeed,
-                repeatCurrentSentence = repeatSingle,
-                activeModelName = spec?.displayName ?: settings.activeModelId
-            )
-
-            if (!requestAudioFocus()) {
-                _state.value = _state.value.copy(
-                    status = PlaybackStatus.ERROR,
-                    errorMessage = "تعذر الحصول على تركيز الصوت من النظام."
-                )
-                return@launch
-            }
-
             try {
-                var idx = startIndex
+                val settings = settingsRepository.settingsFlow.first()
+                currentSpeed = settings.playbackSpeed
+                val spec = ModelCatalog.findById(settings.activeModelId)
+
+                _state.value = PlaybackUiState(
+                    status = PlaybackStatus.BUFFERING,
+                    bookId = bookId,
+                    bookTitle = bookTitle,
+                    chapterIndex = chapterIndex,
+                    chapterTitle = chapterTitle,
+                    sentenceIndex = sentences[safeStart].sentenceIndex,
+                    totalSentencesInChapter = sentences.size,
+                    currentSentenceText = sentences[safeStart].originalText,
+                    playbackSpeed = currentSpeed,
+                    repeatCurrentSentence = repeatSingle,
+                    activeModelName = spec?.displayName ?: settings.activeModelId
+                )
+
+                if (!requestAudioFocus()) {
+                    _state.value = _state.value.copy(
+                        status = PlaybackStatus.ERROR,
+                        errorMessage = "تعذر الحصول على تركيز الصوت من النظام."
+                    )
+                    return@launch
+                }
+
+                var idx = safeStart
                 var prefetchedIndex = -1
                 var prefetchedDeferred: kotlinx.coroutines.Deferred<Result<PreparedAudioChunk>>? = null
 
@@ -338,34 +355,20 @@ class AudioPlaybackController(
         speedMode: SpeedControlMode
     ) = withContext(Dispatchers.IO) {
         if (chunk.samples.isEmpty()) return@withContext
-        val sampleRate = chunk.sampleRateHz
-        val minBuf = AudioTrack.getMinBufferSize(
-            sampleRate,
-            AudioFormat.CHANNEL_OUT_MONO,
-            AudioFormat.ENCODING_PCM_FLOAT
-        ).coerceAtLeast(sampleRate / 5 * 4)
+        val sampleRate = chunk.sampleRateHz.coerceIn(8000, 96000)
 
-        val track = AudioTrack.Builder()
-            .setAudioAttributes(
-                AudioAttributes.Builder()
-                    .setUsage(AudioAttributes.USAGE_MEDIA)
-                    .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH)
-                    .build()
-            )
-            .setAudioFormat(
-                AudioFormat.Builder()
-                    .setEncoding(AudioFormat.ENCODING_PCM_FLOAT)
-                    .setSampleRate(sampleRate)
-                    .setChannelMask(AudioFormat.CHANNEL_OUT_MONO)
-                    .build()
-            )
-            .setBufferSizeInBytes(minBuf)
-            .setTransferMode(AudioTrack.MODE_STREAM)
-            .build()
+        var usePcm16 = false
+        var track = createAudioTrackOrNull(sampleRate, AudioFormat.ENCODING_PCM_FLOAT)
+        if (track == null) {
+            track = createAudioTrackOrNull(sampleRate, AudioFormat.ENCODING_PCM_16BIT)
+            usePcm16 = true
+        }
+        val activeTrack = track
+            ?: error("تعذر تهيئة مخرج الصوت AudioTrack بمعدل $sampleRate Hz.")
 
-        currentAudioTrack = track
-        applyPlaybackSpeedToTrack(track, speedMode)
-        track.play()
+        currentAudioTrack = activeTrack
+        applyPlaybackSpeedToTrack(activeTrack, speedMode)
+        activeTrack.play()
 
         _state.value = _state.value.copy(
             status = PlaybackStatus.PLAYING,
@@ -373,39 +376,91 @@ class AudioPlaybackController(
             currentSentenceText = chunk.sentence.originalText
         )
 
+        val pcm16Samples = if (usePcm16) {
+            ShortArray(chunk.samples.size) { i ->
+                (chunk.samples[i].coerceIn(-1f, 1f) * 32767f).toInt().toShort()
+            }
+        } else {
+            null
+        }
+
         var offset = 0
         val step = 2048
         while (offset < chunk.samples.size && playbackJob?.isActive == true) {
             if (isPausedFlag) {
-                if (track.playState == AudioTrack.PLAYSTATE_PLAYING) track.pause()
+                if (activeTrack.playState == AudioTrack.PLAYSTATE_PLAYING) activeTrack.pause()
                 _state.value = _state.value.copy(status = PlaybackStatus.PAUSED)
                 while (isPausedFlag && playbackJob?.isActive == true) {
                     Thread.sleep(50)
                 }
                 if (playbackJob?.isActive != true) break
-                applyPlaybackSpeedToTrack(track, speedMode)
-                track.play()
+                applyPlaybackSpeedToTrack(activeTrack, speedMode)
+                activeTrack.play()
                 _state.value = _state.value.copy(status = PlaybackStatus.PLAYING)
             }
 
             val count = minOf(step, chunk.samples.size - offset)
-            val written = track.write(chunk.samples, offset, count, AudioTrack.WRITE_BLOCKING)
+            val written = if (pcm16Samples != null) {
+                activeTrack.write(pcm16Samples, offset, count, AudioTrack.WRITE_BLOCKING)
+            } else {
+                activeTrack.write(chunk.samples, offset, count, AudioTrack.WRITE_BLOCKING)
+            }
             if (written < 0) break
             offset += written
 
-            updateWordHighlightIfAvailable(track, sampleRate, chunk)
+            updateWordHighlightIfAvailable(activeTrack, sampleRate, chunk)
         }
 
-        // Wait until buffered audio finishes playing before highlighting next sentence
+        // Wait until buffered audio finishes playing (with a safety wall-clock ceiling so HAL stalls cannot hang)
         val totalFrames = chunk.samples.size
-        while (playbackJob?.isActive == true && !isPausedFlag) {
-            val head = track.playbackHeadPosition
-            updateWordHighlightIfAvailable(track, sampleRate, chunk)
-            if (head >= totalFrames - 256) break
+        val estimatedDurationMs = ((totalFrames.toLong() * 1000L) / sampleRate.toLong()).coerceAtLeast(300L)
+        val drainDeadlineMs = System.currentTimeMillis() + estimatedDurationMs + 1500L
+        while (playbackJob?.isActive == true && !isPausedFlag && System.currentTimeMillis() < drainDeadlineMs) {
+            val head = activeTrack.playbackHeadPosition
+            updateWordHighlightIfAvailable(activeTrack, sampleRate, chunk)
+            if (head >= totalFrames - 256 || activeTrack.playState != AudioTrack.PLAYSTATE_PLAYING) break
             Thread.sleep(30)
         }
 
         releaseAudioTrack()
+    }
+
+    private fun createAudioTrackOrNull(sampleRate: Int, encoding: Int): AudioTrack? {
+        return runCatching {
+            val bytesPerSample = if (encoding == AudioFormat.ENCODING_PCM_FLOAT) 4 else 2
+            val rawMin = AudioTrack.getMinBufferSize(
+                sampleRate,
+                AudioFormat.CHANNEL_OUT_MONO,
+                encoding
+            )
+            if (rawMin <= 0) return null
+            val minBuf = rawMin.coerceAtLeast(sampleRate / 5 * bytesPerSample)
+
+            val track = AudioTrack.Builder()
+                .setAudioAttributes(
+                    AudioAttributes.Builder()
+                        .setUsage(AudioAttributes.USAGE_MEDIA)
+                        .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH)
+                        .build()
+                )
+                .setAudioFormat(
+                    AudioFormat.Builder()
+                        .setEncoding(encoding)
+                        .setSampleRate(sampleRate)
+                        .setChannelMask(AudioFormat.CHANNEL_OUT_MONO)
+                        .build()
+                )
+                .setBufferSizeInBytes(minBuf)
+                .setTransferMode(AudioTrack.MODE_STREAM)
+                .build()
+
+            if (track.state != AudioTrack.STATE_INITIALIZED) {
+                track.release()
+                null
+            } else {
+                track
+            }
+        }.getOrNull()
     }
 
     private fun updateWordHighlightIfAvailable(
@@ -443,7 +498,10 @@ class AudioPlaybackController(
         if (st.status == PlaybackStatus.PAUSED) {
             isPausedFlag = false
             _state.value = st.copy(status = PlaybackStatus.PLAYING)
-        } else if (st.status == PlaybackStatus.IDLE && st.bookId != null && st.bookId != "_standalone_") {
+        } else if ((st.status == PlaybackStatus.IDLE || st.status == PlaybackStatus.ERROR) &&
+            st.bookId != null &&
+            st.bookId != "_standalone_"
+        ) {
             playChapterFrom(
                 bookId = st.bookId,
                 bookTitle = st.bookTitle,
