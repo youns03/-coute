@@ -31,12 +31,49 @@ keytool -genkeypair -v \
   -dname "CN=Android Debug,O=Android,C=US"
 ```
 
-أما لبناء Release، فعيّن متغيرات البيئة التالية (أو أسرار CI):
-- `KEYSTORE_PATH`: المسار إلى ملف upload keystore (الافتراضي `${rootDir}/my-upload-key.jks`)
-- `STORE_PASSWORD`: كلمة مرور keystore
-- `KEY_PASSWORD`: كلمة مرور المفتاح (`keyAlias = "upload"`)
+أما لبناء Release محلياً، فعيّن متغيرات البيئة `ANDROID_KEYSTORE_PATH` و`ANDROID_KEYSTORE_PASSWORD` و`ANDROID_KEY_ALIAS` و`ANDROID_KEY_PASSWORD`. لا توجد قيم افتراضية للمفتاح أو كلمات مروره؛ يجب توفيرها خارج المستودع.
 
-### 4. أوامر التحقق والبناء
+### 4. إصدار GitHub Release
+
+الـworkflow `.github/workflows/android-release.yml` يعمل عند دفع tag يبدأ بـ`v`، ويتحقق من تنسيق SemVer مثل `v1.0.0`، ثم يبني APK موقّعة ويرفقها بـGitHub Release مع ملاحظات إصدار تلقائية. يأخذ `versionName` من الـtag بعد حذف `v`، ويضبط `versionCode` إلى `100000 + GITHUB_RUN_NUMBER`، لذلك يبدأ فوق `versionCode` الحالي (1) ويزداد مع كل تشغيل إصدار جديد.
+
+من صفحة المستودع افتح **Settings → Secrets and variables → Actions** وأضف هذه الأسرار الأربعة:
+
+- `ANDROID_KEYSTORE_BASE64`: محتوى ملف keystore بعد ترميزه إلى Base64.
+- `ANDROID_KEYSTORE_PASSWORD`: كلمة مرور ملف keystore.
+- `ANDROID_KEY_ALIAS`: اسم المفتاح/alias داخل keystore.
+- `ANDROID_KEY_PASSWORD`: كلمة مرور المفتاح.
+
+يُنشأ `ANDROID_KEYSTORE_PATH` مؤقتاً بواسطة الـworkflow على runner، ولا يلزم إضافته كـSecret. لإنشاء مفتاح Release جديد باستخدام JDK، شغّل الأمر التالي؛ سيطلب `keytool` كلمات المرور تفاعلياً. استخدم alias `ecoute-upload` أو غيّره، مع إدخال القيمة المطابقة في `ANDROID_KEY_ALIAS`:
+
+```bash
+keytool -genkeypair -v \
+  -keystore ecoute-release.jks \
+  -storetype JKS \
+  -alias ecoute-upload \
+  -keyalg RSA -keysize 2048 -validity 10000
+```
+
+حوّل الملف إلى Base64 في جذر المشروع ثم انسخ محتواه إلى السر `ANDROID_KEYSTORE_BASE64`:
+
+```bash
+base64 -w 0 ecoute-release.jks > ecoute-release.base64
+```
+
+على macOS استخدم `base64 < ecoute-release.jks | tr -d '\n' > ecoute-release.base64`، وفي PowerShell استخدم `[Convert]::ToBase64String([IO.File]::ReadAllBytes("ecoute-release.jks")) | Set-Content -NoNewline ecoute-release.base64`. ملفا keystore وBase64 مستثنيان من Git؛ لا ترفعهما للمستودع.
+
+بعد حفظ الأسرار والتأكد من وصول تغييرات الـworkflow إلى `main`، ادفع tag الإصدار هكذا:
+
+```bash
+git switch main
+git pull --ff-only origin main
+git tag -a v1.0.0 -m "Release v1.0.0"
+git push origin v1.0.0
+```
+
+**مهم لاستبدال نسخة مثبتة:** يجب أن تكون كل تحديثات Android موقعة بالمفتاح الخاص نفسه. ملف APK السابق الذي بُني محلياً بتوقيع Debug لن يقبل التحديث فوقه إذا أنشأت الآن مفتاح Release جديداً؛ Android سيرفض التوقيع المختلف. يلزم استخدام keystore الأصلي الذي وقّع النسخة المثبتة، وإلا فسيتطلب الانتقال إلى المفتاح الجديد إزالة النسخة القديمة أولاً، وقد يؤدي ذلك إلى فقد بيانات التطبيق.
+
+### 5. أوامر التحقق والبناء
 
 ```bash
 ./gradlew :app:testDebugUnitTest

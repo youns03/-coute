@@ -16,3 +16,9 @@
 local.properties
 .env
 debug.keystore
+# Android release-signing material; never commit private keys or their encoded copy
+*.jks
+*.keystore
+*.p12
+*.pfx
+/ecoute-release.base64

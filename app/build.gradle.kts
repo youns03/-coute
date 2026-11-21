@@ -19,6 +19,38 @@ plugins {
   alias(libs.plugins.google.services)
 }
 
+val ciVersionCode =
+  System.getenv("ANDROID_VERSION_CODE")?.let { value ->
+    value.toIntOrNull()
+      ?: throw GradleException("ANDROID_VERSION_CODE must be a valid integer")
+  } ?: 1
+if (ciVersionCode !in 1..2_100_000_000) {
+  throw GradleException("ANDROID_VERSION_CODE must be between 1 and 2100000000")
+}
+val ciVersionName = System.getenv("ANDROID_VERSION_NAME")?.takeIf { it.isNotBlank() } ?: "1.0"
+val releaseKeystorePath = System.getenv("ANDROID_KEYSTORE_PATH")
+val releaseStorePassword = System.getenv("ANDROID_KEYSTORE_PASSWORD")
+val releaseKeyAlias = System.getenv("ANDROID_KEY_ALIAS")
+val releaseKeyPassword = System.getenv("ANDROID_KEY_PASSWORD")
+val releaseSigningValues = listOf(
+  "ANDROID_KEYSTORE_PATH" to releaseKeystorePath,
+  "ANDROID_KEYSTORE_PASSWORD" to releaseStorePassword,
+  "ANDROID_KEY_ALIAS" to releaseKeyAlias,
+  "ANDROID_KEY_PASSWORD" to releaseKeyPassword,
+)
+val releaseBuildRequested = gradle.startParameter.taskNames.any { it.contains("release", ignoreCase = true) }
+if (releaseBuildRequested) {
+  val missingSigningValues = releaseSigningValues.filter { it.second.isNullOrBlank() }.map { it.first }
+  if (missingSigningValues.isNotEmpty()) {
+    throw GradleException(
+      "Release signing is missing required environment variables: ${missingSigningValues.joinToString()}",
+    )
+  }
+  if (!File(requireNotNull(releaseKeystorePath)).isFile) {
+    throw GradleException("The file configured by ANDROID_KEYSTORE_PATH does not exist")
+  }
+}
+
 android {
   namespace = "com.example"
   compileSdk { version = release(36) { minorApiLevel = 1 } }
@@ -27,8 +59,8 @@ android {
     applicationId = "com.aistudio.ecoute.kxmprq"
     minSdk = 24
     targetSdk = 36
-    versionCode = 1
-    versionName = "1.0"
+    versionCode = ciVersionCode
+    versionName = ciVersionName
 
     testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
   }
@@ -37,11 +69,10 @@ android {
   // and updating Android apps in AI Studio.
   signingConfigs {
     create("release") {
-      val keystorePath = System.getenv("KEYSTORE_PATH") ?: "${rootDir}/my-upload-key.jks"
-      storeFile = file(keystorePath)
-      storePassword = System.getenv("STORE_PASSWORD")
-      keyAlias = "upload"
-      keyPassword = System.getenv("KEY_PASSWORD")
+      storeFile = releaseKeystorePath?.let { file(it) }
+      storePassword = releaseStorePassword
+      keyAlias = releaseKeyAlias
+      keyPassword = releaseKeyPassword
     }
     create("debugConfig") {
       storeFile = file("${rootDir}/debug.keystore")

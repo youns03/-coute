@@ -1,0 +1,109 @@
+name: Android Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: android-release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build-and-release:
+    name: Build and publish signed APK
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+
+    steps:
+      - name: Check out tagged source
+        uses: actions/checkout@v4
+
+      - name: Set up Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+
+      - name: Validate tag and set Android version
+        shell: bash
+        run: |
+          set -euo pipefail
+          TAG="${GITHUB_REF_NAME}"
+          if [[ ! "$TAG" =~ ^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-[0-9A-Za-z.-]+)?(\+[0-9A-Za-z.-]+)?$ ]]; then
+            echo "::error::Tag '$TAG' is not a valid vMAJOR.MINOR.PATCH SemVer tag. Example: v1.0.0"
+            exit 1
+          fi
+          if [[ ! "${GITHUB_RUN_NUMBER}" =~ ^[0-9]+$ ]]; then
+            echo "::error::GITHUB_RUN_NUMBER is not numeric"
+            exit 1
+          fi
+          VERSION_CODE=$((100000 + GITHUB_RUN_NUMBER))
+          if (( VERSION_CODE > 2100000000 )); then
+            echo "::error::Calculated Android versionCode exceeds the supported maximum"
+            exit 1
+          fi
+          echo "ANDROID_VERSION_NAME=${TAG#v}" >> "$GITHUB_ENV"
+          echo "ANDROID_VERSION_CODE=${VERSION_CODE}" >> "$GITHUB_ENV"
+          echo "Preparing ${TAG} with versionCode ${VERSION_CODE}"
+
+      - name: Restore release keystore
+        shell: bash
+        env:
+          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+        run: |
+          set -euo pipefail
+          if [[ -z "${ANDROID_KEYSTORE_BASE64:-}" ]]; then
+            echo "::error::Set the ANDROID_KEYSTORE_BASE64 repository secret before creating a release tag"
+            exit 1
+          fi
+          KEYSTORE_PATH="${RUNNER_TEMP}/ecoute-release.jks"
+          printf '%s' "$ANDROID_KEYSTORE_BASE64" | base64 --decode > "$KEYSTORE_PATH"
+          chmod 600 "$KEYSTORE_PATH"
+          if [[ ! -s "$KEYSTORE_PATH" ]]; then
+            echo "::error::The decoded keystore is empty"
+            exit 1
+          fi
+          echo "ANDROID_KEYSTORE_PATH=${KEYSTORE_PATH}" >> "$GITHUB_ENV"
+
+      - name: Build signed release APK
+        env:
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: ./gradlew --no-daemon --stacktrace :app:assembleRelease
+
+      - name: Prepare APK asset
+        shell: bash
+        run: |
+          set -euo pipefail
+          APK_PATH="app/build/outputs/apk/release/app-release.apk"
+          if [[ ! -f "$APK_PATH" ]]; then
+            echo "::error::Expected signed APK was not produced at $APK_PATH"
+            exit 1
+          fi
+          mkdir -p release-artifacts
+          cp "$APK_PATH" "release-artifacts/Ecoute-${ANDROID_VERSION_NAME}.apk"
+
+      - name: Publish GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_name }}
+          name: ${{ github.ref_name }}
+          generate_release_notes: true
+          files: release-artifacts/*.apk
+          fail_on_unmatched_files: true
+
+      - name: Remove temporary signing material
+        if: always()
+        shell: bash
+        run: rm -f "${RUNNER_TEMP}/ecoute-release.jks"
