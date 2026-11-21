@@ -68,8 +68,13 @@ jobs:
             echo "::error::Set the ANDROID_KEYSTORE_BASE64 repository secret before creating a release tag"
             exit 1
           fi
+          CLEAN_KEYSTORE_BASE64="$ANDROID_KEYSTORE_BASE64"
+          if [[ "$CLEAN_KEYSTORE_BASE64" == *"<textarea"* ]]; then
+            CLEAN_KEYSTORE_BASE64="${CLEAN_KEYSTORE_BASE64#*>}"
+            CLEAN_KEYSTORE_BASE64="${CLEAN_KEYSTORE_BASE64%%</textarea>*}"
+          fi
           KEYSTORE_PATH="${RUNNER_TEMP}/ecoute-release.jks"
-          printf '%s' "$ANDROID_KEYSTORE_BASE64" | base64 --decode > "$KEYSTORE_PATH"
+          printf '%s' "$CLEAN_KEYSTORE_BASE64" | tr -d '[:space:]' | base64 --decode > "$KEYSTORE_PATH"
           chmod 600 "$KEYSTORE_PATH"
           if [[ ! -s "$KEYSTORE_PATH" ]]; then
             echo "::error::The decoded keystore is empty"
