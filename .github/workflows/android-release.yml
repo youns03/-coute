@@ -14,9 +14,9 @@ concurrency:
 
 jobs:
   build-and-release:
-    name: Build and publish signed APK
+    name: Build and publish signed ABI APKs
     runs-on: ubuntu-latest
-    timeout-minutes: 60
+    timeout-minutes: 90
 
     steps:
       - name: Check out tagged source
@@ -41,7 +41,7 @@ jobs:
         run: |
           set -euo pipefail
           TAG="${GITHUB_REF_NAME}"
-          if [[ ! "$TAG" =~ ^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-[0-9A-Za-z.-]+)?(\+[0-9A-Za-z.-]+)?$ ]]; then
+          if [[ ! "$TAG" =~ ^v(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)(-[0-9A-Za-z.-]+)?(\\+[0-9A-Za-z.-]+)?$ ]]; then
             echo "::error::Tag '$TAG' is not a valid vMAJOR.MINOR.PATCH SemVer tag. Example: v1.0.0"
             exit 1
           fi
@@ -55,8 +55,8 @@ jobs:
             exit 1
           fi
           echo "ANDROID_VERSION_NAME=${TAG#v}" >> "$GITHUB_ENV"
-          echo "ANDROID_VERSION_CODE=${VERSION_CODE}" >> "$GITHUB_ENV"
-          echo "Preparing ${TAG} with versionCode ${VERSION_CODE}"
+          echo "ANDROID_VERSION_CODE=$VERSION_CODE" >> "$GITHUB_ENV"
+          echo "Preparing $TAG with versionCode $VERSION_CODE"
 
       - name: Restore release keystore
         shell: bash
@@ -80,26 +80,73 @@ jobs:
             echo "::error::The decoded keystore is empty"
             exit 1
           fi
-          echo "ANDROID_KEYSTORE_PATH=${KEYSTORE_PATH}" >> "$GITHUB_ENV"
+          echo "ANDROID_KEYSTORE_PATH=$KEYSTORE_PATH" >> "$GITHUB_ENV"
 
-      - name: Build signed release APK
+      # Build ABI-specific APKs first. The ARM64 APK is the primary direct-download artifact.
+      - name: Build signed ABI-split release APKs
+        env:
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: ./gradlew --no-daemon --stacktrace :app:assembleRelease -PsplitApkByAbi=true
+
+      - name: Preserve ARM64 APK
+        shell: bash
+        run: |
+          set -euo pipefail
+          APK_DIR="app/build/outputs/apk/release"
+          ARM64_APK="$(find "$APK_DIR" -maxdepth 1 -type f -name '*arm64-v8a*.apk' -print -quit)"
+          if [[ -z "$ARM64_APK" || ! -f "$ARM64_APK" ]]; then
+            echo "::error::The ABI-split build did not produce an ARM64 APK"
+            find "$APK_DIR" -maxdepth 1 -type f -name '*.apk' -print || true
+            exit 1
+          fi
+          mkdir -p release-artifacts
+          cp "$ARM64_APK" "release-artifacts/Ecoute-${ANDROID_VERSION_NAME}-arm64-v8a.apk"
+          echo "ARM64 APK: $(stat -c '%s bytes' "$ARM64_APK")"
+
+      # Build the universal APK separately so it remains available as a compatibility fallback.
+      - name: Build signed universal release APK
         env:
           ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
           ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
           ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
         run: ./gradlew --no-daemon --stacktrace :app:assembleRelease
 
-      - name: Prepare APK asset
+      - name: Verify and prepare release APKs
         shell: bash
         run: |
           set -euo pipefail
-          APK_PATH="app/build/outputs/apk/release/app-release.apk"
-          if [[ ! -f "$APK_PATH" ]]; then
-            echo "::error::Expected signed APK was not produced at $APK_PATH"
+          APK_DIR="app/build/outputs/apk/release"
+          UNIVERSAL_APK="$APK_DIR/app-release.apk"
+          ARM64_APK="release-artifacts/Ecoute-${ANDROID_VERSION_NAME}-arm64-v8a.apk"
+          if [[ ! -s "$UNIVERSAL_APK" || ! -s "$ARM64_APK" ]]; then
+            echo "::error::Expected ARM64 and universal APKs are both required"
             exit 1
           fi
-          mkdir -p release-artifacts
-          cp "$APK_PATH" "release-artifacts/Ecoute-${ANDROID_VERSION_NAME}.apk"
+
+          APKSIGNER="$ANDROID_HOME/build-tools/36.0.0/apksigner"
+          "$APKSIGNER" verify --verbose "$ARM64_APK"
+          "$APKSIGNER" verify --verbose "$UNIVERSAL_APK"
+
+          ARM64_ABIS="$(unzip -Z1 "$ARM64_APK" | awk -F/ '$1 == "lib" && NF >= 3 {print $2}' | sort -u | tr '\\n' ' ')"
+          if [[ "$ARM64_ABIS" != "arm64-v8a " ]]; then
+            echo "::error::ARM64 APK contains unexpected ABI set: '$ARM64_ABIS'"
+            exit 1
+          fi
+
+          UNIVERSAL_ABIS="$(unzip -Z1 "$UNIVERSAL_APK" | awk -F/ '$1 == "lib" && NF >= 3 {print $2}' | sort -u)"
+          for ABI in arm64-v8a armeabi-v7a x86_64 x86; do
+            if ! grep -qx "$ABI" <<< "$UNIVERSAL_ABIS"; then
+              echo "::error::Universal APK is missing ABI $ABI"
+              exit 1
+            fi
+          done
+
+          cp "$UNIVERSAL_APK" "release-artifacts/Ecoute-${ANDROID_VERSION_NAME}-universal.apk"
+          echo "Verified ARM64 APK: $(stat -c '%s bytes' "$ARM64_APK")"
+          echo "Verified universal APK: $(stat -c '%s bytes' "$UNIVERSAL_APK")"
+          sha256sum "$ARM64_APK" "$UNIVERSAL_APK" | tee release-artifacts/SHA256SUMS.txt
 
       - name: Publish GitHub Release
         uses: softprops/action-gh-release@v2
@@ -107,7 +154,9 @@ jobs:
           tag_name: ${{ github.ref_name }}
           name: ${{ github.ref_name }}
           generate_release_notes: true
-          files: release-artifacts/*.apk
+          files: |
+            release-artifacts/*.apk
+            release-artifacts/SHA256SUMS.txt
           fail_on_unmatched_files: true
 
       - name: Remove temporary signing material
