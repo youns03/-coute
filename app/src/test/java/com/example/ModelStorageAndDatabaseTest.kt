@@ -230,6 +230,63 @@ class ModelStorageAndDatabaseTest {
     }
 
     @Test
+    fun `deferred model commit rolls back on engine rejection and finalizes on confirmation`() = runTest {
+        val modelId = "deferred-commit-model"
+        val base = ModelCatalog.findById("piper-fr-siwis-medium")!!
+
+        fun createPackage(file: File, tokenText: String): ModelSpec {
+            ZipOutputStream(FileOutputStream(file)).use { zip ->
+                zip.putNextEntry(ZipEntry("model.onnx"))
+                zip.write(ByteArray(1_050_000) { 7 })
+                zip.closeEntry()
+                zip.putNextEntry(ZipEntry("tokens.txt"))
+                zip.write(tokenText.toByteArray())
+                zip.closeEntry()
+            }
+            return base.copy(
+                id = modelId,
+                expectedSizeBytes = file.length(),
+                sha256 = storageManager.computeSha256(file),
+                requiresEspeakData = false
+            )
+        }
+
+        val oldPart = File(storageManager.tempDownloadsRoot, "deferred-old.zip")
+        val oldSpec = createPackage(oldPart, "old-token-set")
+        val oldDir = storageManager.installVerifiedPackage(oldSpec, oldPart).getOrThrow()
+        assertEquals("old-token-set", File(oldDir, "tokens.txt").readText())
+
+        val rejectedPart = File(storageManager.tempDownloadsRoot, "deferred-rejected.zip")
+        val rejectedSpec = createPackage(rejectedPart, "rejected-token-set")
+        val rejectedDir = storageManager.installVerifiedPackage(
+            rejectedSpec,
+            rejectedPart,
+            deferCommitConfirmation = true
+        ).getOrThrow()
+        assertEquals("rejected-token-set", File(rejectedDir, "tokens.txt").readText())
+        assertTrue(File(context.cacheDir, "backup_$modelId").isDirectory)
+        assertTrue(File(context.cacheDir, "commit_$modelId").isFile)
+
+        assertTrue(storageManager.rollbackInstalledPackage(modelId))
+        assertTrue(storageManager.verifyInstalledPackage(oldSpec, verifyIntegrity = true))
+        assertEquals("old-token-set", File(oldDir, "tokens.txt").readText())
+
+        val acceptedPart = File(storageManager.tempDownloadsRoot, "deferred-accepted.zip")
+        val acceptedSpec = createPackage(acceptedPart, "accepted-token-set")
+        val acceptedDir = storageManager.installVerifiedPackage(
+            acceptedSpec,
+            acceptedPart,
+            deferCommitConfirmation = true
+        ).getOrThrow()
+        storageManager.confirmInstalledPackage(acceptedSpec).getOrThrow()
+        assertTrue(storageManager.verifyInstalledPackage(acceptedSpec, verifyIntegrity = true))
+        assertEquals("accepted-token-set", File(acceptedDir, "tokens.txt").readText())
+        assertFalse(File(context.cacheDir, "backup_$modelId").exists())
+        assertFalse(File(context.cacheDir, "commit_$modelId").exists())
+        storageManager.deleteModelFiles(modelId)
+    }
+
+    @Test
     fun `failed replacement preserves old model and startup restores orphan backup`() = runTest {
         val modelId = "atomic-model"
         val base = ModelCatalog.findById("piper-fr-siwis-medium")!!
@@ -269,6 +326,10 @@ class ModelStorageAndDatabaseTest {
         val backup = File(context.cacheDir, "backup_$modelId")
         oldDir.copyRecursively(backup, overwrite = true)
         oldDir.deleteRecursively()
+        // Simulate interruption after the prepared marker and a partial new final directory.
+        File(context.cacheDir, "commit_$modelId").writeText("prepared")
+        oldDir.mkdirs()
+        File(oldDir, "partial.bin").writeText("incomplete")
         File(context.cacheDir, "staging_$modelId").mkdirs()
         storageManager.recoverPendingInstalls()
         assertTrue(storageManager.verifyInstalledPackage(oldSpec, verifyIntegrity = true))
