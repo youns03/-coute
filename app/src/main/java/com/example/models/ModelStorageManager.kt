@@ -51,17 +51,24 @@ class ModelStorageManager(private val context: Context) {
     val savedSamplesRoot: File
         get() = File(context.filesDir, "benchmark_samples").apply { mkdirs() }
 
-    fun getInstalledModelDir(modelId: String): File {
+    private fun requireValidModelId(modelId: String) {
         require(modelId.isNotBlank() && modelId != "." && modelId != "..") {
             "معرّف نموذج غير صالح."
         }
         require('/' !in modelId && '\\' !in modelId) {
             "معرّف النموذج لا يجوز أن يحتوي على فاصل مسار."
         }
+    }
+
+    fun getInstalledModelDir(modelId: String): File {
+        requireValidModelId(modelId)
         return File(permanentModelsRoot, modelId)
     }
 
-    fun getTempPartFile(modelId: String): File = File(tempDownloadsRoot, "$modelId.part")
+    fun getTempPartFile(modelId: String): File {
+        requireValidModelId(modelId)
+        return File(tempDownloadsRoot, "$modelId.part")
+    }
 
     fun getSharedEspeakDir(): File = File(permanentModelsRoot, "espeak-ng-data")
 
@@ -123,6 +130,7 @@ class ModelStorageManager(private val context: Context) {
         downloadedFile: File,
         deferCommitConfirmation: Boolean = false
     ): Result<File> = withContext(Dispatchers.IO) {
+        requireValidModelId(spec.id)
         synchronized(installLocks.getOrPut(spec.id) { Any() }) {
             runCatching {
                 if (!downloadedFile.exists()) error("الملف المؤقت غير موجود.")
