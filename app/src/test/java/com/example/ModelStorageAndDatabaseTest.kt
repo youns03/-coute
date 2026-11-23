@@ -50,10 +50,12 @@ class ModelStorageAndDatabaseTest {
             .allowMainThreadQueries()
             .build()
         storageManager = ModelStorageManager(context)
+        storageManager.deleteModelFiles("piper-fr-siwis-medium")
     }
 
     @After
     fun tearDown() {
+        storageManager.deleteModelFiles("piper-fr-siwis-medium")
         db.close()
     }
 
