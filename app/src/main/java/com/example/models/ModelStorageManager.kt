@@ -471,9 +471,17 @@ class ModelStorageManager(private val context: Context) {
     }
 
     fun deleteModelFiles(modelId: String): Boolean {
-        getTempPartFile(modelId).delete()
         val dir = getInstalledModelDir(modelId)
-        return if (dir.exists()) dir.deleteRecursively() else true
+        val artifacts = listOf(
+            getTempPartFile(modelId),
+            File(context.cacheDir, "staging_$modelId"),
+            File(context.cacheDir, "backup_$modelId"),
+            File(context.cacheDir, "commit_$modelId")
+        )
+        val targets = artifacts + dir
+        return targets.all { target ->
+            !target.exists() || target.deleteRecursively()
+        }
     }
 
     fun clearAudioCache() {
