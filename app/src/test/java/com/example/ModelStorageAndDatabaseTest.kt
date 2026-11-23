@@ -340,6 +340,49 @@ class ModelStorageAndDatabaseTest {
     }
 
     @Test
+    fun `startup restores verified backup when interrupted backup copy left partial final directory`() = runTest {
+        val specBase = ModelCatalog.findById("piper-fr-siwis-medium")!!
+        val modelId = specBase.id
+        storageManager.deleteModelFiles(modelId)
+        val backup = File(context.cacheDir, "backup_$modelId")
+        val marker = File(context.cacheDir, "commit_$modelId")
+        val staging = File(context.cacheDir, "staging_$modelId")
+        backup.deleteRecursively()
+        marker.delete()
+        staging.deleteRecursively()
+
+        val part = storageManager.getTempPartFile("interrupted-backup")
+        ZipOutputStream(FileOutputStream(part)).use { zip ->
+            zip.putNextEntry(ZipEntry("model.onnx"))
+            zip.write(ByteArray(1_050_000) { 3 })
+            zip.closeEntry()
+            zip.putNextEntry(ZipEntry("tokens.txt"))
+            zip.write("verified-old-model".toByteArray())
+            zip.closeEntry()
+        }
+        val spec = specBase.copy(
+            expectedSizeBytes = part.length(),
+            sha256 = storageManager.computeSha256(part),
+            archiveType = ArchiveType.ZIP,
+            requiresEspeakData = false
+        )
+        val installed = storageManager.installVerifiedPackage(spec, part).getOrThrow()
+        installed.copyRecursively(backup, overwrite = true)
+        installed.deleteRecursively()
+        installed.mkdirs()
+        File(installed, "partial.bin").writeText("interrupted copy")
+        marker.writeText("backing_up", Charsets.UTF_8)
+
+        storageManager.recoverPendingInstalls()
+
+        assertTrue("Recovery must restore the integrity-verified backup", storageManager.verifyInstalledPackage(spec, true))
+        assertEquals("verified-old-model", File(storageManager.getInstalledModelDir(modelId), "tokens.txt").readText())
+        assertFalse(backup.exists())
+        assertFalse(marker.exists())
+        storageManager.deleteModelFiles(modelId)
+    }
+
+    @Test
     fun `parallel Piper dependency installs are serialized by shared eSpeak lock`() = runTest {
         var active = 0
         var maximumActive = 0
