@@ -130,9 +130,9 @@ class ModelStorageManager(private val context: Context) {
         downloadedFile: File,
         deferCommitConfirmation: Boolean = false
     ): Result<File> = withContext(Dispatchers.IO) {
-        requireValidModelId(spec.id)
         synchronized(installLocks.getOrPut(spec.id) { Any() }) {
             runCatching {
+                requireValidModelId(spec.id)
                 if (!downloadedFile.exists()) error("الملف المؤقت غير موجود.")
                 if (downloadedFile.length() != spec.expectedSizeBytes) {
                     val actualLen = downloadedFile.length()
