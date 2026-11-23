@@ -207,11 +207,9 @@ class ModelStorageManager(private val context: Context) {
         val staging = File(context.cacheDir, "staging_${spec.id}")
         if (marker.exists()) {
             marker.writeText("committed", Charsets.UTF_8)
-            if (backup.exists() && !backup.deleteRecursively()) {
-                error("تم اعتماد النموذج الجديد، لكن تعذر تنظيف النسخة الاحتياطية؛ ستتم إعادة المحاولة عند التشغيل.")
-            }
+            val backupCleaned = !backup.exists() || backup.deleteRecursively()
             staging.deleteRecursively()
-            marker.delete()
+            if (backupCleaned) marker.delete()
         }
         check(finalDir.isDirectory)
     }
