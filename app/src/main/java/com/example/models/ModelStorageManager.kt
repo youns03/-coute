@@ -478,10 +478,11 @@ class ModelStorageManager(private val context: Context) {
             File(context.cacheDir, "backup_$modelId"),
             File(context.cacheDir, "commit_$modelId")
         )
-        val targets = artifacts + dir
-        return targets.all { target ->
-            !target.exists() || target.deleteRecursively()
+        var success = true
+        for (target in artifacts + dir) {
+            if (target.exists() && !target.deleteRecursively()) success = false
         }
+        return success
     }
 
     fun clearAudioCache() {
