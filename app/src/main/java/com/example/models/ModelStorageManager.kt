@@ -363,8 +363,18 @@ class ModelStorageManager(private val context: Context) {
             require(recordedPackageSha.matches(Regex("[0-9a-fA-F]{64}"))) {
                 "Invalid recovery package checksum"
             }
+            val recoverySize = if (spec.engineType == EngineType.KOKORO_LITERT) {
+                dir.walkTopDown().firstOrNull { it.isFile && it.extension == "litertlm" }?.length()
+                    ?: error("Missing LiteRT-LM payload in recovery backup")
+            } else {
+                spec.expectedSizeBytes
+            }
             verifyInstalledPackageAt(
-                spec.copy(version = recordedVersion, sha256 = recordedPackageSha),
+                spec.copy(
+                    version = recordedVersion,
+                    sha256 = recordedPackageSha,
+                    expectedSizeBytes = recoverySize
+                ),
                 dir,
                 verifyIntegrity = true
             )
