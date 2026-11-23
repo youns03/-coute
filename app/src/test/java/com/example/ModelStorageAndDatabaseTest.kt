@@ -247,6 +247,7 @@ class ModelStorageAndDatabaseTest {
                 id = modelId,
                 expectedSizeBytes = file.length(),
                 sha256 = storageManager.computeSha256(file),
+                archiveType = ArchiveType.ZIP,
                 requiresEspeakData = false
             )
         }
@@ -308,6 +309,7 @@ class ModelStorageAndDatabaseTest {
             id = modelId,
             expectedSizeBytes = oldPart.length(),
             sha256 = storageManager.computeSha256(oldPart),
+            archiveType = ArchiveType.ZIP,
             requiresEspeakData = false
         )
         val oldDir = storageManager.installVerifiedPackage(oldSpec, oldPart).getOrThrow()
