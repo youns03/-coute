@@ -383,6 +383,38 @@ class ModelStorageAndDatabaseTest {
     }
 
     @Test
+    fun `startup preserves verified original when transaction marker was torn before backup move`() = runTest {
+        val base = ModelCatalog.findById("piper-fr-siwis-medium")!!
+        val modelId = "torn-marker-model"
+        val part = storageManager.getTempPartFile("torn-marker-fixture")
+        ZipOutputStream(FileOutputStream(part)).use { zip ->
+            zip.putNextEntry(ZipEntry("model.onnx"))
+            zip.write(ByteArray(1_050_000) { 5 })
+            zip.closeEntry()
+            zip.putNextEntry(ZipEntry("tokens.txt"))
+            zip.write("original-installation".toByteArray())
+            zip.closeEntry()
+        }
+        val spec = base.copy(
+            id = modelId,
+            expectedSizeBytes = part.length(),
+            sha256 = storageManager.computeSha256(part),
+            archiveType = ArchiveType.ZIP,
+            requiresEspeakData = false
+        )
+        val installed = storageManager.installVerifiedPackage(spec, part).getOrThrow()
+        File(context.cacheDir, "commit_$modelId").writeText("backing_")
+        File(context.cacheDir, "staging_$modelId").mkdirs()
+
+        storageManager.recoverPendingInstalls()
+
+        assertTrue("A verified original must survive an incomplete marker write", storageManager.verifyInstalledPackage(spec, true))
+        assertEquals("original-installation", File(installed, "tokens.txt").readText())
+        assertFalse(File(context.cacheDir, "commit_$modelId").exists())
+        storageManager.deleteModelFiles(modelId)
+    }
+
+    @Test
     fun `parallel Piper dependency installs are serialized by shared eSpeak lock`() = runTest {
         var active = 0
         var maximumActive = 0
