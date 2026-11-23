@@ -19,9 +19,11 @@ import com.example.domain.SpeechTextProcessor
 import com.example.domain.SpeedControlMode
 import com.example.domain.WordTimestampRange
 import com.example.models.ModelStorageManager
+import androidx.media3.common.util.UnstableApi
 import com.example.tts.TtsEngineManager
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -193,24 +195,27 @@ class AudioPlaybackController internal constructor(
     private val settingsRepository: SettingsRepository,
     private val storageManager: ModelStorageManager,
     private val ttsEngineManager: TtsEngineManager,
-    private val trackFactory: AudioTrackHandleFactory
+    private val trackFactory: AudioTrackHandleFactory,
+    private val playbackDispatcher: CoroutineDispatcher = Dispatchers.Default
 ) {
     constructor(
         context: Context,
         bookDao: BookDao,
         settingsRepository: SettingsRepository,
         storageManager: ModelStorageManager,
-        ttsEngineManager: TtsEngineManager
+        ttsEngineManager: TtsEngineManager,
+        playbackDispatcher: CoroutineDispatcher = Dispatchers.Default
     ) : this(
         context = context,
         bookDao = bookDao,
         settingsRepository = settingsRepository,
         storageManager = storageManager,
         ttsEngineManager = ttsEngineManager,
-        trackFactory = DefaultAudioTrackHandleFactory
+        trackFactory = DefaultAudioTrackHandleFactory,
+        playbackDispatcher = playbackDispatcher
     )
 
-    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+    private val scope = CoroutineScope(SupervisorJob() + playbackDispatcher)
     private val audioManager = context.getSystemService(Context.AUDIO_SERVICE) as AudioManager
     private val sessionLock = Any()
     private val trackLock = Any()
@@ -1247,6 +1252,7 @@ class AudioPlaybackController internal constructor(
         }
     }
 
+    @androidx.annotation.OptIn(markerClass = [UnstableApi::class])
     private fun ensureServiceStarted() {
         runCatching {
             val intent = Intent(context, PlaybackService::class.java)

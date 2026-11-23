@@ -15,6 +15,10 @@ import com.example.models.ModelDownloadWorker
 import com.example.models.ModelRepository
 import com.example.models.ModelStorageManager
 import com.example.tts.TtsEngineManager
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.test.runTest
 import org.junit.After
@@ -32,7 +36,7 @@ import java.util.zip.ZipEntry
 import java.util.zip.ZipOutputStream
 
 @RunWith(RobolectricTestRunner::class)
-@Config(sdk = [36])
+@Config(sdk = [35])
 class ModelStorageAndDatabaseTest {
 
     private lateinit var context: Context
@@ -46,10 +50,12 @@ class ModelStorageAndDatabaseTest {
             .allowMainThreadQueries()
             .build()
         storageManager = ModelStorageManager(context)
+        storageManager.deleteModelFiles("piper-fr-siwis-medium")
     }
 
     @After
     fun tearDown() {
+        storageManager.deleteModelFiles("piper-fr-siwis-medium")
         db.close()
     }
 
@@ -197,6 +203,280 @@ class ModelStorageAndDatabaseTest {
         // Malformed / missing headers
         assertFalse(ModelDownloadWorker.isValidContentRangeHeader(null, 1000L, total))
         assertFalse(ModelDownloadWorker.isValidContentRangeHeader("items 1000-2000/2001", 1000L, 2001L))
+    }
+
+    @Test
+    @Config(sdk = [24])
+    fun `api 24 install writes and verifies integrity manifest without java nio paths`() = runTest {
+        val part = storageManager.getTempPartFile("api24-model")
+        ZipOutputStream(FileOutputStream(part)).use { zip ->
+            zip.putNextEntry(ZipEntry("nested/phontab"))
+            zip.write("api24".toByteArray())
+            zip.closeEntry()
+        }
+        val base = ModelCatalog.espeakNgDataSpec
+        val spec = base.copy(
+            expectedSizeBytes = part.length(),
+            sha256 = storageManager.computeSha256(part),
+            requiresEspeakData = false
+        )
+        val installed = storageManager.installVerifiedPackage(spec, part).getOrThrow()
+        assertTrue(File(installed, ModelStorageManager.INTEGRITY_MANIFEST_FILE).isFile)
+        assertTrue(storageManager.verifyInstalledPackage(spec, verifyIntegrity = true))
+
+        File(installed, ModelStorageManager.INTEGRITY_MANIFEST_FILE).appendText(
+            "file|../outside|1|${"0".repeat(64)}\n"
+        )
+        assertFalse("Manifest paths must not escape the model root", storageManager.verifyInstalledPackage(spec, true))
+        storageManager.deleteModelFiles(spec.id)
+    }
+
+    @Test
+    fun `deferred model commit rolls back on engine rejection and finalizes on confirmation`() = runTest {
+        val base = ModelCatalog.findById("piper-fr-siwis-medium")!!
+        val modelId = base.id
+
+        fun createPackage(file: File, tokenText: String): ModelSpec {
+            ZipOutputStream(FileOutputStream(file)).use { zip ->
+                zip.putNextEntry(ZipEntry("model.onnx"))
+                zip.write(ByteArray(1_050_000) { 7 })
+                zip.closeEntry()
+                zip.putNextEntry(ZipEntry("tokens.txt"))
+                zip.write(tokenText.toByteArray())
+                zip.closeEntry()
+            }
+            return base.copy(
+                id = modelId,
+                expectedSizeBytes = file.length(),
+                sha256 = storageManager.computeSha256(file),
+                archiveType = ArchiveType.ZIP,
+                requiresEspeakData = false
+            )
+        }
+
+        val oldPart = File(storageManager.tempDownloadsRoot, "deferred-old.zip")
+        val oldSpec = createPackage(oldPart, "old-token-set")
+        val oldDir = storageManager.installVerifiedPackage(oldSpec, oldPart).getOrThrow()
+        assertEquals("old-token-set", File(oldDir, "tokens.txt").readText())
+
+        val rejectedPart = File(storageManager.tempDownloadsRoot, "deferred-rejected.zip")
+        val rejectedSpec = createPackage(rejectedPart, "rejected-token-set")
+        val rejectedDir = storageManager.installVerifiedPackage(
+            rejectedSpec,
+            rejectedPart,
+            deferCommitConfirmation = true
+        ).getOrThrow()
+        assertEquals("rejected-token-set", File(rejectedDir, "tokens.txt").readText())
+        assertTrue(File(context.cacheDir, "backup_$modelId").isDirectory)
+        assertTrue(File(context.cacheDir, "commit_$modelId").isFile)
+
+        assertTrue(storageManager.rollbackInstalledPackage(modelId))
+        assertTrue(storageManager.verifyInstalledPackage(oldSpec, verifyIntegrity = true))
+        assertEquals("old-token-set", File(oldDir, "tokens.txt").readText())
+
+        val acceptedPart = File(storageManager.tempDownloadsRoot, "deferred-accepted.zip")
+        val acceptedSpec = createPackage(acceptedPart, "accepted-token-set")
+        val acceptedDir = storageManager.installVerifiedPackage(
+            acceptedSpec,
+            acceptedPart,
+            deferCommitConfirmation = true
+        ).getOrThrow()
+        storageManager.confirmInstalledPackage(acceptedSpec).getOrThrow()
+        assertTrue(storageManager.verifyInstalledPackage(acceptedSpec, verifyIntegrity = true))
+        assertEquals("accepted-token-set", File(acceptedDir, "tokens.txt").readText())
+        assertFalse(File(context.cacheDir, "backup_$modelId").exists())
+        assertFalse(File(context.cacheDir, "commit_$modelId").exists())
+        storageManager.deleteModelFiles(modelId)
+    }
+
+    @Test
+    fun `failed replacement preserves old model and startup restores orphan backup`() = runTest {
+        val base = ModelCatalog.findById("piper-fr-siwis-medium")!!
+        val modelId = base.id
+        fun writeZip(file: File, includeOnnx: Boolean) {
+            ZipOutputStream(FileOutputStream(file)).use { zip ->
+                if (includeOnnx) {
+                    zip.putNextEntry(ZipEntry("model.onnx"))
+                    zip.write(ByteArray(1_050_000) { 1 })
+                    zip.closeEntry()
+                }
+                zip.putNextEntry(ZipEntry("tokens.txt"))
+                zip.write("old 1\n".toByteArray())
+                zip.closeEntry()
+            }
+        }
+        val oldPart = storageManager.getTempPartFile("atomic-old")
+        writeZip(oldPart, includeOnnx = true)
+        val oldSpec = base.copy(
+            id = modelId,
+            expectedSizeBytes = oldPart.length(),
+            sha256 = storageManager.computeSha256(oldPart),
+            archiveType = ArchiveType.ZIP,
+            requiresEspeakData = false
+        )
+        val oldDir = storageManager.installVerifiedPackage(oldSpec, oldPart).getOrThrow()
+        val oldBytes = File(oldDir, "model.onnx").readBytes()
+
+        val badPart = storageManager.getTempPartFile("atomic-bad")
+        writeZip(badPart, includeOnnx = false)
+        val badSpec = oldSpec.copy(
+            expectedSizeBytes = badPart.length(),
+            sha256 = storageManager.computeSha256(badPart)
+        )
+        assertTrue(storageManager.installVerifiedPackage(badSpec, badPart).isFailure)
+        assertTrue(storageManager.verifyInstalledPackage(oldSpec, verifyIntegrity = true))
+        assertTrue(oldBytes.contentEquals(File(oldDir, "model.onnx").readBytes()))
+
+        val backup = File(context.cacheDir, "backup_$modelId")
+        oldDir.copyRecursively(backup, overwrite = true)
+        oldDir.deleteRecursively()
+        // Simulate interruption after the prepared marker and a partial new final directory.
+        File(context.cacheDir, "commit_$modelId").writeText("prepared")
+        oldDir.mkdirs()
+        File(oldDir, "partial.bin").writeText("incomplete")
+        File(context.cacheDir, "staging_$modelId").mkdirs()
+        storageManager.recoverPendingInstalls()
+        assertTrue(storageManager.verifyInstalledPackage(oldSpec, verifyIntegrity = true))
+        assertFalse(backup.exists())
+        storageManager.deleteModelFiles(modelId)
+    }
+
+    @Test
+    fun `startup restores verified backup when interrupted backup copy left partial final directory`() = runTest {
+        val specBase = ModelCatalog.findById("piper-fr-siwis-medium")!!
+        val modelId = specBase.id
+        storageManager.deleteModelFiles(modelId)
+        val backup = File(context.cacheDir, "backup_$modelId")
+        val marker = File(context.cacheDir, "commit_$modelId")
+        val staging = File(context.cacheDir, "staging_$modelId")
+        backup.deleteRecursively()
+        marker.delete()
+        staging.deleteRecursively()
+
+        val part = storageManager.getTempPartFile("interrupted-backup")
+        ZipOutputStream(FileOutputStream(part)).use { zip ->
+            zip.putNextEntry(ZipEntry("model.onnx"))
+            zip.write(ByteArray(1_050_000) { 3 })
+            zip.closeEntry()
+            zip.putNextEntry(ZipEntry("tokens.txt"))
+            zip.write("verified-old-model".toByteArray())
+            zip.closeEntry()
+        }
+        val spec = specBase.copy(
+            expectedSizeBytes = part.length(),
+            sha256 = storageManager.computeSha256(part),
+            archiveType = ArchiveType.ZIP,
+            requiresEspeakData = false
+        )
+        val installed = storageManager.installVerifiedPackage(spec, part).getOrThrow()
+        installed.copyRecursively(backup, overwrite = true)
+        installed.deleteRecursively()
+        installed.mkdirs()
+        File(installed, "partial.bin").writeText("interrupted copy")
+        marker.writeText("backing_up", Charsets.UTF_8)
+
+        storageManager.recoverPendingInstalls()
+
+        assertTrue("Recovery must restore the integrity-verified backup", storageManager.verifyInstalledPackage(spec, true))
+        assertEquals("verified-old-model", File(storageManager.getInstalledModelDir(modelId), "tokens.txt").readText())
+        assertFalse(backup.exists())
+        assertFalse(marker.exists())
+        storageManager.deleteModelFiles(modelId)
+    }
+
+    @Test
+    fun `rollback preserves candidate and backup when prior installation fails integrity verification`() = runTest {
+        val base = ModelCatalog.findById("piper-fr-siwis-medium")!!
+        val modelId = base.id
+
+        fun createPackage(file: File, tokenText: String): ModelSpec {
+            ZipOutputStream(FileOutputStream(file)).use { zip ->
+                zip.putNextEntry(ZipEntry("model.onnx"))
+                zip.write(ByteArray(1_050_000) { 9 })
+                zip.closeEntry()
+                zip.putNextEntry(ZipEntry("tokens.txt"))
+                zip.write(tokenText.toByteArray())
+                zip.closeEntry()
+            }
+            return base.copy(
+                id = modelId,
+                expectedSizeBytes = file.length(),
+                sha256 = storageManager.computeSha256(file),
+                archiveType = ArchiveType.ZIP,
+                requiresEspeakData = false
+            )
+        }
+
+        val oldPart = File(storageManager.tempDownloadsRoot, "corrupt-backup-old.zip")
+        val oldSpec = createPackage(oldPart, "old-verified")
+        storageManager.installVerifiedPackage(oldSpec, oldPart).getOrThrow()
+
+        val newPart = File(storageManager.tempDownloadsRoot, "corrupt-backup-new.zip")
+        val newSpec = createPackage(newPart, "new-candidate")
+        val newDir = storageManager.installVerifiedPackage(
+            newSpec,
+            newPart,
+            deferCommitConfirmation = true
+        ).getOrThrow()
+        val backupDir = File(context.cacheDir, "backup_$modelId")
+        File(backupDir, "tokens.txt").writeText("tampered-backup")
+
+        assertFalse("Rollback must refuse an unverified backup", storageManager.rollbackInstalledPackage(modelId))
+        assertEquals("new-candidate", File(newDir, "tokens.txt").readText())
+        assertTrue("The unverified backup must be preserved for manual/recovery handling", backupDir.isDirectory)
+        assertTrue(File(context.cacheDir, "commit_$modelId").isFile)
+        storageManager.deleteModelFiles(modelId)
+    }
+
+    @Test
+    fun `startup preserves verified original when transaction marker was torn before backup move`() = runTest {
+        val base = ModelCatalog.findById("piper-fr-siwis-medium")!!
+        val modelId = base.id
+        val part = storageManager.getTempPartFile("torn-marker-fixture")
+        ZipOutputStream(FileOutputStream(part)).use { zip ->
+            zip.putNextEntry(ZipEntry("model.onnx"))
+            zip.write(ByteArray(1_050_000) { 5 })
+            zip.closeEntry()
+            zip.putNextEntry(ZipEntry("tokens.txt"))
+            zip.write("original-installation".toByteArray())
+            zip.closeEntry()
+        }
+        val spec = base.copy(
+            id = modelId,
+            expectedSizeBytes = part.length(),
+            sha256 = storageManager.computeSha256(part),
+            archiveType = ArchiveType.ZIP,
+            requiresEspeakData = false
+        )
+        val installed = storageManager.installVerifiedPackage(spec, part).getOrThrow()
+        File(context.cacheDir, "commit_$modelId").writeText("backing_")
+        File(context.cacheDir, "staging_$modelId").mkdirs()
+
+        storageManager.recoverPendingInstalls()
+
+        assertTrue("A verified original must survive an incomplete marker write", storageManager.verifyInstalledPackage(spec, true))
+        assertEquals("original-installation", File(installed, "tokens.txt").readText())
+        assertFalse(File(context.cacheDir, "commit_$modelId").exists())
+        storageManager.deleteModelFiles(modelId)
+    }
+
+    @Test
+    fun `parallel Piper dependency installs are serialized by shared eSpeak lock`() = runTest {
+        var active = 0
+        var maximumActive = 0
+        coroutineScope {
+            (1..8).map {
+                async {
+                    storageManager.withSharedEspeakInstallLock {
+                        active++
+                        maximumActive = maxOf(maximumActive, active)
+                        delay(5)
+                        active--
+                    }
+                }
+            }.awaitAll()
+        }
+        assertEquals(1, maximumActive)
     }
 
     @Test

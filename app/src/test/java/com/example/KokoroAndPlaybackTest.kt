@@ -22,11 +22,14 @@ import com.example.tts.KokoroSessionFactory
 import com.example.tts.KokoroSynthesisOutput
 import com.example.tts.TtsEngineManager
 import com.google.mediapipe.tasks.core.Delegate
-import kotlinx.coroutines.delay
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withTimeout
+import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.toList
-import kotlinx.coroutines.test.runTest
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -40,7 +43,7 @@ import org.robolectric.annotation.Config
 import java.io.File
 
 @RunWith(RobolectricTestRunner::class)
-@Config(sdk = [36])
+@Config(sdk = [35])
 class KokoroAndPlaybackTest {
 
     private lateinit var context: Context
@@ -160,7 +163,7 @@ class KokoroAndPlaybackTest {
     }
 
     @Test
-    fun `playback controller reports error state safely on empty chapter without crashing`() = runTest {
+    fun `playback controller reports error state safely on empty chapter without crashing`() = runBlocking {
         db.bookDao().insertFullBook(
             book = BookEntity(
                 id = "empty_book",
@@ -186,16 +189,14 @@ class KokoroAndPlaybackTest {
             bookDao = db.bookDao(),
             settingsRepository = SettingsRepository(context),
             storageManager = storageManager,
-            ttsEngineManager = TtsEngineManager(context, storageManager)
+            ttsEngineManager = TtsEngineManager(context, storageManager),
+            playbackDispatcher = Dispatchers.IO
         )
         controller.playChapterFrom("empty_book", "Empty", 0, "Ch 1", 0)
-        // Allow Default dispatcher coroutine to emit state
-        var attempts = 0
-        while (controller.state.value.status == PlaybackStatus.IDLE && attempts < 20) {
-            delay(25L)
-            attempts++
+        val errorState = withTimeout(5_000) {
+            controller.state.first { it.status == PlaybackStatus.ERROR }
         }
-        assertEquals(PlaybackStatus.ERROR, controller.state.value.status)
+        assertEquals("لا توجد جمل في هذا الفصل.", errorState.errorMessage)
     }
 
     @Test
