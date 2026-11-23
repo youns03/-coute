@@ -242,8 +242,10 @@ class ModelStorageManager(private val context: Context) {
     /** Roll back a pending install when the native engine cannot load the verified files. */
     fun rollbackInstalledPackage(modelId: String): Boolean =
         synchronized(installLocks.getOrPut(modelId) { Any() }) {
-            runCatching { requireValidModelId(modelId) }.getOrDefault(false) &&
+            runCatching {
+                requireValidModelId(modelId)
                 rollbackPendingInstall(modelId)
+            }.getOrDefault(false)
         }
 
     /** Repairs interrupted commits before normal database reconciliation. */
