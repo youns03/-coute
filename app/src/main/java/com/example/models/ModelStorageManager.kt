@@ -310,7 +310,25 @@ class ModelStorageManager(private val context: Context) {
 
     private fun isValidInstalledPackageForRecovery(modelId: String, dir: File): Boolean {
         val spec = recoverySpec(modelId) ?: return false
-        return verifyInstalledPackageAt(spec, dir, verifyIntegrity = true)
+        if (!dir.isDirectory) return false
+        return runCatching {
+            // The installed model may legitimately predate the current catalog checksum.
+            // Trust only a well-formed manifest and then re-hash every recorded payload file.
+            val manifest = File(dir, INTEGRITY_MANIFEST_FILE)
+            val lines = manifest.readLines(Charsets.UTF_8).map { it.trim() }.filter { it.isNotEmpty() }
+            val recordedVersion = lines.firstOrNull { it.startsWith("version=") }
+                ?.removePrefix("version=") ?: error("Missing recovery manifest version")
+            val recordedPackageSha = lines.firstOrNull { it.startsWith("packageSha256=") }
+                ?.removePrefix("packageSha256=") ?: error("Missing recovery package checksum")
+            require(recordedPackageSha.matches(Regex("[0-9a-fA-F]{64}"))) {
+                "Invalid recovery package checksum"
+            }
+            verifyInstalledPackageAt(
+                spec.copy(version = recordedVersion, sha256 = recordedPackageSha),
+                dir,
+                verifyIntegrity = true
+            )
+        }.getOrDefault(false)
     }
 
     private fun recoverInterruptedBackup(
