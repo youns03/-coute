@@ -174,8 +174,9 @@ class ModelStorageManager(private val context: Context) {
                     error("تعذر تنظيف النسخة الاحتياطية السابقة.")
                 }
 
-                // Move the old installation first. If the process dies before the marker is
-                // written, startup recovery sees an orphan backup and restores it.
+                // Record the backup phase before moving anything. A process may be killed
+                // during the copy fallback, so startup must validate both copies before cleanup.
+                commitMarker.writeText("backing_up", Charsets.UTF_8)
                 if (finalDir.exists() && !moveOrCopyDirectory(finalDir, backupDir)) {
                     error("تعذر حفظ النسخة السابقة قبل اعتماد النموذج الجديد.")
                 }
@@ -267,6 +268,9 @@ class ModelStorageManager(private val context: Context) {
                     rollbackPendingInstall(modelId)
                 }
             }
+            markerState == "backing_up" -> {
+                recoverInterruptedBackup(modelId, finalDir, backupDir, stagingDir, commitMarker)
+            }
             markerState == "restoring" -> {
                 // If the backup is already gone, it was restored before interruption.
                 val restored = if (backupDir.exists()) {
@@ -292,25 +296,62 @@ class ModelStorageManager(private val context: Context) {
             }
             commitMarker.exists() -> rollbackPendingInstall(modelId)
             backupDir.exists() -> {
-                // Without a marker, the original final directory may still be intact while
-                // a fallback copy to backup was interrupted. Preserve it when present.
-                if (!finalDir.exists()) {
-                    moveOrCopyDirectory(backupDir, finalDir)
-                } else {
-                    backupDir.deleteRecursively()
-                }
-                stagingDir.deleteRecursively()
+                // Legacy/orphan backup: never discard the only verified copy. Validate both
+                // directories before deciding which one is safe to retain.
+                recoverInterruptedBackup(modelId, finalDir, backupDir, stagingDir, commitMarker)
             }
             else -> stagingDir.deleteRecursively()
         }
     }
 
-    private fun isValidInstalledPackageForRecovery(modelId: String, finalDir: File): Boolean {
-        if (!finalDir.isDirectory) return false
-        val spec = ModelCatalog.findById(modelId)
+    private fun recoverySpec(modelId: String): ModelSpec? =
+        ModelCatalog.findById(modelId)
             ?: ModelCatalog.espeakNgDataSpec.takeIf { it.id == modelId }
-            ?: return false
-        return verifyInstalledPackage(spec, verifyIntegrity = true)
+
+    private fun isValidInstalledPackageForRecovery(modelId: String, dir: File): Boolean {
+        val spec = recoverySpec(modelId) ?: return false
+        return verifyInstalledPackageAt(spec, dir, verifyIntegrity = true)
+    }
+
+    private fun recoverInterruptedBackup(
+        modelId: String,
+        finalDir: File,
+        backupDir: File,
+        stagingDir: File,
+        commitMarker: File
+    ) {
+        val finalValid = isValidInstalledPackageForRecovery(modelId, finalDir)
+        val backupValid = isValidInstalledPackageForRecovery(modelId, backupDir)
+
+        when {
+            finalValid -> {
+                // The original installation survived. It is safe to discard a duplicate or
+                // incomplete backup only after the final directory passes its integrity check.
+                if (!backupDir.exists() || backupDir.deleteRecursively()) {
+                    stagingDir.deleteRecursively()
+                    commitMarker.delete()
+                }
+            }
+            backupValid -> {
+                // The source may have been partially deleted during copy fallback. Restore the
+                // independently verified backup rather than trusting directory existence.
+                val removedFinal = !finalDir.exists() || finalDir.deleteRecursively()
+                if (removedFinal && moveOrCopyDirectory(backupDir, finalDir) &&
+                    isValidInstalledPackageForRecovery(modelId, finalDir)
+                ) {
+                    stagingDir.deleteRecursively()
+                    commitMarker.delete()
+                }
+            }
+            !backupDir.exists() -> {
+                // No move/copy reached the backup destination; keep any original final data.
+                stagingDir.deleteRecursively()
+                commitMarker.delete()
+            }
+            else -> {
+                // Unknown model IDs or two invalid copies: preserve all artifacts for recovery.
+            }
+        }
     }
 
     private fun rollbackPendingInstall(modelId: String): Boolean {
@@ -359,14 +400,18 @@ class ModelStorageManager(private val context: Context) {
         return true
     }
 
-    fun verifyInstalledPackage(spec: ModelSpec, verifyIntegrity: Boolean = false): Boolean {
-        val dir = getInstalledModelDir(spec.id)
+    fun verifyInstalledPackage(spec: ModelSpec, verifyIntegrity: Boolean = false): Boolean =
+        verifyInstalledPackageAt(spec, getInstalledModelDir(spec.id), verifyIntegrity)
+
+    private fun verifyInstalledPackageAt(
+        spec: ModelSpec,
+        dir: File,
+        verifyIntegrity: Boolean
+    ): Boolean {
         if (!dir.exists() || !dir.isDirectory) return false
         return runCatching {
             verifyExtractedStructure(spec, dir)
-            if (verifyIntegrity) {
-                verifyIntegrityManifest(spec, dir)
-            }
+            if (verifyIntegrity) verifyIntegrityManifest(spec, dir)
             true
         }.getOrDefault(false)
     }
