@@ -89,6 +89,7 @@ jobs:
           fi
           echo "ANDROID_KEYSTORE_PATH=$KEYSTORE_PATH" >> "$GITHUB_ENV"
 
+      # Main-branch runs are gated by [release] in the commit message; tag pushes remain supported.
       # Build ABI-specific APKs first. The ARM64 APK is the primary direct-download artifact.
       - name: Build signed ABI-split release APKs
         env:
