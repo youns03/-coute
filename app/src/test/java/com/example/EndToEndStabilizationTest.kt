@@ -782,7 +782,7 @@ class EndToEndStabilizationTest {
             zip.write(ByteArray(1_050_000) { 7 })
             zip.closeEntry()
             zip.putNextEntry(ZipEntry("tokens.txt"))
-            zip.write("token 1\\n".toByteArray())
+            zip.write("token 1\n".toByteArray())
             zip.closeEntry()
         }
 
