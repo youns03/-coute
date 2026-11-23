@@ -468,14 +468,29 @@ class ModelStorageManager(private val context: Context) {
             source.copyRecursively(target, overwrite = false)
             target.exists() && target.isDirectory
         }.getOrDefault(false)
-        if (!copied) {
-            // Never leave a partial backup that could be mistaken for a valid prior install.
+        if (!copied || !directoriesMatch(source, target)) {
+            // Never leave a partial/corrupt backup that could be mistaken for a valid prior install.
             target.deleteRecursively()
             return false
         }
         source.deleteRecursively()
         return true
     }
+
+    private fun directoriesMatch(source: File, target: File): Boolean = runCatching {
+        val sourceFiles = source.walkTopDown()
+            .filter { it.isFile }
+            .associateBy { relativePathUnderRoot(source, it) }
+        val targetFiles = target.walkTopDown()
+            .filter { it.isFile }
+            .associateBy { relativePathUnderRoot(target, it) }
+
+        sourceFiles.keys == targetFiles.keys && sourceFiles.all { (relativePath, sourceFile) ->
+            val targetFile = targetFiles[relativePath] ?: return@all false
+            sourceFile.length() == targetFile.length() &&
+                computeSha256(sourceFile).equals(computeSha256(targetFile), ignoreCase = true)
+        }
+    }.getOrDefault(false)
 
     fun verifyInstalledPackage(spec: ModelSpec, verifyIntegrity: Boolean = false): Boolean =
         verifyInstalledPackageAt(spec, getInstalledModelDir(spec.id), verifyIntegrity)
