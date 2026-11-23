@@ -246,10 +246,12 @@ class ModelStorageManager(private val context: Context) {
             }
             commitMarker.exists() -> rollbackPendingInstall(modelId)
             backupDir.exists() -> {
-                // No prepared marker means the old directory was moved but the new commit
-                // had not begun. Prefer the backup even if a partial target also exists.
-                if (!finalDir.exists() || finalDir.deleteRecursively()) {
+                // Without a prepared marker, the original final directory may still be intact
+                // while a fallback copy to backup was interrupted. Preserve it when present.
+                if (!finalDir.exists()) {
                     moveOrCopyDirectory(backupDir, finalDir)
+                } else {
+                    backupDir.deleteRecursively()
                 }
                 stagingDir.deleteRecursively()
             }
@@ -288,12 +290,17 @@ class ModelStorageManager(private val context: Context) {
         if (!source.exists()) return false
         if (target.exists() && !target.deleteRecursively()) return false
         if (source.renameTo(target)) return true
-        return runCatching {
+        val copied = runCatching {
             source.copyRecursively(target, overwrite = false)
-            check(target.exists() && target.isDirectory)
-            source.deleteRecursively()
-            true
+            target.exists() && target.isDirectory
         }.getOrDefault(false)
+        if (!copied) {
+            // Never leave a partial backup that could be mistaken for a valid prior install.
+            target.deleteRecursively()
+            return false
+        }
+        source.deleteRecursively()
+        return true
     }
 
     fun verifyInstalledPackage(spec: ModelSpec, verifyIntegrity: Boolean = false): Boolean {
