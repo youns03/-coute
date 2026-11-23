@@ -11,7 +11,6 @@ import com.example.domain.StorageBreakdown
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.sync.Mutex
-import kotlinx.coroutines.sync.withLock
 import org.apache.commons.compress.archivers.tar.TarArchiveInputStream
 import org.apache.commons.compress.compressors.bzip2.BZip2CompressorInputStream
 import java.io.BufferedInputStream
@@ -233,16 +232,27 @@ class ModelStorageManager(private val context: Context) {
 
     /** Repairs interrupted commits before normal database reconciliation. */
     fun recoverPendingInstalls() {
-        context.cacheDir.listFiles()
+        val modelIds = context.cacheDir.listFiles()
             ?.filter {
                 it.name.startsWith("backup_") || it.name.startsWith("staging_") ||
                     it.name.startsWith("commit_")
             }
-            ?.forEach { artifact ->
+            ?.map { artifact ->
                 val prefix = artifact.name.substringBefore('_')
-                val modelId = artifact.name.removePrefix("${prefix}_")
-                if (modelId.isNotBlank()) recoverPendingInstall(modelId)
+                artifact.name.removePrefix("${prefix}_")
             }
+            ?.distinct()
+            .orEmpty()
+
+        modelIds.forEach { modelId ->
+            if (modelId.isNotBlank() && modelId != "." && modelId != ".." &&
+                '/' !in modelId && '\\' !in modelId
+            ) {
+                synchronized(installLocks.getOrPut(modelId) { Any() }) {
+                    recoverPendingInstall(modelId)
+                }
+            }
+        }
     }
 
     private fun recoverPendingInstall(modelId: String) {
@@ -576,20 +586,21 @@ class ModelStorageManager(private val context: Context) {
         return Triple(onnx, tokens, espeak)
     }
 
-    fun deleteModelFiles(modelId: String): Boolean {
-        val dir = getInstalledModelDir(modelId)
-        val artifacts = listOf(
-            getTempPartFile(modelId),
-            File(context.cacheDir, "staging_$modelId"),
-            File(context.cacheDir, "backup_$modelId"),
-            File(context.cacheDir, "commit_$modelId")
-        )
-        var success = true
-        for (target in artifacts + dir) {
-            if (target.exists() && !target.deleteRecursively()) success = false
+    fun deleteModelFiles(modelId: String): Boolean =
+        synchronized(installLocks.getOrPut(modelId) { Any() }) {
+            val dir = getInstalledModelDir(modelId)
+            val artifacts = listOf(
+                getTempPartFile(modelId),
+                File(context.cacheDir, "staging_$modelId"),
+                File(context.cacheDir, "backup_$modelId"),
+                File(context.cacheDir, "commit_$modelId")
+            )
+            var success = true
+            for (target in artifacts + dir) {
+                if (target.exists() && !target.deleteRecursively()) success = false
+            }
+            success
         }
-        return success
-    }
 
     fun clearAudioCache() {
         audioCacheRoot.deleteRecursively()
