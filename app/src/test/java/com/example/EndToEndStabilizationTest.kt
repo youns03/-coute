@@ -771,5 +771,34 @@ class EndToEndStabilizationTest {
         }
         assertEquals(PlaybackStatus.IDLE, controller.state.value.status)
     }
+
+    @Test
+    @Config(sdk = [24])
+    fun `model integrity manifest install and verification work on minSdk 24`() = runTest {
+        val archive = storageManager.getTempPartFile("api24-integrity-test")
+        archive.parentFile?.mkdirs()
+        ZipOutputStream(FileOutputStream(archive)).use { zip ->
+            zip.putNextEntry(ZipEntry("model.onnx"))
+            zip.write(ByteArray(1_050_000) { 7 })
+            zip.closeEntry()
+            zip.putNextEntry(ZipEntry("tokens.txt"))
+            zip.write("token 1\\n".toByteArray())
+            zip.closeEntry()
+        }
+
+        val baseSpec = ModelCatalog.findById("piper-fr-siwis-medium")!!
+        val testSpec = baseSpec.copy(
+            archiveType = com.example.domain.ArchiveType.ZIP,
+            expectedSizeBytes = archive.length(),
+            sha256 = storageManager.computeSha256(archive),
+            requiresEspeakData = false
+        )
+
+        val installedDir = storageManager.installVerifiedPackage(testSpec, archive).getOrThrow()
+        assertTrue(storageManager.verifyInstalledPackage(testSpec, verifyIntegrity = true))
+        assertTrue(File(installedDir, ModelStorageManager.INTEGRITY_MANIFEST_FILE).isFile)
+        storageManager.deleteModelFiles(testSpec.id)
+    }
+
 }
 
