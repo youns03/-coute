@@ -218,25 +218,33 @@ class ModelStorageManager(private val context: Context) {
      * Confirms an installed model only after the caller's engine-load check succeeds.
      * Until confirmation, startup recovery rolls the transaction back to the previous model.
      */
-    fun confirmInstalledPackage(spec: ModelSpec): Result<Unit> = runCatching {
-        val finalDir = getInstalledModelDir(spec.id)
-        check(verifyInstalledPackage(spec, verifyIntegrity = true)) {
-            "لا يمكن اعتماد نموذج لا يجتاز التحقق التشفيري."
+    fun confirmInstalledPackage(spec: ModelSpec): Result<Unit> =
+        synchronized(installLocks.getOrPut(spec.id) { Any() }) {
+            runCatching {
+                requireValidModelId(spec.id)
+                val finalDir = getInstalledModelDir(spec.id)
+                check(verifyInstalledPackage(spec, verifyIntegrity = true)) {
+                    "لا يمكن اعتماد نموذج لا يجتاز التحقق التشفيري."
+                }
+                val marker = File(context.cacheDir, "commit_${spec.id}")
+                val backup = File(context.cacheDir, "backup_${spec.id}")
+                val staging = File(context.cacheDir, "staging_${spec.id}")
+                if (marker.exists()) {
+                    marker.writeText("committed", Charsets.UTF_8)
+                    val backupCleaned = !backup.exists() || backup.deleteRecursively()
+                    val stagingCleaned = !staging.exists() || staging.deleteRecursively()
+                    if (backupCleaned && stagingCleaned) marker.delete()
+                }
+                check(finalDir.isDirectory)
+            }
         }
-        val marker = File(context.cacheDir, "commit_${spec.id}")
-        val backup = File(context.cacheDir, "backup_${spec.id}")
-        val staging = File(context.cacheDir, "staging_${spec.id}")
-        if (marker.exists()) {
-            marker.writeText("committed", Charsets.UTF_8)
-            val backupCleaned = !backup.exists() || backup.deleteRecursively()
-            staging.deleteRecursively()
-            if (backupCleaned) marker.delete()
-        }
-        check(finalDir.isDirectory)
-    }
 
     /** Roll back a pending install when the native engine cannot load the verified files. */
-    fun rollbackInstalledPackage(modelId: String): Boolean = rollbackPendingInstall(modelId)
+    fun rollbackInstalledPackage(modelId: String): Boolean =
+        synchronized(installLocks.getOrPut(modelId) { Any() }) {
+            runCatching { requireValidModelId(modelId) }.getOrDefault(false) &&
+                rollbackPendingInstall(modelId)
+        }
 
     /** Repairs interrupted commits before normal database reconciliation. */
     fun recoverPendingInstalls() {
@@ -290,19 +298,23 @@ class ModelStorageManager(private val context: Context) {
                 recoverInterruptedBackup(modelId, finalDir, backupDir, stagingDir, commitMarker)
             }
             markerState == "restoring" -> {
-                // If the backup is already gone, it was restored before interruption.
+                // Validate the backup before deleting the candidate installation. If the
+                // backup was already moved, validate the restored final directory instead.
                 val restored = if (backupDir.exists()) {
-                    if (finalDir.exists() && !finalDir.deleteRecursively()) {
+                    if (!isValidInstalledPackageForRecovery(modelId, backupDir)) {
                         false
                     } else {
-                        moveOrCopyDirectory(backupDir, finalDir)
+                        val removedFinal = !finalDir.exists() || finalDir.deleteRecursively()
+                        removedFinal && moveOrCopyDirectory(backupDir, finalDir) &&
+                            isValidInstalledPackageForRecovery(modelId, finalDir)
                     }
                 } else {
-                    finalDir.isDirectory
+                    isValidInstalledPackageForRecovery(modelId, finalDir)
                 }
                 if (restored) {
                     stagingDir.deleteRecursively()
-                    commitMarker.delete()
+                    val backupCleaned = !backupDir.exists() || backupDir.deleteRecursively()
+                    if (backupCleaned) commitMarker.delete()
                 }
             }
             markerState == "discarding" -> {
@@ -396,25 +408,31 @@ class ModelStorageManager(private val context: Context) {
         val stagingDir = File(context.cacheDir, "staging_${modelId}")
         val commitMarker = File(context.cacheDir, "commit_${modelId}")
 
+        // Never destroy the candidate directory unless the previous installation has
+        // independently passed its manifest and payload integrity checks.
+        val hasBackup = backupDir.exists()
+        if (hasBackup && !isValidInstalledPackageForRecovery(modelId, backupDir)) {
+            return false
+        }
+
         // Persist recovery intent before destructive operations. If marker deletion fails
-        // after restoration, startup will preserve the restored final directory.
-        val recoveryState = if (backupDir.exists()) "restoring" else "discarding"
+        // after restoration, startup validates the restored final directory before cleanup.
+        val recoveryState = if (hasBackup) "restoring" else "discarding"
         if (runCatching { commitMarker.writeText(recoveryState, Charsets.UTF_8) }.isFailure) {
             return false
         }
 
-        val restored = if (backupDir.exists()) {
-            if (finalDir.exists() && !finalDir.deleteRecursively()) {
-                false
-            } else {
-                moveOrCopyDirectory(backupDir, finalDir)
-            }
+        val restored = if (hasBackup) {
+            val removedFinal = !finalDir.exists() || finalDir.deleteRecursively()
+            removedFinal && moveOrCopyDirectory(backupDir, finalDir) &&
+                isValidInstalledPackageForRecovery(modelId, finalDir)
         } else {
             !finalDir.exists() || finalDir.deleteRecursively()
         }
         if (restored) {
-            stagingDir.deleteRecursively()
-            commitMarker.delete()
+            val stagingCleaned = !stagingDir.exists() || stagingDir.deleteRecursively()
+            val backupCleaned = !backupDir.exists() || backupDir.deleteRecursively()
+            if (stagingCleaned && backupCleaned) commitMarker.delete()
         }
         return restored
     }
