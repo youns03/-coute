@@ -26,7 +26,7 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.toList
 import kotlinx.coroutines.test.runTest
-import kotlinx.coroutines.test.StandardTestDispatcher
+import kotlinx.coroutines.test.UnconfinedTestDispatcher
 import kotlinx.coroutines.test.advanceUntilIdle
 import org.junit.After
 import org.junit.Assert.assertEquals
@@ -188,7 +188,7 @@ class KokoroAndPlaybackTest {
             settingsRepository = SettingsRepository(context),
             storageManager = storageManager,
             ttsEngineManager = TtsEngineManager(context, storageManager),
-            playbackDispatcher = StandardTestDispatcher(testScheduler)
+            playbackDispatcher = UnconfinedTestDispatcher(testScheduler)
         )
         controller.playChapterFrom("empty_book", "Empty", 0, "Ch 1", 0)
         advanceUntilIdle()
