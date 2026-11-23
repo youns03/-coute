@@ -383,6 +383,50 @@ class ModelStorageAndDatabaseTest {
     }
 
     @Test
+    fun `rollback preserves candidate and backup when prior installation fails integrity verification`() = runTest {
+        val base = ModelCatalog.findById("piper-fr-siwis-medium")!!
+        val modelId = "corrupt-backup-model"
+
+        fun createPackage(file: File, tokenText: String): ModelSpec {
+            ZipOutputStream(FileOutputStream(file)).use { zip ->
+                zip.putNextEntry(ZipEntry("model.onnx"))
+                zip.write(ByteArray(1_050_000) { 9 })
+                zip.closeEntry()
+                zip.putNextEntry(ZipEntry("tokens.txt"))
+                zip.write(tokenText.toByteArray())
+                zip.closeEntry()
+            }
+            return base.copy(
+                id = modelId,
+                expectedSizeBytes = file.length(),
+                sha256 = storageManager.computeSha256(file),
+                archiveType = ArchiveType.ZIP,
+                requiresEspeakData = false
+            )
+        }
+
+        val oldPart = File(storageManager.tempDownloadsRoot, "corrupt-backup-old.zip")
+        val oldSpec = createPackage(oldPart, "old-verified")
+        storageManager.installVerifiedPackage(oldSpec, oldPart).getOrThrow()
+
+        val newPart = File(storageManager.tempDownloadsRoot, "corrupt-backup-new.zip")
+        val newSpec = createPackage(newPart, "new-candidate")
+        val newDir = storageManager.installVerifiedPackage(
+            newSpec,
+            newPart,
+            deferCommitConfirmation = true
+        ).getOrThrow()
+        val backupDir = File(context.cacheDir, "backup_$modelId")
+        File(backupDir, "tokens.txt").writeText("tampered-backup")
+
+        assertFalse("Rollback must refuse an unverified backup", storageManager.rollbackInstalledPackage(modelId))
+        assertEquals("new-candidate", File(newDir, "tokens.txt").readText())
+        assertTrue("The unverified backup must be preserved for manual/recovery handling", backupDir.isDirectory)
+        assertTrue(File(context.cacheDir, "commit_$modelId").isFile)
+        storageManager.deleteModelFiles(modelId)
+    }
+
+    @Test
     fun `startup preserves verified original when transaction marker was torn before backup move`() = runTest {
         val base = ModelCatalog.findById("piper-fr-siwis-medium")!!
         val modelId = "torn-marker-model"
