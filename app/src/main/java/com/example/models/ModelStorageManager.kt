@@ -397,8 +397,9 @@ class ModelStorageManager(private val context: Context) {
                 if (removedFinal && moveOrCopyDirectory(backupDir, finalDir) &&
                     isValidInstalledPackageForRecovery(modelId, finalDir)
                 ) {
-                    stagingDir.deleteRecursively()
-                    commitMarker.delete()
+                    val backupCleaned = !backupDir.exists() || backupDir.deleteRecursively()
+                    val stagingCleaned = !stagingDir.exists() || stagingDir.deleteRecursively()
+                    if (backupCleaned && stagingCleaned) commitMarker.delete()
                 }
             }
             !backupDir.exists() -> {
