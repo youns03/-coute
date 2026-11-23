@@ -238,10 +238,15 @@ class ModelStorageManager(private val context: Context) {
         val commitMarker = File(context.cacheDir, "commit_${modelId}")
         when {
             commitMarker.exists() && commitMarker.readText(Charsets.UTF_8).trim() == "committed" -> {
-                // The engine accepted the new model. Cleanup is safe and retryable.
-                if (!backupDir.exists() || backupDir.deleteRecursively()) {
-                    stagingDir.deleteRecursively()
-                    commitMarker.delete()
+                // A committed marker is not enough on its own: verify the final payload before
+                // discarding the last known-good backup (e.g. after storage corruption).
+                if (isValidInstalledPackageForRecovery(modelId, finalDir)) {
+                    if (!backupDir.exists() || backupDir.deleteRecursively()) {
+                        stagingDir.deleteRecursively()
+                        commitMarker.delete()
+                    }
+                } else {
+                    rollbackPendingInstall(modelId)
                 }
             }
             commitMarker.exists() -> rollbackPendingInstall(modelId)
@@ -263,6 +268,14 @@ class ModelStorageManager(private val context: Context) {
                 commitMarker.delete()
             }
         }
+    }
+
+    private fun isValidInstalledPackageForRecovery(modelId: String, finalDir: File): Boolean {
+        if (!finalDir.isDirectory) return false
+        val spec = ModelCatalog.findById(modelId)
+            ?: ModelCatalog.espeakNgDataSpec.takeIf { it.id == modelId }
+            ?: return false
+        return verifyInstalledPackage(spec, verifyIntegrity = true)
     }
 
     private fun rollbackPendingInstall(modelId: String): Boolean {
