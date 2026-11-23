@@ -113,10 +113,12 @@ class ModelDownloadWorker(
 
         return try {
             // Download shared eSpeak-ng data first if required by Piper and not yet installed
-            if (spec.requiresEspeakData &&
-                !storage.verifyInstalledPackage(ModelCatalog.espeakNgDataSpec, verifyIntegrity = true)
-            ) {
-                downloadAndVerifySpec(ModelCatalog.espeakNgDataSpec, dao, isDependency = true)
+            if (spec.requiresEspeakData) {
+                storage.withSharedEspeakInstallLock {
+                    if (!storage.verifyInstalledPackage(ModelCatalog.espeakNgDataSpec, verifyIntegrity = true)) {
+                        downloadAndVerifySpec(ModelCatalog.espeakNgDataSpec, dao, isDependency = true)
+                    }
+                }
             }
             downloadAndVerifySpec(spec, dao, isDependency = false)
             Result.success()

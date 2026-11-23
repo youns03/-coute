@@ -15,6 +15,10 @@ import com.example.models.ModelDownloadWorker
 import com.example.models.ModelRepository
 import com.example.models.ModelStorageManager
 import com.example.tts.TtsEngineManager
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.test.runTest
 import org.junit.After
@@ -197,6 +201,98 @@ class ModelStorageAndDatabaseTest {
         // Malformed / missing headers
         assertFalse(ModelDownloadWorker.isValidContentRangeHeader(null, 1000L, total))
         assertFalse(ModelDownloadWorker.isValidContentRangeHeader("items 1000-2000/2001", 1000L, 2001L))
+    }
+
+    @Test
+    @Config(sdk = [24])
+    fun `api 24 install writes and verifies integrity manifest without java nio paths`() = runTest {
+        val part = storageManager.getTempPartFile("api24-model")
+        ZipOutputStream(FileOutputStream(part)).use { zip ->
+            zip.putNextEntry(ZipEntry("nested/phontab"))
+            zip.write("api24".toByteArray())
+            zip.closeEntry()
+        }
+        val base = ModelCatalog.espeakNgDataSpec
+        val spec = base.copy(
+            expectedSizeBytes = part.length(),
+            sha256 = storageManager.computeSha256(part),
+            requiresEspeakData = false
+        )
+        val installed = storageManager.installVerifiedPackage(spec, part).getOrThrow()
+        assertTrue(File(installed, ModelStorageManager.INTEGRITY_MANIFEST_FILE).isFile)
+        assertTrue(storageManager.verifyInstalledPackage(spec, verifyIntegrity = true))
+
+        File(installed, ModelStorageManager.INTEGRITY_MANIFEST_FILE).appendText(
+            "file|../outside|1|${"0".repeat(64)}\n"
+        )
+        assertFalse("Manifest paths must not escape the model root", storageManager.verifyInstalledPackage(spec, true))
+        storageManager.deleteModelFiles(spec.id)
+    }
+
+    @Test
+    fun `failed replacement preserves old model and startup restores orphan backup`() = runTest {
+        val modelId = "atomic-model"
+        val base = ModelCatalog.findById("piper-fr-siwis-medium")!!
+        fun writeZip(file: File, includeOnnx: Boolean) {
+            ZipOutputStream(FileOutputStream(file)).use { zip ->
+                if (includeOnnx) {
+                    zip.putNextEntry(ZipEntry("model.onnx"))
+                    zip.write(ByteArray(1_050_000) { 1 })
+                    zip.closeEntry()
+                }
+                zip.putNextEntry(ZipEntry("tokens.txt"))
+                zip.write("old 1\n".toByteArray())
+                zip.closeEntry()
+            }
+        }
+        val oldPart = storageManager.getTempPartFile("atomic-old")
+        writeZip(oldPart, includeOnnx = true)
+        val oldSpec = base.copy(
+            id = modelId,
+            expectedSizeBytes = oldPart.length(),
+            sha256 = storageManager.computeSha256(oldPart),
+            requiresEspeakData = false
+        )
+        val oldDir = storageManager.installVerifiedPackage(oldSpec, oldPart).getOrThrow()
+        val oldBytes = File(oldDir, "model.onnx").readBytes()
+
+        val badPart = storageManager.getTempPartFile("atomic-bad")
+        writeZip(badPart, includeOnnx = false)
+        val badSpec = oldSpec.copy(
+            expectedSizeBytes = badPart.length(),
+            sha256 = storageManager.computeSha256(badPart)
+        )
+        assertTrue(storageManager.installVerifiedPackage(badSpec, badPart).isFailure)
+        assertTrue(storageManager.verifyInstalledPackage(oldSpec, verifyIntegrity = true))
+        assertTrue(oldBytes.contentEquals(File(oldDir, "model.onnx").readBytes()))
+
+        val backup = File(context.cacheDir, "backup_$modelId")
+        oldDir.copyRecursively(backup, overwrite = true)
+        oldDir.deleteRecursively()
+        File(context.cacheDir, "staging_$modelId").mkdirs()
+        storageManager.recoverPendingInstalls()
+        assertTrue(storageManager.verifyInstalledPackage(oldSpec, verifyIntegrity = true))
+        assertFalse(backup.exists())
+        storageManager.deleteModelFiles(modelId)
+    }
+
+    @Test
+    fun `parallel Piper dependency installs are serialized by shared eSpeak lock`() = runTest {
+        var active = 0
+        var maximumActive = 0
+        coroutineScope {
+            (1..8).map {
+                async {
+                    storageManager.withSharedEspeakInstallLock {
+                        active++
+                        maximumActive = maxOf(maximumActive, active)
+                        delay(5)
+                        active--
+                    }
+                }
+            }.awaitAll()
+        }
+        assertEquals(1, maximumActive)
     }
 
     @Test

@@ -82,6 +82,7 @@ class ModelRepository(
      * Enforces cryptographic SHA-256 manifest checks, hardware compatibility, and genuine engine load verification.
      */
     suspend fun reconcileStorageOnStartup() {
+        storageManager.recoverPendingInstalls()
         val hw = MemoryDiagnostics.getDeviceHardwareInfo(context)
         for (spec in ModelCatalog.ttsModels) {
             val rec = modelRecordDao.getRecord(spec.id)

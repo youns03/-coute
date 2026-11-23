@@ -22,11 +22,12 @@ import com.example.tts.KokoroSessionFactory
 import com.example.tts.KokoroSynthesisOutput
 import com.example.tts.TtsEngineManager
 import com.google.mediapipe.tasks.core.Delegate
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.toList
 import kotlinx.coroutines.test.runTest
+import kotlinx.coroutines.test.StandardTestDispatcher
+import kotlinx.coroutines.test.advanceUntilIdle
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -186,15 +187,11 @@ class KokoroAndPlaybackTest {
             bookDao = db.bookDao(),
             settingsRepository = SettingsRepository(context),
             storageManager = storageManager,
-            ttsEngineManager = TtsEngineManager(context, storageManager)
+            ttsEngineManager = TtsEngineManager(context, storageManager),
+            playbackDispatcher = StandardTestDispatcher(testScheduler)
         )
         controller.playChapterFrom("empty_book", "Empty", 0, "Ch 1", 0)
-        // Allow Default dispatcher coroutine to emit state
-        var attempts = 0
-        while (controller.state.value.status == PlaybackStatus.IDLE && attempts < 20) {
-            delay(25L)
-            attempts++
-        }
+        advanceUntilIdle()
         assertEquals(PlaybackStatus.ERROR, controller.state.value.status)
     }
 

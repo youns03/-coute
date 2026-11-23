@@ -51,5 +51,5 @@ jobs:
             -validity 10000 \
             -dname "CN=Android Debug,O=Android,C=US"
 
-      - name: Run unit tests and lint
-        run: ./gradlew --no-daemon --stacktrace :app:testDebugUnitTest :app:lintDebug
+      - name: Run unit tests, lint, and debug assembly
+        run: ./gradlew --no-daemon --stacktrace :app:testDebugUnitTest :app:lintDebug :app:assembleDebug

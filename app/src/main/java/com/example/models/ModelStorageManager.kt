@@ -10,6 +10,8 @@ import com.example.domain.ModelSpec
 import com.example.domain.StorageBreakdown
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import org.apache.commons.compress.archivers.tar.TarArchiveInputStream
 import org.apache.commons.compress.compressors.bzip2.BZip2CompressorInputStream
 import java.io.BufferedInputStream
@@ -17,9 +19,13 @@ import java.io.File
 import java.io.FileInputStream
 import java.io.FileOutputStream
 import java.security.MessageDigest
+import java.util.concurrent.ConcurrentHashMap
 import java.util.zip.ZipInputStream
 
 class ModelStorageManager(private val context: Context) {
+
+    private val installLocks = ConcurrentHashMap<String, Any>()
+    private val sharedEspeakInstallMutex = Mutex()
 
     val permanentModelsRoot: File
         get() = File(context.filesDir, "models").apply { mkdirs() }
@@ -33,7 +39,15 @@ class ModelStorageManager(private val context: Context) {
     val savedSamplesRoot: File
         get() = File(context.filesDir, "benchmark_samples").apply { mkdirs() }
 
-    fun getInstalledModelDir(modelId: String): File = File(permanentModelsRoot, modelId)
+    fun getInstalledModelDir(modelId: String): File {
+        require(modelId.isNotBlank() && modelId != "." && modelId != "..") {
+            "معرّف نموذج غير صالح."
+        }
+        require('/' !in modelId && '\\' !in modelId) {
+            "معرّف النموذج لا يجوز أن يحتوي على فاصل مسار."
+        }
+        return File(permanentModelsRoot, modelId)
+    }
 
     fun getTempPartFile(modelId: String): File = File(tempDownloadsRoot, "$modelId.part")
 
@@ -96,62 +110,129 @@ class ModelStorageManager(private val context: Context) {
         spec: ModelSpec,
         downloadedFile: File
     ): Result<File> = withContext(Dispatchers.IO) {
-        runCatching {
-            if (!downloadedFile.exists()) {
-                error("الملف المؤقت غير موجود.")
-            }
-            if (downloadedFile.length() != spec.expectedSizeBytes) {
-                val actualLen = downloadedFile.length()
-                downloadedFile.delete()
-                error("عدم تطابق الحجم: المتوقع ${spec.expectedSizeBytes} بايت، الفعلي $actualLen بايت. تم حذف الملف المؤقت.")
-            }
-            val actualHash = computeSha256(downloadedFile)
-            if (!actualHash.equals(spec.sha256, ignoreCase = true)) {
-                downloadedFile.delete()
-                error("فشل فحص SHA-256! البصمة الفعلية: ${actualHash.take(12)}... تم حذف الملف التالف.")
-            }
+        synchronized(installLocks.getOrPut(spec.id) { Any() }) {
+            runCatching {
+                if (!downloadedFile.exists()) error("الملف المؤقت غير موجود.")
+                if (downloadedFile.length() != spec.expectedSizeBytes) {
+                    val actualLen = downloadedFile.length()
+                    downloadedFile.delete()
+                    error("عدم تطابق الحجم: المتوقع ${spec.expectedSizeBytes} بايت، الفعلي $actualLen بايت. تم حذف الملف المؤقت.")
+                }
+                val actualHash = computeSha256(downloadedFile)
+                if (!actualHash.equals(spec.sha256, ignoreCase = true)) {
+                    downloadedFile.delete()
+                    error("فشل فحص SHA-256! البصمة الفعلية: ${actualHash.take(12)}... تم حذف الملف التالف.")
+                }
 
-            val stagingDir = File(context.cacheDir, "staging_${spec.id}")
-            if (stagingDir.exists()) stagingDir.deleteRecursively()
-            stagingDir.mkdirs()
-
-            when (spec.archiveType) {
-                ArchiveType.SINGLE_LITERTLM -> {
-                    val fileName = spec.downloadUrl.substringAfterLast('/')
-                    val outFile = File(stagingDir, fileName)
-                    if (!downloadedFile.renameTo(outFile)) {
+                recoverPendingInstall(spec.id)
+                val stagingDir = File(context.cacheDir, "staging_${spec.id}")
+                if (stagingDir.exists()) stagingDir.deleteRecursively()
+                stagingDir.mkdirs()
+                when (spec.archiveType) {
+                    ArchiveType.SINGLE_LITERTLM -> {
+                        val outFile = File(stagingDir, spec.downloadUrl.substringAfterLast('/'))
                         downloadedFile.copyTo(outFile, overwrite = true)
-                        downloadedFile.delete()
+                        if (outFile.length() != spec.expectedSizeBytes) {
+                            outFile.delete()
+                            error("فشل نسخ ملف LiteRT-LM إلى مجلد التجهيز.")
+                        }
                     }
-                    if (outFile.length() != spec.expectedSizeBytes) {
-                        outFile.delete()
-                        error("فشل نقل ملف LiteRT-LM إلى مجلد التجهيز.")
+                    ArchiveType.TAR_BZ2 -> {
+                        extractTarBz2(downloadedFile, stagingDir)
+                        flattenSingleSubdirIfNeeded(stagingDir)
+                    }
+                    ArchiveType.ZIP -> {
+                        extractZip(downloadedFile, stagingDir)
+                        flattenSingleSubdirIfNeeded(stagingDir)
                     }
                 }
-                ArchiveType.TAR_BZ2 -> {
-                    extractTarBz2(downloadedFile, stagingDir)
-                    flattenSingleSubdirIfNeeded(stagingDir)
-                }
-                ArchiveType.ZIP -> {
-                    extractZip(downloadedFile, stagingDir)
-                    flattenSingleSubdirIfNeeded(stagingDir)
-                }
-            }
+                verifyExtractedStructure(spec, stagingDir)
+                writeIntegrityManifest(spec, stagingDir)
 
-            verifyExtractedStructure(spec, stagingDir)
-            writeIntegrityManifest(spec, stagingDir)
-
-            val finalDir = getInstalledModelDir(spec.id)
-            if (finalDir.exists()) finalDir.deleteRecursively()
-            if (!stagingDir.renameTo(finalDir)) {
-                stagingDir.copyRecursively(finalDir, overwrite = true)
-                stagingDir.deleteRecursively()
+                val finalDir = getInstalledModelDir(spec.id)
+                val backupDir = File(context.cacheDir, "backup_${spec.id}")
+                val commitMarker = File(context.cacheDir, "commit_${spec.id}")
+                if (backupDir.exists()) backupDir.deleteRecursively()
+                commitMarker.writeText("prepared")
+                if (finalDir.exists() && !moveOrCopyDirectory(finalDir, backupDir)) {
+                    error("تعذر حفظ النسخة السابقة قبل اعتماد النموذج الجديد.")
+                }
+                var committed = false
+                try {
+                    if (!moveOrCopyDirectory(stagingDir, finalDir)) {
+                        error("تعذر اعتماد مجلد النموذج الجديد.")
+                    }
+                    if (!verifyInstalledPackage(spec, verifyIntegrity = true)) {
+                        error("فشل التحقق من النموذج بعد الاعتماد.")
+                    }
+                    committed = true
+                } finally {
+                    if (!committed) {
+                        if (finalDir.exists()) finalDir.deleteRecursively()
+                        if (backupDir.exists()) moveOrCopyDirectory(backupDir, finalDir)
+                    }
+                }
+                if (committed) {
+                    // The verified new directory is now authoritative; cleanup can be retried at startup.
+                    commitMarker.delete()
+                    backupDir.deleteRecursively()
+                }
+                downloadedFile.delete()
+                finalDir
             }
-            // Remove temp part file only after permanent commit succeeds (no-op if already moved)
-            if (downloadedFile.exists()) downloadedFile.delete()
-            finalDir
         }
     }
+
+    /** Repairs interrupted commits before normal database reconciliation. */
+    fun recoverPendingInstalls() {
+        context.cacheDir.listFiles()
+            ?.filter {
+                it.name.startsWith("backup_") || it.name.startsWith("staging_") ||
+                    it.name.startsWith("commit_")
+            }
+            ?.forEach { artifact ->
+                val prefix = artifact.name.substringBefore('_')
+                val modelId = artifact.name.removePrefix("${prefix}_")
+                if (modelId.isNotBlank()) recoverPendingInstall(modelId)
+            }
+    }
+
+    private fun recoverPendingInstall(modelId: String) {
+        val finalDir = getInstalledModelDir(modelId)
+        val backupDir = File(context.cacheDir, "backup_$modelId")
+        val stagingDir = File(context.cacheDir, "staging_$modelId")
+        val commitMarker = File(context.cacheDir, "commit_$modelId")
+        if (commitMarker.exists()) {
+            if (backupDir.exists()) {
+                if (finalDir.exists()) finalDir.deleteRecursively()
+                moveOrCopyDirectory(backupDir, finalDir)
+            } else if (finalDir.exists()) {
+                finalDir.deleteRecursively()
+            }
+            stagingDir.deleteRecursively()
+            commitMarker.delete()
+            return
+        }
+        when {
+            !finalDir.exists() && backupDir.exists() -> moveOrCopyDirectory(backupDir, finalDir)
+            finalDir.exists() && backupDir.exists() -> backupDir.deleteRecursively()
+        }
+        if (finalDir.exists() && stagingDir.exists()) stagingDir.deleteRecursively()
+    }
+
+    private fun moveOrCopyDirectory(source: File, target: File): Boolean {
+        if (!source.exists()) return false
+        if (target.exists()) target.deleteRecursively()
+        if (source.renameTo(target)) return true
+        return runCatching {
+            source.copyRecursively(target, overwrite = false)
+            source.deleteRecursively()
+            true
+        }.getOrDefault(false)
+    }
+
+    suspend fun <T> withSharedEspeakInstallLock(block: suspend () -> T): T =
+        sharedEspeakInstallMutex.withLock { block() }
 
     fun verifyInstalledPackage(spec: ModelSpec, verifyIntegrity: Boolean = false): Boolean {
         val dir = getInstalledModelDir(spec.id)
@@ -233,10 +314,14 @@ class ModelStorageManager(private val context: Context) {
             val relPath = parts[1]
             val expectedLen = parts[2].toLongOrNull() ?: error("طول غير صالح في سجل التحقق.")
             val expectedSha = parts[3]
-            if (relPath.contains("..") || relPath.startsWith("/")) {
+            if (relPath.startsWith("/") || relPath.contains('\\') ||
+                relPath.split('/').any { it == ".." || it.isEmpty() }) {
                 error("مسار غير آمن في سجل التحقق.")
             }
             val target = File(dir, relPath)
+            if (relativePathUnderRoot(dir, target) != relPath) {
+                error("مسار خارج جذر النموذج في سجل التحقق.")
+            }
             if (!target.exists() || !target.isFile) {
                 error("ملف مفقود من النموذج: $relPath")
             }
