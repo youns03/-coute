@@ -19,6 +19,7 @@ import com.example.domain.SpeechTextProcessor
 import com.example.domain.SpeedControlMode
 import com.example.domain.WordTimestampRange
 import com.example.models.ModelStorageManager
+import androidx.media3.common.util.UnstableApi
 import com.example.tts.TtsEngineManager
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
@@ -1251,6 +1252,7 @@ class AudioPlaybackController internal constructor(
         }
     }
 
+    @OptIn(UnstableApi::class)
     private fun ensureServiceStarted() {
         runCatching {
             val intent = Intent(context, PlaybackService::class.java)
