@@ -265,7 +265,13 @@ class ModelDownloadWorker(
             try {
                 app.ttsEngineManager.verifyModelLoadable(spec, finalDir).getOrThrow()
             } catch (t: Throwable) {
-                storage.rollbackInstalledPackage(spec.id)
+                if (!storage.rollbackInstalledPackage(spec.id)) {
+                    t.addSuppressed(
+                        IllegalStateException(
+                            "تعذرت استعادة النسخة السابقة فوراً؛ ستبقى ملفات الاستعادة لمحاولة الإصلاح عند بدء التشغيل."
+                        )
+                    )
+                }
                 throw t
             }
             storage.confirmInstalledPackage(spec).getOrThrow()
