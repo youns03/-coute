@@ -1252,7 +1252,7 @@ class AudioPlaybackController internal constructor(
         }
     }
 
-    @OptIn(UnstableApi::class)
+    @UnstableApi
     private fun ensureServiceStarted() {
         runCatching {
             val intent = Intent(context, PlaybackService::class.java)
