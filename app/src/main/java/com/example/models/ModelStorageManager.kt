@@ -108,7 +108,8 @@ class ModelStorageManager(private val context: Context) {
 
     suspend fun installVerifiedPackage(
         spec: ModelSpec,
-        downloadedFile: File
+        downloadedFile: File,
+        deferCommitConfirmation: Boolean = false
     ): Result<File> = withContext(Dispatchers.IO) {
         synchronized(installLocks.getOrPut(spec.id) { Any() }) {
             runCatching {
@@ -116,7 +117,7 @@ class ModelStorageManager(private val context: Context) {
                 if (downloadedFile.length() != spec.expectedSizeBytes) {
                     val actualLen = downloadedFile.length()
                     downloadedFile.delete()
-                    error("عدم تطابق الحجم: المتوقع ${spec.expectedSizeBytes} بايت، الفعلي $actualLen بايت. تم حذف الملف المؤقت.")
+                    error("عدم تطابق الحجم: المتوقع ${spec.expectedSizeBytes} بايت، الفعلي ${actualLen} بايت. تم حذف الملف المؤقت.")
                 }
                 val actualHash = computeSha256(downloadedFile)
                 if (!actualHash.equals(spec.sha256, ignoreCase = true)) {
@@ -126,14 +127,18 @@ class ModelStorageManager(private val context: Context) {
 
                 recoverPendingInstall(spec.id)
                 val stagingDir = File(context.cacheDir, "staging_${spec.id}")
-                if (stagingDir.exists()) stagingDir.deleteRecursively()
-                stagingDir.mkdirs()
+                if (stagingDir.exists() && !stagingDir.deleteRecursively()) {
+                    error("تعذر تنظيف مجلد التجهيز السابق.")
+                }
+                if (!stagingDir.mkdirs() && !stagingDir.isDirectory) {
+                    error("تعذر إنشاء مجلد التجهيز.")
+                }
+
                 when (spec.archiveType) {
                     ArchiveType.SINGLE_LITERTLM -> {
                         val outFile = File(stagingDir, spec.downloadUrl.substringAfterLast('/'))
                         downloadedFile.copyTo(outFile, overwrite = true)
                         if (outFile.length() != spec.expectedSizeBytes) {
-                            outFile.delete()
                             error("فشل نسخ ملف LiteRT-LM إلى مجلد التجهيز.")
                         }
                     }
@@ -152,36 +157,67 @@ class ModelStorageManager(private val context: Context) {
                 val finalDir = getInstalledModelDir(spec.id)
                 val backupDir = File(context.cacheDir, "backup_${spec.id}")
                 val commitMarker = File(context.cacheDir, "commit_${spec.id}")
-                if (backupDir.exists()) backupDir.deleteRecursively()
-                commitMarker.writeText("prepared")
+                if (backupDir.exists() && !backupDir.deleteRecursively()) {
+                    error("تعذر تنظيف النسخة الاحتياطية السابقة.")
+                }
+
+                // Move the old installation first. If the process dies before the marker is
+                // written, startup recovery sees an orphan backup and restores it.
                 if (finalDir.exists() && !moveOrCopyDirectory(finalDir, backupDir)) {
                     error("تعذر حفظ النسخة السابقة قبل اعتماد النموذج الجديد.")
                 }
-                var committed = false
+
                 try {
+                    commitMarker.writeText("prepared", Charsets.UTF_8)
                     if (!moveOrCopyDirectory(stagingDir, finalDir)) {
                         error("تعذر اعتماد مجلد النموذج الجديد.")
                     }
                     if (!verifyInstalledPackage(spec, verifyIntegrity = true)) {
                         error("فشل التحقق من النموذج بعد الاعتماد.")
                     }
-                    committed = true
-                } finally {
-                    if (!committed) {
-                        if (finalDir.exists()) finalDir.deleteRecursively()
-                        if (backupDir.exists()) moveOrCopyDirectory(backupDir, finalDir)
+                } catch (failure: Throwable) {
+                    if (!rollbackPendingInstall(spec.id)) {
+                        failure.addSuppressed(IllegalStateException(
+                            "تعذرت استعادة النسخة السابقة؛ تم الإبقاء على ملفات backup/marker لمحاولة الاستعادة عند بدء التشغيل."
+                        ))
                     }
+                    throw failure
                 }
-                if (committed) {
-                    // The verified new directory is now authoritative; cleanup can be retried at startup.
-                    commitMarker.delete()
-                    backupDir.deleteRecursively()
+
+                if (!deferCommitConfirmation) {
+                    confirmInstalledPackage(spec).getOrThrow()
                 }
-                downloadedFile.delete()
+                if (downloadedFile.exists()) downloadedFile.delete()
                 finalDir
             }
         }
     }
+
+    /**
+     * Confirms an installed model only after the caller's engine-load check succeeds.
+     * Until confirmation, startup recovery rolls the transaction back to the previous model.
+     */
+    fun confirmInstalledPackage(spec: ModelSpec): Result<Unit> = runCatching {
+        val finalDir = getInstalledModelDir(spec.id)
+        check(verifyInstalledPackage(spec, verifyIntegrity = true)) {
+            "لا يمكن اعتماد نموذج لا يجتاز التحقق التشفيري."
+        }
+        val marker = File(context.cacheDir, "commit_${spec.id}")
+        val backup = File(context.cacheDir, "backup_${spec.id}")
+        val staging = File(context.cacheDir, "staging_${spec.id}")
+        if (marker.exists()) {
+            marker.writeText("committed", Charsets.UTF_8)
+            if (backup.exists() && !backup.deleteRecursively()) {
+                error("تم اعتماد النموذج الجديد، لكن تعذر تنظيف النسخة الاحتياطية؛ ستتم إعادة المحاولة عند التشغيل.")
+            }
+            staging.deleteRecursively()
+            marker.delete()
+        }
+        check(finalDir.isDirectory)
+    }
+
+    /** Roll back a pending install when the native engine cannot load the verified files. */
+    fun rollbackInstalledPackage(modelId: String): Boolean = rollbackPendingInstall(modelId)
 
     /** Repairs interrupted commits before normal database reconciliation. */
     fun recoverPendingInstalls() {
@@ -199,40 +235,68 @@ class ModelStorageManager(private val context: Context) {
 
     private fun recoverPendingInstall(modelId: String) {
         val finalDir = getInstalledModelDir(modelId)
-        val backupDir = File(context.cacheDir, "backup_$modelId")
-        val stagingDir = File(context.cacheDir, "staging_$modelId")
-        val commitMarker = File(context.cacheDir, "commit_$modelId")
-        if (commitMarker.exists()) {
-            if (backupDir.exists()) {
-                if (finalDir.exists()) finalDir.deleteRecursively()
-                moveOrCopyDirectory(backupDir, finalDir)
-            } else if (finalDir.exists()) {
-                finalDir.deleteRecursively()
+        val backupDir = File(context.cacheDir, "backup_${modelId}")
+        val stagingDir = File(context.cacheDir, "staging_${modelId}")
+        val commitMarker = File(context.cacheDir, "commit_${modelId}")
+        when {
+            commitMarker.exists() && commitMarker.readText(Charsets.UTF_8).trim() == "committed" -> {
+                // The engine accepted the new model. Cleanup is safe and retryable.
+                if (!backupDir.exists() || backupDir.deleteRecursively()) {
+                    stagingDir.deleteRecursively()
+                    commitMarker.delete()
+                }
             }
+            commitMarker.exists() -> rollbackPendingInstall(modelId)
+            backupDir.exists() -> {
+                // No prepared marker means the old directory was moved but the new commit
+                // had not begun. Prefer the backup even if a partial target also exists.
+                if (!finalDir.exists() || finalDir.deleteRecursively()) {
+                    moveOrCopyDirectory(backupDir, finalDir)
+                }
+                stagingDir.deleteRecursively()
+            }
+            else -> {
+                // First install interrupted after its prepared marker: there is no old model
+                // to restore, so remove any unconfirmed final directory.
+                if (commitMarker.exists() && finalDir.exists()) finalDir.deleteRecursively()
+                stagingDir.deleteRecursively()
+                commitMarker.delete()
+            }
+        }
+    }
+
+    private fun rollbackPendingInstall(modelId: String): Boolean {
+        val finalDir = getInstalledModelDir(modelId)
+        val backupDir = File(context.cacheDir, "backup_${modelId}")
+        val stagingDir = File(context.cacheDir, "staging_${modelId}")
+        val commitMarker = File(context.cacheDir, "commit_${modelId}")
+        val restored = if (backupDir.exists()) {
+            if (finalDir.exists() && !finalDir.deleteRecursively()) {
+                false
+            } else {
+                moveOrCopyDirectory(backupDir, finalDir)
+            }
+        } else {
+            !finalDir.exists() || finalDir.deleteRecursively()
+        }
+        if (restored) {
             stagingDir.deleteRecursively()
             commitMarker.delete()
-            return
         }
-        when {
-            !finalDir.exists() && backupDir.exists() -> moveOrCopyDirectory(backupDir, finalDir)
-            finalDir.exists() && backupDir.exists() -> backupDir.deleteRecursively()
-        }
-        if (finalDir.exists() && stagingDir.exists()) stagingDir.deleteRecursively()
+        return restored
     }
 
     private fun moveOrCopyDirectory(source: File, target: File): Boolean {
         if (!source.exists()) return false
-        if (target.exists()) target.deleteRecursively()
+        if (target.exists() && !target.deleteRecursively()) return false
         if (source.renameTo(target)) return true
         return runCatching {
             source.copyRecursively(target, overwrite = false)
+            check(target.exists() && target.isDirectory)
             source.deleteRecursively()
             true
         }.getOrDefault(false)
     }
-
-    suspend fun <T> withSharedEspeakInstallLock(block: suspend () -> T): T =
-        sharedEspeakInstallMutex.withLock { block() }
 
     fun verifyInstalledPackage(spec: ModelSpec, verifyIntegrity: Boolean = false): Boolean {
         val dir = getInstalledModelDir(spec.id)
