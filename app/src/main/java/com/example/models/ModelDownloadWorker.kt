@@ -251,16 +251,24 @@ class ModelDownloadWorker(
             setForeground(createForegroundInfo("${spec.displayName} (التحقق...)", 100))
         }
 
-        val finalDir = storage.installVerifiedPackage(spec, partFile).getOrThrow()
+        val finalDir = storage.installVerifiedPackage(
+            spec = spec,
+            downloadedFile = partFile,
+            deferCommitConfirmation = true
+        ).getOrThrow()
 
-        if (!isDependency) {
-            // Mandatory load & short-synthesis verification before declaring the model ready
+        if (isDependency) {
+            // eSpeak data has a structural + cryptographic contract; it is not a TTS model.
+            storage.confirmInstalledPackage(spec).getOrThrow()
+        } else {
+            // Keep the previous installation recoverable until the native engine accepts the new files.
             try {
                 app.ttsEngineManager.verifyModelLoadable(spec, finalDir).getOrThrow()
             } catch (t: Throwable) {
-                storage.deleteModelFiles(spec.id)
+                storage.rollbackInstalledPackage(spec.id)
                 throw t
             }
+            storage.confirmInstalledPackage(spec).getOrThrow()
             dao.upsert(
                 ModelRecordEntity(
                     modelId = spec.id,
