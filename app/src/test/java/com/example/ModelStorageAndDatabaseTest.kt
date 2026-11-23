@@ -429,7 +429,7 @@ class ModelStorageAndDatabaseTest {
     @Test
     fun `startup preserves verified original when transaction marker was torn before backup move`() = runTest {
         val base = ModelCatalog.findById("piper-fr-siwis-medium")!!
-        val modelId = specBase.id
+        val modelId = base.id
         val part = storageManager.getTempPartFile("torn-marker-fixture")
         ZipOutputStream(FileOutputStream(part)).use { zip ->
             zip.putNextEntry(ZipEntry("model.onnx"))
