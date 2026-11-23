@@ -32,7 +32,7 @@ import java.util.zip.ZipEntry
 import java.util.zip.ZipOutputStream
 
 @RunWith(RobolectricTestRunner::class)
-@Config(sdk = [36])
+@Config(sdk = [35])
 class ModelStorageAndDatabaseTest {
 
     private lateinit var context: Context
