@@ -796,3 +796,19 @@ CORRUPTED
 [16]: https://github.com/youns03/-coute/blob/main/app/src/test/java/com/example/PhaseFourArchitectureIntegrationTest.kt "Architecture integration tests"
 [17]: https://github.com/youns03/-coute/pull/2 "Open API 24 compatibility pull request"
 [18]: https://github.com/youns03/-coute/actions "GitHub Actions runs"
+
+
+---
+
+## تحديث لاحق للتدقيق — 2026-11-23
+
+هذا التدقيق يوثق حالة المستودع وقت إجرائه، ولذلك تبقى ملاحظاته التاريخية كما هي. بعد ذلك اكتملت بوابة Foundation Stabilization:
+
+- دُمج PR #2 **Fix model integrity paths for Android API 24** في `main`.
+- Commit الدمج: `93d59197c7696fd516a65649ba2e3234048aa65f`.
+- نجح GitHub Actions بعد الدمج على `main` في التشغيل [45234447152](https://github.com/youns03/-coute/actions/runs/45234447152).
+- اجتازت مهام `:app:testDebugUnitTest` و`:app:lintDebug` و`:app:compileDebugKotlin`.
+- شمل الإصلاح توافق مسارات integrity مع API 24/25، ومعاملات تثبيت النماذج واستعادتها، وقفل dependency المشتركة eSpeak-ng، واختبارات حالات التراجع والانقطاع.
+- لم يُنشأ APK في هذه المرحلة، ولم تُجرَ اختبارات على جهاز Android فعلي؛ لذلك لا تزال اختبارات الانقطاع المادي والأداء والمحركات الأصلية على أجهزة ARM64 ضمن التحقق الميداني اللاحق.
+
+وعليه، فإن توصية التدقيق القديمة بدمج PR #2 قد نُفذت بالفعل. أما المراحل المعمارية اللاحقة المذكورة في هذا التدقيق فلم تُنفذ ضمن هذا الإصلاح.
