@@ -165,12 +165,22 @@ class ModelStorageManager(private val context: Context) {
         }.getOrDefault(false)
     }
 
+    /**
+     * Build a canonical, root-relative path without java.nio.file.Path (API 26+).
+     * The app supports API 24, so integrity checks must remain compatible with API 24/25.
+     */
+    private fun relativePathUnderRoot(root: File, child: File): String {
+        val rootPrefix = root.canonicalPath.trimEnd(File.separatorChar) + File.separator
+        val childPath = child.canonicalPath
+        require(childPath.startsWith(rootPrefix)) { "File escapes model directory: $childPath" }
+        return childPath.substring(rootPrefix.length).replace(File.separatorChar, '/')
+    }
+
     private fun writeIntegrityManifest(spec: ModelSpec, dir: File) {
         val manifestFile = File(dir, INTEGRITY_MANIFEST_FILE)
-        val rootPath = dir.canonicalFile.toPath()
         val files = dir.walkTopDown()
             .filter { it.isFile && it.name != INTEGRITY_MANIFEST_FILE }
-            .sortedBy { rootPath.relativize(it.canonicalFile.toPath()).toString().replace('\\', '/') }
+            .sortedBy { relativePathUnderRoot(dir, it) }
             .toList()
         if (files.isEmpty()) error("لا توجد ملفات لإنشاء سجل التحقق التشفيري.")
 
@@ -178,7 +188,7 @@ class ModelStorageManager(private val context: Context) {
             appendLine("version=${spec.version}")
             appendLine("packageSha256=${spec.sha256.lowercase()}")
             for (file in files) {
-                val rel = rootPath.relativize(file.canonicalFile.toPath()).toString().replace('\\', '/')
+                val rel = relativePathUnderRoot(dir, file)
                 val sha = computeSha256(file)
                 appendLine("file|$rel|${file.length()}|$sha")
             }
@@ -241,10 +251,9 @@ class ModelStorageManager(private val context: Context) {
         }
 
         // Reject tampered/unrecorded payload files inside the model directory
-        val rootPath = dir.canonicalFile.toPath()
         val unexpectedFiles = dir.walkTopDown()
             .filter { it.isFile && it.name != INTEGRITY_MANIFEST_FILE }
-            .map { rootPath.relativize(it.canonicalFile.toPath()).toString().replace('\\', '/') }
+            .map { relativePathUnderRoot(dir, it) }
             .filter { it !in recordedPaths }
             .toList()
         if (unexpectedFiles.isNotEmpty()) {
