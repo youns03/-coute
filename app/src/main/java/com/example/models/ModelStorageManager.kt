@@ -27,6 +27,19 @@ class ModelStorageManager(private val context: Context) {
     private val installLocks = ConcurrentHashMap<String, Any>()
     private val sharedEspeakInstallMutex = Mutex()
 
+    /**
+     * Serializes installation of the shared eSpeak-ng payload across model workers.
+     * The lock is suspend-aware so a waiting worker does not block a WorkManager thread.
+     */
+    suspend fun <T> withSharedEspeakInstallLock(block: suspend () -> T): T {
+        sharedEspeakInstallMutex.lock()
+        return try {
+            block()
+        } finally {
+            sharedEspeakInstallMutex.unlock()
+        }
+    }
+
     val permanentModelsRoot: File
         get() = File(context.filesDir, "models").apply { mkdirs() }
 
