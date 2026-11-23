@@ -231,8 +231,8 @@ class ModelStorageAndDatabaseTest {
 
     @Test
     fun `deferred model commit rolls back on engine rejection and finalizes on confirmation`() = runTest {
-        val modelId = "deferred-commit-model"
         val base = ModelCatalog.findById("piper-fr-siwis-medium")!!
+        val modelId = base.id
 
         fun createPackage(file: File, tokenText: String): ModelSpec {
             ZipOutputStream(FileOutputStream(file)).use { zip ->
@@ -289,8 +289,8 @@ class ModelStorageAndDatabaseTest {
 
     @Test
     fun `failed replacement preserves old model and startup restores orphan backup`() = runTest {
-        val modelId = "atomic-model"
         val base = ModelCatalog.findById("piper-fr-siwis-medium")!!
+        val modelId = base.id
         fun writeZip(file: File, includeOnnx: Boolean) {
             ZipOutputStream(FileOutputStream(file)).use { zip ->
                 if (includeOnnx) {
@@ -385,7 +385,7 @@ class ModelStorageAndDatabaseTest {
     @Test
     fun `rollback preserves candidate and backup when prior installation fails integrity verification`() = runTest {
         val base = ModelCatalog.findById("piper-fr-siwis-medium")!!
-        val modelId = "corrupt-backup-model"
+        val modelId = base.id
 
         fun createPackage(file: File, tokenText: String): ModelSpec {
             ZipOutputStream(FileOutputStream(file)).use { zip ->
@@ -429,7 +429,7 @@ class ModelStorageAndDatabaseTest {
     @Test
     fun `startup preserves verified original when transaction marker was torn before backup move`() = runTest {
         val base = ModelCatalog.findById("piper-fr-siwis-medium")!!
-        val modelId = "torn-marker-model"
+        val modelId = specBase.id
         val part = storageManager.getTempPartFile("torn-marker-fixture")
         ZipOutputStream(FileOutputStream(part)).use { zip ->
             zip.putNextEntry(ZipEntry("model.onnx"))
