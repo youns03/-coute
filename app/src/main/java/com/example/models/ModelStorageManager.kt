@@ -324,6 +324,16 @@ class ModelStorageManager(private val context: Context) {
                     commitMarker.delete()
                 }
             }
+            commitMarker.exists() &&
+                markerState !in setOf("backing_up", "prepared", "committed", "restoring", "discarding") -> {
+                // A torn/unknown marker may have been written before the old directory was
+                // moved. If no backup exists, preserve a fully verified final installation.
+                if (!backupDir.exists() && isValidInstalledPackageForRecovery(modelId, finalDir)) {
+                    if (stagingDir.deleteRecursively() || !stagingDir.exists()) commitMarker.delete()
+                } else {
+                    rollbackPendingInstall(modelId)
+                }
+            }
             commitMarker.exists() -> rollbackPendingInstall(modelId)
             backupDir.exists() -> {
                 // Legacy/orphan backup: never discard the only verified copy. Validate both
