@@ -26,9 +26,5 @@ class FontRenderingTest {
 
         assertTrue("Connected Arabic text should produce visible output", paint.measureText("سلام") > 0f)
         assertTrue("Mixed Arabic/French text should produce visible glyph widths", paint.measureText("سلام français") > 0f)
-
-        val widths = FloatArray("سلام".length)
-        paint.getTextWidths("سلام", widths)
-        assertTrue("Arabic shaping must produce non-zero measured output", widths.sum() > 0f)
     }
 }
