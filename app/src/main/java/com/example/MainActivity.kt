@@ -90,6 +90,17 @@ private data class TopLevelNavItem(
     val route: AppRoute
 )
 
+private fun isNavItemSelected(route: AppRoute, destination: androidx.navigation.NavDestination?): Boolean =
+    when (route) {
+        is AppRoute.Library -> destination?.hasRoute<AppRoute.Library>() == true
+        is AppRoute.Reader -> destination?.hasRoute<AppRoute.Reader>() == true
+        is AppRoute.FileTranslator -> destination?.hasRoute<AppRoute.FileTranslator>() == true
+        is AppRoute.PlayerLab -> destination?.hasRoute<AppRoute.PlayerLab>() == true
+        is AppRoute.Models -> destination?.hasRoute<AppRoute.Models>() == true
+        is AppRoute.Vocabulary -> destination?.hasRoute<AppRoute.Vocabulary>() == true
+        is AppRoute.Settings -> destination?.hasRoute<AppRoute.Settings>() == true
+    }
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun EcouteAppRoot(isExpandedNav: Boolean) {
@@ -191,15 +202,7 @@ fun EcouteAppRoot(isExpandedNav: Boolean) {
                         if (!isExpandedNav) {
                             NavigationBar {
                             primaryTabs.forEach { tab ->
-                                val selected = when (tab.route) {
-                                    is AppRoute.Library -> currentDest?.hasRoute<AppRoute.Library>() == true
-                                    is AppRoute.Reader -> currentDest?.hasRoute<AppRoute.Reader>() == true
-                                    is AppRoute.FileTranslator -> currentDest?.hasRoute<AppRoute.FileTranslator>() == true
-                                    is AppRoute.PlayerLab -> currentDest?.hasRoute<AppRoute.PlayerLab>() == true
-                                    is AppRoute.Models -> currentDest?.hasRoute<AppRoute.Models>() == true
-                                    is AppRoute.Vocabulary -> currentDest?.hasRoute<AppRoute.Vocabulary>() == true
-                                    is AppRoute.Settings -> currentDest?.hasRoute<AppRoute.Settings>() == true
-                                }
+                                val selected = isNavItemSelected(tab.route, currentDest)
                                 NavigationBarItem(
                                     selected = selected,
                                     onClick = { navigateTopLevel(tab.route) },
@@ -221,15 +224,7 @@ fun EcouteAppRoot(isExpandedNav: Boolean) {
                     if (isExpandedNav) {
                         NavigationRail {
                             primaryTabs.forEach { tab ->
-                                val selected = when (tab.route) {
-                                    is AppRoute.Library -> currentDest?.hasRoute<AppRoute.Library>() == true
-                                    is AppRoute.Reader -> currentDest?.hasRoute<AppRoute.Reader>() == true
-                                    is AppRoute.FileTranslator -> currentDest?.hasRoute<AppRoute.FileTranslator>() == true
-                                    is AppRoute.PlayerLab -> currentDest?.hasRoute<AppRoute.PlayerLab>() == true
-                                    is AppRoute.Models -> currentDest?.hasRoute<AppRoute.Models>() == true
-                                    is AppRoute.Vocabulary -> currentDest?.hasRoute<AppRoute.Vocabulary>() == true
-                                    is AppRoute.Settings -> currentDest?.hasRoute<AppRoute.Settings>() == true
-                                }
+                                val selected = isNavItemSelected(tab.route, currentDest)
                                 NavigationRailItem(
                                     selected = selected,
                                     onClick = { navigateTopLevel(tab.route) },
@@ -239,13 +234,13 @@ fun EcouteAppRoot(isExpandedNav: Boolean) {
                                 )
                             }
                             NavigationRailItem(
-                                selected = currentDest?.hasRoute<AppRoute.Vocabulary>() == true,
+                                selected = isNavItemSelected(AppRoute.Vocabulary, currentDest),
                                 onClick = { navigateTopLevel(AppRoute.Vocabulary) },
                                 icon = { Icon(Icons.Rounded.Bookmarks, contentDescription = "المفردات") },
                                 label = { Text("المفردات") }
                             )
                             NavigationRailItem(
-                                selected = currentDest?.hasRoute<AppRoute.Settings>() == true,
+                                selected = isNavItemSelected(AppRoute.Settings, currentDest),
                                 onClick = { navigateTopLevel(AppRoute.Settings) },
                                 icon = { Icon(Icons.Rounded.Settings, contentDescription = "الإعدادات") },
                                 label = { Text("الإعدادات") }
