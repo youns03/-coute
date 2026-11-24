@@ -35,6 +35,10 @@ The app is designed for **French and English learning with Arabic support**. Spe
 
 > Offline use depends on downloading the required language/model packs first. Some setup, downloads, and integrations require an internet connection.
 
+## Current development milestone
+
+The current main branch includes the latest reader-following, typography, playback, immersive-reading, and library improvements. The implementation history and user-facing changes are tracked in the [changelog](CHANGELOG.md).
+
 ## Download
 
 Get the newest published build from **[GitHub Releases](https://github.com/youns03/-coute/releases/latest)**.
