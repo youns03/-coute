@@ -1079,11 +1079,11 @@ private fun ReaderAudioBar(
                 ) {
                     when {
                         isBuffering -> CircularProgressIndicator(modifier = Modifier.size(19.dp), strokeWidth = 2.dp)
-                        isPlaying -> Icon(Icons.Rounded.Pause, contentDescription = stringResource(R.string.reader_pause_content_description))
+                        isPlaying -> Icon(Icons.Rounded.Pause, contentDescription = stringResource(R.string.reader_pause_label))
                         else -> Icon(Icons.Rounded.PlayArrow, contentDescription = stringResource(R.string.reader_play_content_description))
                     }
                     Spacer(Modifier.width(8.dp))
-                    Text(if (isPlaying) stringResource(R.string.reader_pause_content_description) else stringResource(R.string.reader_listen_button), style = MaterialTheme.typography.labelLarge)
+                    Text(if (isPlaying) stringResource(R.string.reader_pause_label) else stringResource(R.string.reader_listen_button), style = MaterialTheme.typography.labelLarge)
                 }
                 IconButton(
                     onClick = onNext,
