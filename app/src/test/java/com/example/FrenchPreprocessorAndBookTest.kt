@@ -66,6 +66,19 @@ class FrenchPreprocessorAndBookTest {
     }
 
     @Test
+    fun `long comma-separated source prefers clause boundaries when creating paragraphs`() {
+        val source = (1..110).joinToString(", ") { "clause$it" }
+        val processed = FrenchTextPreprocessor.splitAndPreprocess(source)
+        val grouped = processed.groupBy { it.paragraphIndex }
+
+        assertTrue(grouped.size > 1)
+        grouped.values.forEach { sentences ->
+            assertTrue(sentences.joinToString(" ") { it.originalText }.length <= 430)
+        }
+        assertEquals(source, processed.joinToString(" ") { it.originalText })
+    }
+
+    @Test
     fun `English long paragraphs use the same smart reader segmentation`() {
         val source = (1..170).joinToString(" ") { "word$it" }
         val processed = SpeechTextProcessor.splitAndPreprocess(source, "en")
