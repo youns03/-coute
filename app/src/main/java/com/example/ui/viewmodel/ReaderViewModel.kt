@@ -43,6 +43,7 @@ data class ReaderUiState(
     val isSearchOpen: Boolean = false,
     val translatingSentenceIds: Set<Long> = emptySet(),
     val translatingParagraphIndices: Set<Int> = emptySet(),
+    val paragraphTranslations: Map<Int, String> = emptyMap(),
     val revealedSentenceIds: Set<Long> = emptySet(),
     val translationError: String? = null
 )
@@ -62,6 +63,7 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
     private val _searchResults = MutableStateFlow<List<SentenceEntity>>(emptyList())
     private val _translatingSentenceIds = MutableStateFlow<Set<Long>>(emptySet())
     private val _translatingParagraphIndices = MutableStateFlow<Set<Int>>(emptySet())
+    private val _paragraphTranslations = MutableStateFlow<Map<Int, String>>(emptyMap())
     private val _revealedSentenceIds = MutableStateFlow<Set<Long>>(emptySet())
     private val _translationError = MutableStateFlow<String?>(null)
 
@@ -93,14 +95,16 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
         _translatingSentenceIds,
         _translatingParagraphIndices,
         _revealedSentenceIds,
-        _translationError
-    ) { sIds, pIdxs, revealed, err ->
-        TranslationStatusBundle(sIds, pIdxs, revealed, err)
+        _translationError,
+        _paragraphTranslations
+    ) { sIds, pIdxs, revealed, err, paragraphTranslations ->
+        TranslationStatusBundle(sIds, pIdxs, paragraphTranslations, revealed, err)
     }
 
     private data class TranslationStatusBundle(
         val translatingSentenceIds: Set<Long>,
         val translatingParagraphIndices: Set<Int>,
+        val paragraphTranslations: Map<Int, String>,
         val revealedSentenceIds: Set<Long>,
         val translationError: String?
     )
@@ -126,6 +130,7 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
             isSearchOpen = searchTriple.third,
             translatingSentenceIds = txBundle.translatingSentenceIds,
             translatingParagraphIndices = txBundle.translatingParagraphIndices,
+            paragraphTranslations = txBundle.paragraphTranslations,
             revealedSentenceIds = txBundle.revealedSentenceIds,
             translationError = txBundle.translationError
         )
@@ -135,6 +140,7 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
         if (_bookId.value == bookId) return
         _bookId.value = bookId
         _revealedSentenceIds.value = emptySet()
+        _paragraphTranslations.value = emptyMap()
         _translationError.value = null
         viewModelScope.launch {
             settingsRepo.setActiveBookId(bookId)
@@ -150,6 +156,7 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
         val bookId = _bookId.value ?: return
         _chapterIndex.value = chapterIndex
         _revealedSentenceIds.value = emptySet()
+        _paragraphTranslations.value = emptyMap()
         val pState = playbackController.state.value
         if (pState.bookId == bookId && pState.chapterIndex != chapterIndex) {
             playbackController.stop()
@@ -167,6 +174,8 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
             if (playbackController.state.value.bookId == book.id) {
                 playbackController.stop()
             }
+            _paragraphTranslations.value = emptyMap()
+            _revealedSentenceIds.value = emptySet()
             libraryRepo.updateBookSourceLanguage(book.id, next.code)
         }
     }
@@ -261,25 +270,44 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
     fun translateOrToggleParagraph(paragraphIndex: Int, paragraphSentences: List<SentenceEntity>) {
         if (paragraphSentences.isEmpty()) return
         val globalShown = settings.value.showInlineTranslations
-        val allCached = paragraphSentences.all { !it.cachedArabicTranslation.isNullOrBlank() }
-        val allRevealed = paragraphSentences.all { it.id in _revealedSentenceIds.value }
+        val sentenceIds = paragraphSentences.map { it.id }.toSet()
+        val allRevealed = sentenceIds.all { it in _revealedSentenceIds.value }
+        val cachedParagraph = _paragraphTranslations.value[paragraphIndex]
 
-        if (!globalShown && allCached && allRevealed) {
-            _revealedSentenceIds.value = _revealedSentenceIds.value - paragraphSentences.map { it.id }.toSet()
+        if (!globalShown && cachedParagraph != null && allRevealed) {
+            _revealedSentenceIds.value = _revealedSentenceIds.value - sentenceIds
+            return
+        }
+        if (cachedParagraph != null) {
+            _revealedSentenceIds.value = _revealedSentenceIds.value + sentenceIds
             return
         }
 
-        _revealedSentenceIds.value = _revealedSentenceIds.value + paragraphSentences.map { it.id }.toSet()
-        if (allCached) return
-
         val sourceLang = SourceLanguage.fromCode(readerState.value.book?.sourceLanguage)
+        val paragraphText = paragraphSentences.joinToString(" ") { it.originalText.trim() }
         viewModelScope.launch {
             _translationError.value = null
+            _revealedSentenceIds.value = _revealedSentenceIds.value + sentenceIds
             _translatingParagraphIndices.value = _translatingParagraphIndices.value + paragraphIndex
-            val res = engineManager.translateParagraph(paragraphSentences, sourceLang)
+            // Translate the complete paragraph in one model request so context and sentence flow
+            // are preserved; sentence-by-sentence translation remains available as a legacy fallback.
+            val res = engineManager.translateSentence(
+                sentenceId = -1L,
+                sourceLanguage = sourceLang,
+                originalText = paragraphText,
+                cachedTranslation = null
+            )
             _translatingParagraphIndices.value = _translatingParagraphIndices.value - paragraphIndex
-            res.onFailure { err ->
-                _translationError.value = err.message ?: "تعذر ترجمة الفقرة"
+            res.onSuccess { translated ->
+                if (translated.isNotBlank()) {
+                    _paragraphTranslations.value = _paragraphTranslations.value + (paragraphIndex to translated)
+                } else {
+                    _revealedSentenceIds.value = _revealedSentenceIds.value - sentenceIds
+                    _translationError.value = "أعاد محرك الترجمة نتيجة فارغة."
+                }
+            }.onFailure { err ->
+                _revealedSentenceIds.value = _revealedSentenceIds.value - sentenceIds
+                _translationError.value = err.message ?: "تعذرت ترجمة الفقرة"
             }
         }
     }
