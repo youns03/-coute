@@ -368,13 +368,16 @@ fun ReaderScreen(
                         }
 
                         CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Ltr) {
+                            val wordHighlightColor = MaterialTheme.colorScheme.primary
                             val annotated = remember(
                                 paragraphSentences, activeSentenceIdx,
-                                playbackState.activeWordStartChar, playbackState.activeWordEndChar
+                                playbackState.activeWordStartChar, playbackState.activeWordEndChar,
+                                wordHighlightColor
                             ) {
                                 buildParagraphAnnotatedString(
                                     paragraphSentences, activeSentenceIdx,
-                                    playbackState.activeWordStartChar, playbackState.activeWordEndChar
+                                    playbackState.activeWordStartChar, playbackState.activeWordEndChar,
+                                    wordHighlightColor
                                 )
                             }
                             ClickableText(
@@ -604,7 +607,8 @@ private fun buildParagraphAnnotatedString(
     sentences: List<SentenceEntity>,
     activeSentenceIndex: Int,
     activeWordStart: Int,
-    activeWordEnd: Int
+    activeWordEnd: Int,
+    highlightColor: androidx.compose.ui.graphics.Color
 ) = buildAnnotatedString {
     var paragraphOffset = 0
     sentences.forEachIndexed { index, sentence ->
@@ -624,8 +628,9 @@ private fun buildParagraphAnnotatedString(
         ) {
             addStyle(
                 SpanStyle(
-                    background = androidx.compose.ui.graphics.Color(0x5549A985),
-                    fontWeight = FontWeight.Bold,
+                    background = highlightColor.copy(alpha = 0.18f),
+                    color = highlightColor,
+                    fontWeight = FontWeight.SemiBold,
                     textDecoration = TextDecoration.Underline
                 ),
                 start = sentenceStart + activeWordStart,
