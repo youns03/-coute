@@ -4,6 +4,7 @@ import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
+import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
@@ -41,6 +42,7 @@ import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.LayoutDirection
+import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.navigation.NavDestination.Companion.hasRoute
@@ -52,6 +54,7 @@ import androidx.navigation.compose.rememberNavController
 import androidx.navigation.toRoute
 import com.example.domain.BenchmarkCorpus
 import com.example.ui.navigation.AppRoute
+import com.example.ui.components.GlobalMiniPlayer
 import com.example.ui.screens.FileTranslatorScreen
 import com.example.ui.screens.LibraryScreen
 import com.example.ui.screens.ModelManagerScreen
@@ -98,8 +101,14 @@ fun EcouteAppRoot(isExpandedNav: Boolean) {
 
     val settings by modelsVm.settings.collectAsStateWithLifecycle()
     val libraryState by libraryVm.libraryState.collectAsStateWithLifecycle()
+    val globalPlaybackState by playerVm.playbackState.collectAsStateWithLifecycle()
     val backStackEntry by navController.currentBackStackEntryAsState()
     val currentDest = backStackEntry?.destination
+    val isReaderDestination = currentDest?.hasRoute<AppRoute.Reader>() == true
+    val isFullPlayerDestination = currentDest?.hasRoute<AppRoute.PlayerLab>() == true
+    val showGlobalMiniPlayer = !isReaderDestination && !isFullPlayerDestination &&
+        globalPlaybackState.status != com.example.audio.PlaybackStatus.IDLE &&
+        globalPlaybackState.status != com.example.audio.PlaybackStatus.ERROR
 
     val defaultBookId = settings.activeBookId
         ?: libraryState.books.firstOrNull()?.id
@@ -165,8 +174,19 @@ fun EcouteAppRoot(isExpandedNav: Boolean) {
                     )
                 },
                 bottomBar = {
-                    if (!isExpandedNav) {
-                        NavigationBar {
+                    Column {
+                        if (showGlobalMiniPlayer) {
+                            GlobalMiniPlayer(
+                                playbackState = globalPlaybackState,
+                                onTogglePlayPause = playerVm::togglePlayPause,
+                                onPrevious = playerVm::previousSentence,
+                                onNext = playerVm::nextSentence,
+                                onOpen = { navigateTopLevel(AppRoute.PlayerLab) },
+                                modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp)
+                            )
+                        }
+                        if (!isExpandedNav) {
+                            NavigationBar {
                             primaryTabs.forEach { tab ->
                                 val selected = when (tab.route) {
                                     is AppRoute.Library -> currentDest?.hasRoute<AppRoute.Library>() == true
@@ -184,6 +204,7 @@ fun EcouteAppRoot(isExpandedNav: Boolean) {
                                     label = { Text(tab.label, maxLines = 1, overflow = TextOverflow.Ellipsis) },
                                     modifier = Modifier.testTag(tab.testTag)
                                 )
+                            }
                             }
                         }
                     }
