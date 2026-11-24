@@ -351,7 +351,7 @@ fun ReaderScreen(
                                     Icon(
                                         when {
                                             cachedParagraphTranslation.isNullOrBlank() -> Icons.Rounded.Translate
-                                            settings.showInlineTranslations -> Icons.Rounded.Done
+                                            settings.showInlineTranslations -> Icons.Rounded.Translate
                                             allParagraphRevealed -> Icons.Rounded.VisibilityOff
                                             else -> Icons.Rounded.Translate
                                         },
