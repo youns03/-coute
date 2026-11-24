@@ -59,24 +59,28 @@ object EnglishTextPreprocessor {
 
         val output = mutableListOf<ProcessedSentence>()
         var sentenceCounter = 0
+        var readingParagraphIndex = 0
 
-        paragraphs.forEachIndexed { pIdx, paragraph ->
+        paragraphs.forEach { paragraph ->
             val cleanParagraph = paragraph
                 .replace(Regex("""\n+"""), " ")
                 .replace(Regex("""\s+"""), " ")
                 .trim()
-            val sentences = splitIntoSentences(cleanParagraph)
-            for (original in sentences) {
-                if (original.isNotBlank()) {
-                    output.add(
-                        ProcessedSentence(
-                            index = sentenceCounter++,
-                            paragraphIndex = pIdx,
-                            originalText = original,
-                            spokenText = prepareForSpeech(original)
+            val readingParagraphs = ReadingParagraphSegmenter.segment(splitIntoSentences(cleanParagraph))
+            readingParagraphs.forEach { readingParagraph ->
+                readingParagraph.forEach { original ->
+                    if (original.isNotBlank()) {
+                        output.add(
+                            ProcessedSentence(
+                                index = sentenceCounter++,
+                                paragraphIndex = readingParagraphIndex,
+                                originalText = original,
+                                spokenText = prepareForSpeech(original)
+                            )
                         )
-                    )
+                    }
                 }
+                readingParagraphIndex++
             }
         }
         return output
