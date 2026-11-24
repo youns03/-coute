@@ -52,7 +52,7 @@ class SpeechTimestampAlignerTest {
     }
 
     private fun spokenWords(text: String): List<WordTimestampRange> {
-        val regex = Regex("""[\\p{L}\\p{N}]+(?:['’\\-][\\p{L}\\p{N}]+)*""")
+        val regex = Regex("""[\p{L}\p{N}]+(?:['’\-][\p{L}\p{N}]+)*""")
         return regex.findAll(text).mapIndexed { index, match ->
             WordTimestampRange(
                 word = match.value,

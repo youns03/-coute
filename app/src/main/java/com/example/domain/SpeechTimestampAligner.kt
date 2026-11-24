@@ -15,7 +15,7 @@ object SpeechTimestampAligner {
 
     private data class Token(val start: Int, val end: Int, val key: String)
 
-    private val tokenRegex = Regex("""[\\p{L}\\p{N}]+(?:['’\\-][\\p{L}\\p{N}]+)*""")
+    private val tokenRegex = Regex("""[\p{L}\p{N}]+(?:['’\-][\p{L}\p{N}]+)*""")
 
     fun align(
         originalText: String,
