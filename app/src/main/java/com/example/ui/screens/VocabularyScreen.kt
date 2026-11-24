@@ -56,8 +56,8 @@ fun VocabularyScreen(
     Box(modifier = modifier.fillMaxSize(), contentAlignment = Alignment.TopCenter) {
         LazyColumn(
             modifier = Modifier
-                .fillMaxSize()
-                .widthIn(max = 760.dp),
+                .widthIn(max = 760.dp)
+                .fillMaxSize(),
             contentPadding = PaddingValues(horizontal = 16.dp, vertical = 14.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {

@@ -10,22 +10,22 @@ import com.example.R
 
 val FrenchSerifFamily = FontFamily(
     Font(R.font.newsreader, FontWeight.Normal),
-    Font(R.font.newsreader, FontWeight.Medium),
-    Font(R.font.newsreader, FontWeight.SemiBold)
+    Font(R.font.newsreader_medium, FontWeight.Medium),
+    Font(R.font.newsreader_semibold, FontWeight.SemiBold)
 )
 
+/**
+ * Readex Pro is bundled as fixed weights so Arabic shaping and Latin fallback
+ * work consistently on minSdk 24 without relying on variable-font support.
+ */
 val UiSansFamily = FontFamily(
-    Font(R.font.plus_jakarta_sans, FontWeight.Normal),
-    Font(R.font.plus_jakarta_sans, FontWeight.Medium),
-    Font(R.font.plus_jakarta_sans, FontWeight.SemiBold),
-    Font(R.font.plus_jakarta_sans, FontWeight.Bold)
+    Font(R.font.readex_pro, FontWeight.Normal),
+    Font(R.font.readex_pro_medium, FontWeight.Medium),
+    Font(R.font.readex_pro_semibold, FontWeight.SemiBold),
+    Font(R.font.readex_pro_bold, FontWeight.Bold)
 )
 
-val ArabicSansFamily = FontFamily(
-    Font(R.font.readex_pro, FontWeight.Normal),
-    Font(R.font.readex_pro, FontWeight.Medium),
-    Font(R.font.readex_pro, FontWeight.SemiBold)
-)
+val ArabicSansFamily = UiSansFamily
 
 val Typography = Typography(
     displaySmall = TextStyle(
@@ -79,8 +79,8 @@ val Typography = Typography(
     bodySmall = TextStyle(
         fontFamily = UiSansFamily,
         fontWeight = FontWeight.Normal,
-        fontSize = 12.sp,
-        lineHeight = 16.sp
+        fontSize = 13.sp,
+        lineHeight = 20.sp
     ),
     labelLarge = TextStyle(
         fontFamily = UiSansFamily,
@@ -91,13 +91,13 @@ val Typography = Typography(
     labelMedium = TextStyle(
         fontFamily = UiSansFamily,
         fontWeight = FontWeight.Medium,
-        fontSize = 12.sp,
-        lineHeight = 16.sp
+        fontSize = 13.sp,
+        lineHeight = 19.sp
     ),
     labelSmall = TextStyle(
         fontFamily = UiSansFamily,
         fontWeight = FontWeight.Medium,
-        fontSize = 11.sp,
-        lineHeight = 14.sp
+        fontSize = 12.sp,
+        lineHeight = 18.sp
     )
 )

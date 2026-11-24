@@ -174,8 +174,8 @@ fun ReaderScreen(
     Box(modifier = modifier.fillMaxSize(), contentAlignment = Alignment.TopCenter) {
         Column(
             modifier = Modifier
-                .fillMaxSize()
                 .widthIn(max = 760.dp)
+                .fillMaxSize()
         ) {
             // Compact Reader Toolbar
             Surface(

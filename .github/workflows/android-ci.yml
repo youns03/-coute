@@ -34,6 +34,11 @@ jobs:
         with:
           packages: 'platform-tools platforms;android-36 build-tools;36.0.0'
 
+      - name: Check bundled font coverage
+        run: |
+          python3 -m pip install --disable-pip-version-check --quiet fonttools
+          python3 scripts/check_font_coverage.py
+
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@v4
 

@@ -1,0 +1,45 @@
+#!/usr/bin/env python3
+"""Fail CI when bundled fonts lose the glyphs required by Écoute."""
+
+from pathlib import Path
+import sys
+
+from fontTools.ttLib import TTFont
+
+FONT_DIR = Path(__file__).resolve().parents[1] / "app" / "src" / "main" / "res" / "font"
+REQUIRED = {
+    "readex_pro": (0x0628, 0x0644, 0x0629, 0x0041, 0x0061, 0x0030),
+    "newsreader": (0x0041, 0x0061, 0x00E9, 0x0030),
+}
+
+
+def codepoints(font_path: Path) -> set[int]:
+    font = TTFont(font_path, lazy=False)
+    return {codepoint for table in font["cmap"].tables for codepoint in table.cmap}
+
+
+def main() -> int:
+    failures: list[str] = []
+    for prefix, required in REQUIRED.items():
+        paths = sorted(FONT_DIR.glob(f"{prefix}*.ttf"))
+        if not paths:
+            failures.append(f"no fonts found for {prefix}")
+            continue
+        for path in paths:
+            present = codepoints(path)
+            missing = [f"U+{cp:04X}" for cp in required if cp not in present]
+            if missing:
+                failures.append(f"{path.name}: missing {', '.join(missing)}")
+            else:
+                print(f"OK {path.name}: {len(present)} code points")
+
+    if failures:
+        print("Font coverage check failed:", file=sys.stderr)
+        for failure in failures:
+            print(f"- {failure}", file=sys.stderr)
+        return 1
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
