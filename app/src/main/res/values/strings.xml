@@ -75,4 +75,6 @@
     <string name="mini_player_open">فتح المشغّل الكامل</string>
     <string name="reader_enter_immersive">تفعيل وضع القراءة الغامر</string>
     <string name="reader_exit_immersive">الخروج من وضع القراءة الغامر</string>
+    <string name="library_continue_reading">متابعة القراءة</string>
+    <string name="library_start_reading">ابدأ القراءة</string>
 </resources>
