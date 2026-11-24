@@ -6,6 +6,10 @@ import android.os.Build
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.interaction.DragInteraction
+import androidx.compose.foundation.relocation.BringIntoViewRequester
+import androidx.compose.foundation.relocation.bringIntoViewRequester
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -29,6 +33,8 @@ import androidx.compose.material.icons.rounded.Check
 import androidx.compose.material.icons.rounded.Close
 import androidx.compose.material.icons.rounded.DarkMode
 import androidx.compose.material.icons.rounded.FormatSize
+import androidx.compose.material.icons.rounded.Fullscreen
+import androidx.compose.material.icons.rounded.FullscreenExit
 import androidx.compose.material.icons.rounded.List
 import androidx.compose.material.icons.rounded.Pause
 import androidx.compose.material.icons.rounded.PlayArrow
@@ -69,12 +75,16 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.res.pluralStringResource
+import androidx.compose.ui.res.stringResource
 import androidx.core.content.ContextCompat
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.TextLayoutResult
 import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextDecoration
@@ -82,6 +92,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.example.R
 import com.example.audio.PlaybackStatus
 import com.example.audio.PlaybackUiState
 import com.example.data.SentenceEntity
@@ -94,8 +105,10 @@ import com.example.ui.theme.ArabicSansFamily
 import com.example.ui.theme.FrenchSerifFamily
 import com.example.ui.viewmodel.ReaderUiState
 import com.example.ui.viewmodel.WordLookupSheetState
+import kotlinx.coroutines.flow.collect
+import kotlinx.coroutines.launch
 
-@OptIn(ExperimentalMaterial3Api::class)
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class)
 @Composable
 fun ReaderScreen(
     state: ReaderUiState,
@@ -127,11 +140,14 @@ fun ReaderScreen(
     onDownloadTranslationPack: () -> Unit,
     onDismissTranslationError: () -> Unit,
     onOpenFullPlayer: () -> Unit,
+    isImmersive: Boolean,
+    onToggleImmersive: () -> Unit,
     modifier: Modifier = Modifier
 ) {
     var showChaptersSheet by remember { mutableStateOf(false) }
     var showAppearanceSheet by remember { mutableStateOf(false) }
     val listState = rememberLazyListState()
+    val coroutineScope = androidx.compose.runtime.rememberCoroutineScope()
     val context = LocalContext.current
     val notificationPermissionLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestPermission()
@@ -160,13 +176,37 @@ fun ReaderScreen(
         state.sentences.groupBy { it.paragraphIndex }.toList().sortedBy { it.first }
     }
 
-    LaunchedEffect(activeSentenceIdx) {
-        if (activeSentenceIdx >= 0) {
-            val itemPos = groupedParagraphs.indexOfFirst { (_, sents) ->
-                sents.any { it.sentenceIndex == activeSentenceIdx }
+    var isAutoFollowEnabled by remember { mutableStateOf(true) }
+    var returnToAudioRequest by remember { mutableStateOf(0) }
+    val activeParagraphItemIndex = remember(groupedParagraphs, activeSentenceIdx) {
+        if (activeSentenceIdx < 0) -1 else groupedParagraphs.indexOfFirst { (_, sentences) ->
+            sentences.any { it.sentenceIndex == activeSentenceIdx }
+        }
+    }
+
+    // A real user drag suspends automatic following; it never pauses playback.
+    LaunchedEffect(listState) {
+        listState.interactionSource.interactions.collect { interaction ->
+            if (interaction is DragInteraction.Start) {
+                isAutoFollowEnabled = false
             }
-            if (itemPos >= 0) {
-                listState.animateScrollToItem(itemPos)
+        }
+    }
+
+    // A new book/chapter starts a fresh reading-follow session.
+    LaunchedEffect(activeBookId, state.activeChapterIndex) {
+        isAutoFollowEnabled = true
+        returnToAudioRequest = 0
+    }
+
+    LaunchedEffect(activeSentenceIdx, playbackState.status, isAutoFollowEnabled, activeParagraphItemIndex) {
+        if (
+            shouldAutoFollowPlayback(playbackState.status, isAutoFollowEnabled) &&
+            activeParagraphItemIndex >= 0
+        ) {
+            val visibleItems = listState.layoutInfo.visibleItemsInfo.mapTo(mutableSetOf()) { it.index }
+            if (shouldScrollToParagraph(activeParagraphItemIndex, visibleItems)) {
+                listState.animateScrollToItem(activeParagraphItemIndex)
             }
         }
     }
@@ -174,8 +214,8 @@ fun ReaderScreen(
     Box(modifier = modifier.fillMaxSize(), contentAlignment = Alignment.TopCenter) {
         Column(
             modifier = Modifier
-                .fillMaxSize()
                 .widthIn(max = 760.dp)
+                .fillMaxSize()
         ) {
             // Compact Reader Toolbar
             Surface(
@@ -199,12 +239,12 @@ fun ReaderScreen(
                                 .minimumInteractiveComponentSize()
                                 .testTag("chapter_selector_button")
                         ) {
-                            Icon(Icons.Rounded.List, contentDescription = "فصول الكتاب")
+                            Icon(Icons.Rounded.List, contentDescription = stringResource(R.string.reader_chapters_title))
                         }
                         Column(modifier = Modifier.weight(1f)) {
                             CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Ltr) {
                                 Text(
-                                    text = state.book?.title ?: "اختر كتاباً من المكتبة",
+                                    text = state.book?.title ?: stringResource(R.string.reader_choose_book),
                                     style = MaterialTheme.typography.titleSmall,
                                     maxLines = 1,
                                     overflow = TextOverflow.Ellipsis
@@ -237,7 +277,7 @@ fun ReaderScreen(
                                 .minimumInteractiveComponentSize()
                                 .testTag("reader_search_button")
                         ) {
-                            Icon(Icons.Rounded.Search, contentDescription = "بحث داخل الكتاب")
+                            Icon(Icons.Rounded.Search, contentDescription = stringResource(R.string.reader_search_content_description))
                         }
                         IconButton(
                             onClick = onToggleInlineTranslations,
@@ -247,7 +287,7 @@ fun ReaderScreen(
                         ) {
                             Icon(
                                 if (settings.showInlineTranslations) Icons.Rounded.Translate else Icons.Rounded.VisibilityOff,
-                                contentDescription = "إظهار أو إخفاء جميع الترجمات",
+                                contentDescription = stringResource(R.string.reader_toggle_translations_content_description),
                                 tint = if (settings.showInlineTranslations) {
                                     MaterialTheme.colorScheme.secondary
                                 } else {
@@ -261,7 +301,20 @@ fun ReaderScreen(
                                 .minimumInteractiveComponentSize()
                                 .testTag("reader_appearance_button")
                         ) {
-                            Icon(Icons.Rounded.FormatSize, contentDescription = "تخصيص الخط والمظهر")
+                            Icon(Icons.Rounded.FormatSize, contentDescription = stringResource(R.string.reader_appearance_content_description))
+                        }
+                        IconButton(
+                            onClick = onToggleImmersive,
+                            modifier = Modifier
+                                .minimumInteractiveComponentSize()
+                                .testTag("reader_immersive_button")
+                        ) {
+                            Icon(
+                                if (isImmersive) Icons.Rounded.FullscreenExit else Icons.Rounded.Fullscreen,
+                                contentDescription = stringResource(
+                                    if (isImmersive) R.string.reader_exit_immersive else R.string.reader_enter_immersive
+                                )
+                            )
                         }
                     }
                 }
@@ -295,14 +348,42 @@ fun ReaderScreen(
                         if (activePackState.status != TranslationPackStatus.READY) {
                             FilledTonalButton(onClick = onDownloadTranslationPack) {
                                 Text(
-                                    if (activePackState.status == TranslationPackStatus.DOWNLOADING) "جاري التنزيل..."
-                                    else "تنزيل (${bookDirection.shortBadge})"
+                                    if (activePackState.status == TranslationPackStatus.DOWNLOADING) stringResource(R.string.reader_download_in_progress)
+                                    else stringResource(R.string.reader_download_translation_pack, bookDirection.shortBadge)
                                 )
                             }
                         }
                         IconButton(onClick = onDismissTranslationError) {
-                            Icon(Icons.Rounded.Close, contentDescription = "إغلاق")
+                            Icon(Icons.Rounded.Close, contentDescription = stringResource(R.string.common_close))
                         }
+                    }
+                }
+            }
+
+            // Keep the return action outside the lazy content so it remains reachable.
+            if (!isAutoFollowEnabled && activeParagraphItemIndex >= 0) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 16.dp, vertical = 2.dp),
+                    horizontalArrangement = Arrangement.End
+                ) {
+                    TextButton(
+                        onClick = {
+                            val target = activeParagraphItemIndex
+                            returnToAudioRequest++
+                            isAutoFollowEnabled = true
+                            // While paused, follow mode alone cannot scroll, so perform a view-only jump.
+                            // While playing, the keyed effect performs the single automatic scroll.
+                            if (target >= 0 && playbackState.status != PlaybackStatus.PLAYING) {
+                                coroutineScope.launch {
+                                    listState.animateScrollToItem(target)
+                                }
+                            }
+                        },
+                        modifier = Modifier.testTag("reader_return_to_audio_button")
+                    ) {
+                        Text(stringResource(R.string.reader_return_to_audio))
                     }
                 }
             }
@@ -325,6 +406,8 @@ fun ReaderScreen(
                     val showParagraphTranslation = settings.showInlineTranslations ||
                         paragraphSentences.any { it.id in state.revealedSentenceIds }
                     val currentSentence = paragraphSentences.firstOrNull { it.sentenceIndex == activeSentenceIdx }
+                    val paragraphBringIntoViewRequester = remember(paragraphIndex) { BringIntoViewRequester() }
+                    var paragraphTextLayout by remember(paragraphIndex) { mutableStateOf<TextLayoutResult?>(null) }
 
                     Column(
                         modifier = Modifier.fillMaxWidth().padding(bottom = 18.dp),
@@ -335,7 +418,7 @@ fun ReaderScreen(
                             horizontalArrangement = Arrangement.SpaceBetween,
                             verticalAlignment = Alignment.CenterVertically
                         ) {
-                            Text("الفقرة ${paragraphIndex + 1}", style = MaterialTheme.typography.labelMedium,
+                            Text(stringResource(R.string.reader_paragraph_number, paragraphIndex + 1), style = MaterialTheme.typography.labelMedium,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant)
                             TextButton(
                                 onClick = { onTranslateOrToggleParagraph(paragraphIndex, paragraphSentences) },
@@ -346,7 +429,7 @@ fun ReaderScreen(
                                 if (isParagraphTranslating) {
                                     CircularProgressIndicator(modifier = Modifier.size(15.dp), strokeWidth = 2.dp)
                                     Spacer(Modifier.width(7.dp))
-                                    Text("تُترجم الفقرة...", style = MaterialTheme.typography.labelMedium)
+                                    Text(stringResource(R.string.reader_paragraph_translating), style = MaterialTheme.typography.labelMedium)
                                 } else {
                                     Icon(
                                         when {
@@ -360,10 +443,10 @@ fun ReaderScreen(
                                     Spacer(Modifier.width(5.dp))
                                     Text(
                                         when {
-                                            !cachedParagraphTranslation.isNullOrBlank() && settings.showInlineTranslations -> "تمت الترجمة"
-                                            !cachedParagraphTranslation.isNullOrBlank() && allParagraphRevealed -> "إخفاء الترجمة"
-                                            !cachedParagraphTranslation.isNullOrBlank() -> "عرض الترجمة"
-                                            else -> "ترجمة الفقرة"
+                                            !cachedParagraphTranslation.isNullOrBlank() && settings.showInlineTranslations -> stringResource(R.string.reader_translation_complete)
+                                            !cachedParagraphTranslation.isNullOrBlank() && allParagraphRevealed -> stringResource(R.string.reader_hide_translation)
+                                            !cachedParagraphTranslation.isNullOrBlank() -> stringResource(R.string.reader_show_translation)
+                                            else -> stringResource(R.string.reader_translate_paragraph)
                                         },
                                         style = MaterialTheme.typography.labelMedium
                                     )
@@ -384,8 +467,46 @@ fun ReaderScreen(
                                     wordHighlightColor
                                 )
                             }
+                            LaunchedEffect(
+                                activeSentenceIdx,
+                                playbackState.status,
+                                isAutoFollowEnabled,
+                                returnToAudioRequest,
+                                paragraphTextLayout,
+                                annotated
+                            ) {
+                                val shouldRevealCurrentSentence = currentSentence != null &&
+                                    isAutoFollowEnabled &&
+                                    (playbackState.status == PlaybackStatus.PLAYING || returnToAudioRequest > 0)
+                                val layout = paragraphTextLayout
+                                if (shouldRevealCurrentSentence && layout != null && layout.size.width > 0) {
+                                    val sentenceRange = annotated.getStringAnnotations(
+                                        tag = "SENTENCE",
+                                        start = 0,
+                                        end = annotated.length
+                                    ).firstOrNull { it.item == currentSentence?.id?.toString() }
+                                    if (sentenceRange != null && sentenceRange.end > sentenceRange.start) {
+                                        val firstLine = layout.getLineForOffset(sentenceRange.start)
+                                        val lastLine = layout.getLineForOffset(sentenceRange.end - 1)
+                                        paragraphBringIntoViewRequester.bringIntoView(
+                                            Rect(
+                                                left = 0f,
+                                                top = layout.getLineTop(firstLine),
+                                                right = layout.size.width.toFloat(),
+                                                bottom = layout.getLineBottom(lastLine)
+                                            )
+                                        )
+                                    }
+                                }
+                            }
+
                             ClickableText(
                                 text = annotated,
+                                modifier = Modifier
+                                    .bringIntoViewRequester(paragraphBringIntoViewRequester)
+                                    .fillMaxWidth()
+                                    .testTag("reader_paragraph_text_" + paragraphIndex),
+                                onTextLayout = { paragraphTextLayout = it },
                                 style = TextStyle(
                                     fontFamily = FrenchSerifFamily,
                                     fontSize = settings.readerFontSizeSp.sp,
@@ -406,8 +527,7 @@ fun ReaderScreen(
                                         requestNotificationIfNeeded()
                                         onPlayFromSentence(currentSentence)
                                     }
-                                },
-                                modifier = Modifier.fillMaxWidth().testTag("reader_paragraph_text_" + paragraphIndex)
+                                }
                             )
                         }
 
@@ -421,14 +541,14 @@ fun ReaderScreen(
                                     modifier = Modifier.padding(horizontal = 16.dp, vertical = 13.dp),
                                     verticalArrangement = Arrangement.spacedBy(7.dp)
                                 ) {
-                                    Text("الترجمة العربية", style = MaterialTheme.typography.labelMedium,
+                                    Text(stringResource(R.string.reader_arabic_translation), style = MaterialTheme.typography.labelMedium,
                                         color = MaterialTheme.colorScheme.primary)
                                     when {
                                         isParagraphTranslating -> {
                                             Row(verticalAlignment = Alignment.CenterVertically) {
                                                 CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp)
                                                 Spacer(Modifier.width(9.dp))
-                                                Text("تُترجم الفقرة محلياً...", style = MaterialTheme.typography.bodySmall,
+                                                Text(stringResource(R.string.reader_translating_paragraph_locally), style = MaterialTheme.typography.bodySmall,
                                                     color = MaterialTheme.colorScheme.onSurfaceVariant)
                                             }
                                         }
@@ -458,7 +578,7 @@ fun ReaderScreen(
                                                         ) {
                                                             Icon(
                                                                 Icons.Rounded.BookmarkAdd,
-                                                                contentDescription = "حفظ ترجمة الجملة في القاموس",
+                                                                contentDescription = stringResource(R.string.reader_save_sentence_translation_content_description),
                                                                 tint = MaterialTheme.colorScheme.tertiary,
                                                                 modifier = Modifier.size(18.dp)
                                                             )
@@ -467,7 +587,7 @@ fun ReaderScreen(
                                                 }
                                             }
                                         }
-                                        else -> Text("اضغط «ترجمة الفقرة» لعرض معناها بالعربية.",
+                                        else -> Text(stringResource(R.string.reader_translate_paragraph_hint),
                                             style = MaterialTheme.typography.bodySmall,
                                             color = MaterialTheme.colorScheme.onSurfaceVariant)
                                     }
@@ -505,7 +625,7 @@ fun ReaderScreen(
                     .padding(horizontal = 18.dp, vertical = 8.dp),
                 verticalArrangement = Arrangement.spacedBy(8.dp)
             ) {
-                Text("فصول الكتاب", style = MaterialTheme.typography.titleLarge)
+                Text(stringResource(R.string.reader_chapters_title), style = MaterialTheme.typography.titleLarge)
                 state.chapters.forEach { ch ->
                     val selected = ch.chapterIndex == state.activeChapterIndex
                     Surface(
@@ -531,7 +651,7 @@ fun ReaderScreen(
                                 )
                             }
                             Text(
-                                text = "${ch.sentenceCount} جملة",
+                                text = pluralStringResource(R.plurals.reader_sentence_count, ch.sentenceCount, ch.sentenceCount),
                                 style = MaterialTheme.typography.labelSmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
@@ -551,15 +671,15 @@ fun ReaderScreen(
                     .padding(horizontal = 20.dp, vertical = 8.dp),
                 verticalArrangement = Arrangement.spacedBy(14.dp)
             ) {
-                Text("مظهر القراءة ولغة النص", style = MaterialTheme.typography.titleLarge)
+                Text(stringResource(R.string.reader_appearance_title), style = MaterialTheme.typography.titleLarge)
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.SpaceBetween,
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Text("لغة الكتاب للترجمة (${bookDirection.shortBadge})", style = MaterialTheme.typography.bodyMedium)
+                    Text(stringResource(R.string.reader_language_for_translation, bookDirection.shortBadge), style = MaterialTheme.typography.bodyMedium)
                     OutlinedButton(onClick = onToggleBookLanguage) {
-                        Text(if (bookSourceLang == SourceLanguage.FRENCH) "تبديل للإنجليزية" else "تبديل للفرنسية")
+                        Text(if (bookSourceLang == SourceLanguage.FRENCH) stringResource(R.string.reader_switch_to_english) else stringResource(R.string.reader_switch_to_french))
                     }
                 }
                 Row(
@@ -570,12 +690,12 @@ fun ReaderScreen(
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Icon(Icons.Rounded.DarkMode, contentDescription = null)
                         Spacer(Modifier.width(8.dp))
-                        Text("الوضع الليلي للقراءة", style = MaterialTheme.typography.bodyLarge)
+                        Text(stringResource(R.string.reader_night_mode), style = MaterialTheme.typography.bodyLarge)
                     }
                     Switch(checked = settings.nightMode, onCheckedChange = onNightModeChange)
                 }
                 Column {
-                    Text("حجم الخط الأصلي: ${settings.readerFontSizeSp.toInt()} sp")
+                    Text(stringResource(R.string.reader_font_size_label, settings.readerFontSizeSp.toInt()))
                     Slider(
                         value = settings.readerFontSizeSp,
                         onValueChange = onFontSizeChange,
@@ -583,7 +703,7 @@ fun ReaderScreen(
                     )
                 }
                 Column {
-                    Text("تباعد الأسطر: ${"%.2f".format(settings.readerLineHeightMultiplier)}x")
+                    Text(stringResource(R.string.reader_line_spacing_label, "%.2f".format(settings.readerLineHeightMultiplier)))
                     Slider(
                         value = settings.readerLineHeightMultiplier,
                         onValueChange = onLineHeightChange,
@@ -684,7 +804,7 @@ private fun SentenceReaderItem(
             if (showTranslation) {
                 CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Ltr) {
                     Text(
-                        text = if (sourceLanguage == SourceLanguage.FRENCH) "Texte original" else "Original text",
+                        text = if (sourceLanguage == SourceLanguage.FRENCH) stringResource(R.string.reader_original_text_french) else stringResource(R.string.reader_original_text_english),
                         style = MaterialTheme.typography.labelSmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         modifier = Modifier.padding(bottom = 2.dp)
@@ -725,7 +845,7 @@ private fun SentenceReaderItem(
                 HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.3f))
                 Spacer(Modifier.height(6.dp))
                 Text(
-                    text = "الترجمة العربية",
+                    text = stringResource(R.string.reader_arabic_translation),
                     style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
@@ -735,7 +855,7 @@ private fun SentenceReaderItem(
                         Row(verticalAlignment = Alignment.CenterVertically) {
                             CircularProgressIndicator(modifier = Modifier.size(14.dp), strokeWidth = 2.dp)
                             Spacer(Modifier.width(8.dp))
-                            Text("جاري الترجمة محلياً...", style = MaterialTheme.typography.bodySmall)
+                            Text(stringResource(R.string.reader_translation_loading), style = MaterialTheme.typography.bodySmall)
                         }
                     }
                     !sentence.cachedArabicTranslation.isNullOrBlank() -> {
@@ -752,7 +872,7 @@ private fun SentenceReaderItem(
                     }
                     else -> {
                         Text(
-                            text = "اضغط على أيقونة الترجمة لإظهار المعنى بالعربية.",
+                            text = stringResource(R.string.reader_translation_tap_hint),
                             style = MaterialTheme.typography.labelSmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
@@ -774,7 +894,7 @@ private fun SentenceReaderItem(
                 ) {
                     Icon(
                         Icons.Rounded.VolumeUp,
-                        contentDescription = "تشغيل من هذه الجملة",
+                        contentDescription = stringResource(R.string.reader_play_from_sentence_content_description),
                         tint = if (isCurrent) MaterialTheme.colorScheme.secondary else MaterialTheme.colorScheme.onSurfaceVariant,
                         modifier = Modifier.size(18.dp)
                     )
@@ -789,7 +909,7 @@ private fun SentenceReaderItem(
                         } else {
                             Icons.Rounded.Translate
                         },
-                        contentDescription = if (showTranslation) "إخفاء أو تحديث الترجمة" else "ترجمة الجملة للعربية",
+                        contentDescription = if (showTranslation) stringResource(R.string.reader_hide_or_refresh_translation_content_description) else stringResource(R.string.reader_translate_sentence_content_description),
                         tint = MaterialTheme.colorScheme.primary,
                         modifier = Modifier.size(18.dp)
                     )
@@ -801,7 +921,7 @@ private fun SentenceReaderItem(
                     ) {
                         Icon(
                             Icons.Rounded.BookmarkAdd,
-                            contentDescription = "حفظ الجملة في القاموس",
+                            contentDescription = stringResource(R.string.reader_save_sentence_to_vocabulary_content_description),
                             tint = MaterialTheme.colorScheme.tertiary,
                             modifier = Modifier.size(18.dp)
                         )
@@ -858,12 +978,12 @@ private fun ReaderSearchPanel(
                 OutlinedTextField(
                     value = query,
                     onValueChange = onQueryChange,
-                    placeholder = { Text("ابحث عن كلمة أو جملة داخل النص...") },
+                    placeholder = { Text(stringResource(R.string.reader_search_placeholder)) },
                     singleLine = true,
                     modifier = Modifier.weight(1f)
                 )
                 IconButton(onClick = onClose) {
-                    Icon(Icons.Rounded.Close, contentDescription = "إغلاق البحث")
+                    Icon(Icons.Rounded.Close, contentDescription = stringResource(R.string.reader_close_search_content_description))
                 }
             }
             if (results.isNotEmpty()) {
@@ -884,7 +1004,7 @@ private fun ReaderSearchPanel(
                                 )
                             }
                             Text(
-                                text = "الفصل ${s.chapterIndex + 1} • جملة ${s.sentenceIndex + 1}",
+                                text = stringResource(R.string.reader_search_result_position, s.chapterIndex + 1, s.sentenceIndex + 1),
                                 style = MaterialTheme.typography.labelSmall,
                                 color = MaterialTheme.colorScheme.primary
                             )
@@ -931,10 +1051,10 @@ private fun ReaderAudioBar(
                 Column(modifier = Modifier.weight(1f)) {
                     Text(
                         text = when {
-                            isBuffering -> "جارٍ تجهيز الصوت"
-                            isPlaying -> "يُقرأ الآن"
-                            isPlayingThisChapter && playbackState.status == PlaybackStatus.PAUSED -> "متوقف مؤقتاً"
-                            else -> "مشغّل القراءة"
+                            isBuffering -> stringResource(R.string.reader_audio_preparing)
+                            isPlaying -> stringResource(R.string.reader_audio_now_reading)
+                            isPlayingThisChapter && playbackState.status == PlaybackStatus.PAUSED -> stringResource(R.string.reader_audio_paused)
+                            else -> stringResource(R.string.reader_audio_player)
                         },
                         style = MaterialTheme.typography.labelMedium,
                         color = MaterialTheme.colorScheme.primary
@@ -942,7 +1062,7 @@ private fun ReaderAudioBar(
                     Text(
                         text = playbackState.currentSentenceText.takeIf {
                             isPlayingThisChapter && it.isNotBlank()
-                        } ?: if (bookSourceLanguage == SourceLanguage.FRENCH) "جاهز للاستماع" else "Ready to listen",
+                        } ?: if (bookSourceLanguage == SourceLanguage.FRENCH) stringResource(R.string.reader_ready_to_listen_french) else stringResource(R.string.reader_ready_to_listen_english),
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         maxLines = 1,
@@ -956,7 +1076,7 @@ private fun ReaderAudioBar(
                             .takeIf { it >= 0 } ?: 1
                         onSpeedSelected(speeds[(current + 1) % speeds.size])
                     },
-                    label = { Text("${currentSpeed}×") },
+                    label = { Text(stringResource(R.string.reader_speed_multiplier, currentSpeed.toString())) },
                     modifier = Modifier.testTag("reader_speed_chip")
                 )
             }
@@ -970,7 +1090,7 @@ private fun ReaderAudioBar(
                     enabled = isPlayingThisChapter,
                     modifier = Modifier.minimumInteractiveComponentSize().testTag("reader_previous_button")
                 ) {
-                    Icon(Icons.Rounded.SkipPrevious, contentDescription = "الجملة السابقة",
+                    Icon(Icons.Rounded.SkipPrevious, contentDescription = stringResource(R.string.reader_previous_sentence_content_description),
                         tint = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
                 FilledTonalButton(
@@ -980,23 +1100,23 @@ private fun ReaderAudioBar(
                 ) {
                     when {
                         isBuffering -> CircularProgressIndicator(modifier = Modifier.size(19.dp), strokeWidth = 2.dp)
-                        isPlaying -> Icon(Icons.Rounded.Pause, contentDescription = "إيقاف مؤقت")
-                        else -> Icon(Icons.Rounded.PlayArrow, contentDescription = "تشغيل")
+                        isPlaying -> Icon(Icons.Rounded.Pause, contentDescription = stringResource(R.string.reader_pause_label))
+                        else -> Icon(Icons.Rounded.PlayArrow, contentDescription = stringResource(R.string.reader_play_content_description))
                     }
                     Spacer(Modifier.width(8.dp))
-                    Text(if (isPlaying) "إيقاف مؤقت" else "استماع", style = MaterialTheme.typography.labelLarge)
+                    Text(if (isPlaying) stringResource(R.string.reader_pause_label) else stringResource(R.string.reader_listen_button), style = MaterialTheme.typography.labelLarge)
                 }
                 IconButton(
                     onClick = onNext,
                     enabled = isPlayingThisChapter,
                     modifier = Modifier.minimumInteractiveComponentSize().testTag("reader_next_button")
                 ) {
-                    Icon(Icons.Rounded.SkipNext, contentDescription = "الجملة التالية",
+                    Icon(Icons.Rounded.SkipNext, contentDescription = stringResource(R.string.reader_next_sentence_content_description),
                         tint = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
                 Spacer(Modifier.width(5.dp))
                 TextButton(onClick = onOpenFullPlayer, modifier = Modifier.testTag("reader_full_player_button")) {
-                    Text("المشغّل")
+                    Text(stringResource(R.string.reader_full_player_button))
                 }
             }
         }
@@ -1039,7 +1159,7 @@ private fun WordLookupModalSheet(
                 ) {
                     Icon(Icons.Rounded.VolumeUp, contentDescription = null)
                     Spacer(Modifier.width(6.dp))
-                    Text("نطق")
+                    Text(stringResource(R.string.reader_pronounce_button))
                 }
             }
 
@@ -1048,7 +1168,7 @@ private fun WordLookupModalSheet(
                 modifier = Modifier.fillMaxWidth()
             ) {
                 Column(modifier = Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                    Text("الترجمة العربية (${direction.shortBadge} دون اتصال):", style = MaterialTheme.typography.labelMedium)
+                    Text(stringResource(R.string.reader_offline_translation_label, direction.shortBadge), style = MaterialTheme.typography.labelMedium)
                     when {
                         sheet.isLoading -> {
                             CircularProgressIndicator(modifier = Modifier.size(20.dp), strokeWidth = 2.dp)
@@ -1064,7 +1184,7 @@ private fun WordLookupModalSheet(
                         }
                         else -> {
                             Text(
-                                text = sheet.error ?: "تعذر الترجمة.",
+                                text = sheet.error ?: stringResource(R.string.reader_translation_failed),
                                 style = MaterialTheme.typography.bodyMedium,
                                 color = MaterialTheme.colorScheme.error
                             )
@@ -1074,8 +1194,8 @@ private fun WordLookupModalSheet(
                                     enabled = packStatus != TranslationPackStatus.DOWNLOADING
                                 ) {
                                     Text(
-                                        if (packStatus == TranslationPackStatus.DOWNLOADING) "جاري التنزيل..."
-                                        else "تنزيل حزمة ${direction.shortBadge} (~30 MB)"
+                                        if (packStatus == TranslationPackStatus.DOWNLOADING) stringResource(R.string.reader_download_in_progress)
+                                        else stringResource(R.string.reader_download_translation_pack_with_size, direction.shortBadge)
                                     )
                                 }
                             }
@@ -1106,7 +1226,7 @@ private fun WordLookupModalSheet(
                         contentDescription = null
                     )
                     Spacer(Modifier.width(8.dp))
-                    Text(if (sheet.savedToVocab) "تم الحفظ في قاموس المفردات" else "حفظ في قاموس المفردات")
+                    Text(if (sheet.savedToVocab) stringResource(R.string.reader_saved_to_vocabulary) else stringResource(R.string.reader_save_to_vocabulary))
                 }
             }
 

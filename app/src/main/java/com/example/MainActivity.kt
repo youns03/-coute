@@ -4,6 +4,7 @@ import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
+import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
@@ -34,6 +35,9 @@ import androidx.compose.material3.windowsizeclass.calculateWindowSizeClass
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
@@ -41,6 +45,7 @@ import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.LayoutDirection
+import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.navigation.NavDestination.Companion.hasRoute
@@ -52,6 +57,9 @@ import androidx.navigation.compose.rememberNavController
 import androidx.navigation.toRoute
 import com.example.domain.BenchmarkCorpus
 import com.example.ui.navigation.AppRoute
+import com.example.ui.components.GlobalMiniPlayer
+import com.example.ui.components.shouldHideAppChrome
+import com.example.ui.components.shouldShowGlobalMiniPlayer
 import com.example.ui.screens.FileTranslatorScreen
 import com.example.ui.screens.LibraryScreen
 import com.example.ui.screens.ModelManagerScreen
@@ -86,6 +94,17 @@ private data class TopLevelNavItem(
     val route: AppRoute
 )
 
+private fun isNavItemSelected(route: AppRoute, destination: androidx.navigation.NavDestination?): Boolean =
+    when (route) {
+        is AppRoute.Library -> destination?.hasRoute<AppRoute.Library>() == true
+        is AppRoute.Reader -> destination?.hasRoute<AppRoute.Reader>() == true
+        is AppRoute.FileTranslator -> destination?.hasRoute<AppRoute.FileTranslator>() == true
+        is AppRoute.PlayerLab -> destination?.hasRoute<AppRoute.PlayerLab>() == true
+        is AppRoute.Models -> destination?.hasRoute<AppRoute.Models>() == true
+        is AppRoute.Vocabulary -> destination?.hasRoute<AppRoute.Vocabulary>() == true
+        is AppRoute.Settings -> destination?.hasRoute<AppRoute.Settings>() == true
+    }
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun EcouteAppRoot(isExpandedNav: Boolean) {
@@ -98,8 +117,22 @@ fun EcouteAppRoot(isExpandedNav: Boolean) {
 
     val settings by modelsVm.settings.collectAsStateWithLifecycle()
     val libraryState by libraryVm.libraryState.collectAsStateWithLifecycle()
+    val globalPlaybackState by playerVm.playbackState.collectAsStateWithLifecycle()
     val backStackEntry by navController.currentBackStackEntryAsState()
     val currentDest = backStackEntry?.destination
+    val isReaderDestination = currentDest?.hasRoute<AppRoute.Reader>() == true
+    var isReaderImmersive by remember { mutableStateOf(false) }
+
+    LaunchedEffect(isReaderDestination) {
+        if (!isReaderDestination) isReaderImmersive = false
+    }
+    val isFullPlayerDestination = currentDest?.hasRoute<AppRoute.PlayerLab>() == true
+    val showGlobalMiniPlayer = shouldShowGlobalMiniPlayer(
+        status = globalPlaybackState.status,
+        isReaderDestination = isReaderDestination,
+        isFullPlayerDestination = isFullPlayerDestination
+    )
+    val hideAppChrome = shouldHideAppChrome(isReaderDestination, isReaderImmersive)
 
     val defaultBookId = settings.activeBookId
         ?: libraryState.books.firstOrNull()?.id
@@ -139,7 +172,8 @@ fun EcouteAppRoot(isExpandedNav: Boolean) {
             Scaffold(
                 contentWindowInsets = WindowInsets.safeDrawing,
                 topBar = {
-                    TopAppBar(
+                    if (!hideAppChrome) {
+                        TopAppBar(
                         title = {
                             Text(
                                 text = currentTitle,
@@ -162,21 +196,26 @@ fun EcouteAppRoot(isExpandedNav: Boolean) {
                                 Icon(Icons.Rounded.Settings, contentDescription = "الإعدادات والتراخيص")
                             }
                         }
-                    )
+                        )
+                    }
                 },
                 bottomBar = {
-                    if (!isExpandedNav) {
-                        NavigationBar {
+                    if (!hideAppChrome) {
+                        Column {
+                        if (showGlobalMiniPlayer) {
+                            GlobalMiniPlayer(
+                                playbackState = globalPlaybackState,
+                                onTogglePlayPause = playerVm::togglePlayPause,
+                                onPrevious = playerVm::previousSentence,
+                                onNext = playerVm::nextSentence,
+                                onOpen = { navigateTopLevel(AppRoute.PlayerLab) },
+                                modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp)
+                            )
+                        }
+                        if (!isExpandedNav) {
+                            NavigationBar {
                             primaryTabs.forEach { tab ->
-                                val selected = when (tab.route) {
-                                    is AppRoute.Library -> currentDest?.hasRoute<AppRoute.Library>() == true
-                                    is AppRoute.Reader -> currentDest?.hasRoute<AppRoute.Reader>() == true
-                                    is AppRoute.FileTranslator -> currentDest?.hasRoute<AppRoute.FileTranslator>() == true
-                                    is AppRoute.PlayerLab -> currentDest?.hasRoute<AppRoute.PlayerLab>() == true
-                                    is AppRoute.Models -> currentDest?.hasRoute<AppRoute.Models>() == true
-                                    is AppRoute.Vocabulary -> currentDest?.hasRoute<AppRoute.Vocabulary>() == true
-                                    is AppRoute.Settings -> currentDest?.hasRoute<AppRoute.Settings>() == true
-                                }
+                                val selected = isNavItemSelected(tab.route, currentDest)
                                 NavigationBarItem(
                                     selected = selected,
                                     onClick = { navigateTopLevel(tab.route) },
@@ -185,7 +224,9 @@ fun EcouteAppRoot(isExpandedNav: Boolean) {
                                     modifier = Modifier.testTag(tab.testTag)
                                 )
                             }
+                            }
                         }
+                    }
                     }
                 }
             ) { innerPadding ->
@@ -197,15 +238,7 @@ fun EcouteAppRoot(isExpandedNav: Boolean) {
                     if (isExpandedNav) {
                         NavigationRail {
                             primaryTabs.forEach { tab ->
-                                val selected = when (tab.route) {
-                                    is AppRoute.Library -> currentDest?.hasRoute<AppRoute.Library>() == true
-                                    is AppRoute.Reader -> currentDest?.hasRoute<AppRoute.Reader>() == true
-                                    is AppRoute.FileTranslator -> currentDest?.hasRoute<AppRoute.FileTranslator>() == true
-                                    is AppRoute.PlayerLab -> currentDest?.hasRoute<AppRoute.PlayerLab>() == true
-                                    is AppRoute.Models -> currentDest?.hasRoute<AppRoute.Models>() == true
-                                    is AppRoute.Vocabulary -> currentDest?.hasRoute<AppRoute.Vocabulary>() == true
-                                    is AppRoute.Settings -> currentDest?.hasRoute<AppRoute.Settings>() == true
-                                }
+                                val selected = isNavItemSelected(tab.route, currentDest)
                                 NavigationRailItem(
                                     selected = selected,
                                     onClick = { navigateTopLevel(tab.route) },
@@ -215,13 +248,13 @@ fun EcouteAppRoot(isExpandedNav: Boolean) {
                                 )
                             }
                             NavigationRailItem(
-                                selected = currentDest?.hasRoute<AppRoute.Vocabulary>() == true,
+                                selected = isNavItemSelected(AppRoute.Vocabulary, currentDest),
                                 onClick = { navigateTopLevel(AppRoute.Vocabulary) },
                                 icon = { Icon(Icons.Rounded.Bookmarks, contentDescription = "المفردات") },
                                 label = { Text("المفردات") }
                             )
                             NavigationRailItem(
-                                selected = currentDest?.hasRoute<AppRoute.Settings>() == true,
+                                selected = isNavItemSelected(AppRoute.Settings, currentDest),
                                 onClick = { navigateTopLevel(AppRoute.Settings) },
                                 icon = { Icon(Icons.Rounded.Settings, contentDescription = "الإعدادات") },
                                 label = { Text("الإعدادات") }
@@ -292,7 +325,9 @@ fun EcouteAppRoot(isExpandedNav: Boolean) {
                                 onNightModeChange = readerVm::setNightMode,
                                 onDownloadTranslationPack = readerVm::downloadActiveBookTranslationPack,
                                 onDismissTranslationError = readerVm::dismissTranslationError,
-                                onOpenFullPlayer = { navigateTopLevel(AppRoute.PlayerLab) }
+                                onOpenFullPlayer = { navigateTopLevel(AppRoute.PlayerLab) },
+                                isImmersive = isReaderImmersive,
+                                onToggleImmersive = { isReaderImmersive = !isReaderImmersive }
                             )
                         }
 
