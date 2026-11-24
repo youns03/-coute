@@ -55,6 +55,7 @@ import androidx.navigation.toRoute
 import com.example.domain.BenchmarkCorpus
 import com.example.ui.navigation.AppRoute
 import com.example.ui.components.GlobalMiniPlayer
+import com.example.ui.components.shouldShowGlobalMiniPlayer
 import com.example.ui.screens.FileTranslatorScreen
 import com.example.ui.screens.LibraryScreen
 import com.example.ui.screens.ModelManagerScreen
@@ -106,9 +107,11 @@ fun EcouteAppRoot(isExpandedNav: Boolean) {
     val currentDest = backStackEntry?.destination
     val isReaderDestination = currentDest?.hasRoute<AppRoute.Reader>() == true
     val isFullPlayerDestination = currentDest?.hasRoute<AppRoute.PlayerLab>() == true
-    val showGlobalMiniPlayer = !isReaderDestination && !isFullPlayerDestination &&
-        globalPlaybackState.status != com.example.audio.PlaybackStatus.IDLE &&
-        globalPlaybackState.status != com.example.audio.PlaybackStatus.ERROR
+    val showGlobalMiniPlayer = shouldShowGlobalMiniPlayer(
+        status = globalPlaybackState.status,
+        isReaderDestination = isReaderDestination,
+        isFullPlayerDestination = isFullPlayerDestination
+    )
 
     val defaultBookId = settings.activeBookId
         ?: libraryState.books.firstOrNull()?.id
