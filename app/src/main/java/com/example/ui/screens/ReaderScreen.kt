@@ -343,10 +343,11 @@ fun ReaderScreen(
                 ) {
                     TextButton(
                         onClick = {
-                            isAutoFollowEnabled = true
-                            // Scroll only; the playback controller and audio position are untouched.
                             val target = activeParagraphItemIndex
-                            if (target >= 0) {
+                            isAutoFollowEnabled = true
+                            // While paused, follow mode alone cannot scroll, so perform a view-only jump.
+                            // While playing, the keyed effect performs the single automatic scroll.
+                            if (target >= 0 && playbackState.status != PlaybackStatus.PLAYING) {
                                 coroutineScope.launch {
                                     listState.animateScrollToItem(target)
                                 }
