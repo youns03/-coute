@@ -322,74 +322,122 @@ fun ReaderScreen(
                         settings.showInlineTranslations || it.id in state.revealedSentenceIds
                     }
                     val allParagraphCached = paragraphSentences.all { !it.cachedArabicTranslation.isNullOrBlank() }
+                    val showParagraphTranslation = settings.showInlineTranslations ||
+                        paragraphSentences.any { it.id in state.revealedSentenceIds }
+                    val currentSentence = paragraphSentences.firstOrNull { it.sentenceIndex == activeSentenceIdx }
 
-                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                        // Paragraph-level on-demand translation header
+                    Column(
+                        modifier = Modifier.fillMaxWidth().padding(bottom = 18.dp),
+                        verticalArrangement = Arrangement.spacedBy(10.dp)
+                    ) {
                         Row(
                             modifier = Modifier.fillMaxWidth(),
                             horizontalArrangement = Arrangement.SpaceBetween,
                             verticalAlignment = Alignment.CenterVertically
                         ) {
-                            Text(
-                                text = "فقرة ${paragraphIndex + 1}",
-                                style = MaterialTheme.typography.labelSmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
+                            Text("الفقرة ${paragraphIndex + 1}", style = MaterialTheme.typography.labelMedium,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant)
                             TextButton(
                                 onClick = { onTranslateOrToggleParagraph(paragraphIndex, paragraphSentences) },
                                 enabled = !isParagraphTranslating,
-                                modifier = Modifier.testTag("translate_paragraph_$paragraphIndex")
+                                modifier = Modifier.testTag("translate_paragraph_$"+"{paragraphIndex}")
                             ) {
                                 if (isParagraphTranslating) {
-                                    CircularProgressIndicator(modifier = Modifier.size(14.dp), strokeWidth = 2.dp)
-                                    Spacer(Modifier.width(6.dp))
-                                    Text("جاري ترجمة الفقرة...", style = MaterialTheme.typography.labelMedium)
+                                    CircularProgressIndicator(modifier = Modifier.size(15.dp), strokeWidth = 2.dp)
+                                    Spacer(Modifier.width(7.dp))
+                                    Text("تُترجم الفقرة...", style = MaterialTheme.typography.labelMedium)
                                 } else {
                                     Icon(
-                                        if (!settings.showInlineTranslations && allParagraphCached && allParagraphRevealed) {
-                                            Icons.Rounded.VisibilityOff
-                                        } else {
-                                            Icons.Rounded.Translate
-                                        },
-                                        contentDescription = null,
-                                        modifier = Modifier.size(16.dp)
+                                        if (!settings.showInlineTranslations && allParagraphCached && allParagraphRevealed)
+                                            Icons.Rounded.VisibilityOff else Icons.Rounded.Translate,
+                                        contentDescription = null, modifier = Modifier.size(17.dp)
                                     )
-                                    Spacer(Modifier.width(4.dp))
+                                    Spacer(Modifier.width(5.dp))
                                     Text(
-                                        if (!settings.showInlineTranslations && allParagraphCached && allParagraphRevealed) {
-                                            "إخفاء ترجمة الفقرة"
-                                        } else {
-                                            "ترجمة الفقرة"
-                                        },
+                                        if (!settings.showInlineTranslations && allParagraphCached && allParagraphRevealed)
+                                            "إخفاء الترجمة" else "ترجمة الفقرة",
                                         style = MaterialTheme.typography.labelMedium
                                     )
                                 }
                             }
                         }
 
-                        paragraphSentences.forEach { sentence ->
-                            val isCurrent = sentence.sentenceIndex == activeSentenceIdx
-                            val isTranslating = sentence.id in state.translatingSentenceIds
-                            val isTranslationShown = settings.showInlineTranslations || (sentence.id in state.revealedSentenceIds)
-
-                            SentenceReaderItem(
-                                sentence = sentence,
-                                sourceLanguage = bookSourceLang,
-                                isCurrent = isCurrent,
-                                activeWordStart = if (isCurrent) playbackState.activeWordStartChar else -1,
-                                activeWordEnd = if (isCurrent) playbackState.activeWordEndChar else -1,
-                                showTranslation = isTranslationShown,
-                                isTranslating = isTranslating,
-                                fontSizeSp = settings.readerFontSizeSp,
-                                lineHeightMultiplier = settings.readerLineHeightMultiplier,
-                                onPlaySentence = {
-                                    requestNotificationIfNeeded()
-                                    onPlayFromSentence(sentence)
+                        CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Ltr) {
+                            val annotated = remember(
+                                paragraphSentences, activeSentenceIdx,
+                                playbackState.activeWordStartChar, playbackState.activeWordEndChar
+                            ) {
+                                buildParagraphAnnotatedString(
+                                    paragraphSentences, activeSentenceIdx,
+                                    playbackState.activeWordStartChar, playbackState.activeWordEndChar
+                                )
+                            }
+                            ClickableText(
+                                text = annotated,
+                                style = TextStyle(
+                                    fontFamily = FrenchSerifFamily,
+                                    fontSize = settings.readerFontSizeSp.sp,
+                                    lineHeight = (settings.readerFontSizeSp * settings.readerLineHeightMultiplier).sp,
+                                    color = MaterialTheme.colorScheme.onSurface
+                                ),
+                                onClick = { offset ->
+                                    val word = annotated.getStringAnnotations("WORD", offset, offset).firstOrNull()
+                                    val sentenceTag = annotated.getStringAnnotations("SENTENCE", offset, offset).firstOrNull()
+                                    val sentence = paragraphSentences.firstOrNull { it.id.toString() == sentenceTag?.item }
+                                    if (sentence != null) {
+                                        if (word != null) onWordTapped(word.item, sentence)
+                                        else {
+                                            requestNotificationIfNeeded()
+                                            onPlayFromSentence(sentence)
+                                        }
+                                    } else if (currentSentence != null) {
+                                        requestNotificationIfNeeded()
+                                        onPlayFromSentence(currentSentence)
+                                    }
                                 },
-                                onToggleTranslateSentence = { onTranslateOrToggleSentence(sentence) },
-                                onSaveSentenceVocab = { arabic -> onSaveSentenceVocab(sentence, arabic) },
-                                onWordTapped = { word -> onWordTapped(word, sentence) }
+                                modifier = Modifier.fillMaxWidth().testTag("reader_paragraph_text_$"+"{paragraphIndex}")
                             )
+                        }
+
+                        if (showParagraphTranslation) {
+                            Surface(
+                                color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.42f),
+                                shape = MaterialTheme.shapes.large,
+                                modifier = Modifier.fillMaxWidth()
+                            ) {
+                                Column(
+                                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 13.dp),
+                                    verticalArrangement = Arrangement.spacedBy(7.dp)
+                                ) {
+                                    Text("الترجمة العربية", style = MaterialTheme.typography.labelMedium,
+                                        color = MaterialTheme.colorScheme.primary)
+                                    when {
+                                        isParagraphTranslating -> {
+                                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                                CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp)
+                                                Spacer(Modifier.width(9.dp))
+                                                Text("تُترجم الفقرة محلياً...", style = MaterialTheme.typography.bodySmall,
+                                                    color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                            }
+                                        }
+                                        paragraphSentences.any { !it.cachedArabicTranslation.isNullOrBlank() } -> {
+                                            CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Rtl) {
+                                                Text(
+                                                    text = paragraphSentences.mapNotNull { it.cachedArabicTranslation?.takeIf(String::isNotBlank) }
+                                                        .joinToString(" "),
+                                                    style = MaterialTheme.typography.bodyLarge.copy(
+                                                        fontFamily = ArabicSansFamily, lineHeight = 29.sp
+                                                    ),
+                                                    color = MaterialTheme.colorScheme.onSurface
+                                                )
+                                            }
+                                        }
+                                        else -> Text("اضغط «ترجمة الفقرة» لعرض معناها بالعربية.",
+                                            style = MaterialTheme.typography.bodySmall,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                    }
+                                }
+                            }
                         }
                     }
                 }
@@ -521,6 +569,47 @@ fun ReaderScreen(
             onDownloadPack = onDownloadTranslationPack,
             onDismiss = onDismissWordSheet
         )
+    }
+}
+
+private fun buildParagraphAnnotatedString(
+    sentences: List<SentenceEntity>,
+    activeSentenceIndex: Int,
+    activeWordStart: Int,
+    activeWordEnd: Int
+) = buildAnnotatedString {
+    var paragraphOffset = 0
+    sentences.forEachIndexed { index, sentence ->
+        val sentenceStart = paragraphOffset
+        append(sentence.originalText)
+        val sentenceEnd = sentenceStart + sentence.originalText.length
+        if (sentenceEnd > sentenceStart) {
+            addStringAnnotation("SENTENCE", sentence.id.toString(), sentenceStart, sentenceEnd)
+        }
+        val wordRegex = Regex("""[\\p{L}\\p{N}]+(?:['’\\-][\\p{L}\\p{N}]+)*""")
+        wordRegex.findAll(sentence.originalText).forEach { match ->
+            addStringAnnotation("WORD", match.value, sentenceStart + match.range.first, sentenceStart + match.range.last + 1)
+        }
+        if (sentence.sentenceIndex == activeSentenceIndex &&
+            activeWordStart >= 0 && activeWordEnd > activeWordStart &&
+            activeWordEnd <= sentence.originalText.length
+        ) {
+            addStyle(
+                SpanStyle(
+                    background = androidx.compose.ui.graphics.Color(0x5549A985),
+                    color = androidx.compose.ui.graphics.Color(0xFF176B50),
+                    fontWeight = FontWeight.Bold,
+                    textDecoration = TextDecoration.Underline
+                ),
+                start = sentenceStart + activeWordStart,
+                end = sentenceStart + activeWordEnd
+            )
+        }
+        paragraphOffset = sentenceEnd
+        if (index < sentences.lastIndex) {
+            append(" ")
+            paragraphOffset++
+        }
     }
 }
 
