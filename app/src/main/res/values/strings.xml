@@ -3,7 +3,6 @@
 
     <string name="reader_chapters_title">فصول الكتاب</string>
     <string name="reader_choose_book">اختر كتاباً من المكتبة</string>
-    <string name="reader_chapter_selector_content_description">فصول الكتاب</string>
     <string name="reader_search_content_description">بحث داخل الكتاب</string>
     <string name="reader_toggle_translations_content_description">إظهار أو إخفاء جميع الترجمات</string>
     <string name="reader_appearance_content_description">تخصيص الخط والمظهر</string>
