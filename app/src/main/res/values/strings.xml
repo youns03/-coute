@@ -72,4 +72,5 @@
     <string name="mini_player_next">الجملة التالية</string>
     <string name="mini_player_pause">إيقاف مؤقت</string>
     <string name="mini_player_play">متابعة التشغيل</string>
+    <string name="mini_player_open">فتح المشغّل الكامل</string>
 </resources>
