@@ -35,6 +35,9 @@ import androidx.compose.material3.windowsizeclass.calculateWindowSizeClass
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
@@ -117,12 +120,18 @@ fun EcouteAppRoot(isExpandedNav: Boolean) {
     val backStackEntry by navController.currentBackStackEntryAsState()
     val currentDest = backStackEntry?.destination
     val isReaderDestination = currentDest?.hasRoute<AppRoute.Reader>() == true
+    var isReaderImmersive by remember { mutableStateOf(false) }
+
+    LaunchedEffect(isReaderDestination) {
+        if (!isReaderDestination) isReaderImmersive = false
+    }
     val isFullPlayerDestination = currentDest?.hasRoute<AppRoute.PlayerLab>() == true
     val showGlobalMiniPlayer = shouldShowGlobalMiniPlayer(
         status = globalPlaybackState.status,
         isReaderDestination = isReaderDestination,
         isFullPlayerDestination = isFullPlayerDestination
     )
+    val hideAppChrome = isReaderDestination && isReaderImmersive
 
     val defaultBookId = settings.activeBookId
         ?: libraryState.books.firstOrNull()?.id
@@ -162,7 +171,8 @@ fun EcouteAppRoot(isExpandedNav: Boolean) {
             Scaffold(
                 contentWindowInsets = WindowInsets.safeDrawing,
                 topBar = {
-                    TopAppBar(
+                    if (!hideAppChrome) {
+                        TopAppBar(
                         title = {
                             Text(
                                 text = currentTitle,
@@ -185,10 +195,12 @@ fun EcouteAppRoot(isExpandedNav: Boolean) {
                                 Icon(Icons.Rounded.Settings, contentDescription = "الإعدادات والتراخيص")
                             }
                         }
-                    )
+                        )
+                    }
                 },
                 bottomBar = {
-                    Column {
+                    if (!hideAppChrome) {
+                        Column {
                         if (showGlobalMiniPlayer) {
                             GlobalMiniPlayer(
                                 playbackState = globalPlaybackState,
@@ -213,6 +225,7 @@ fun EcouteAppRoot(isExpandedNav: Boolean) {
                             }
                             }
                         }
+                    }
                     }
                 }
             ) { innerPadding ->
@@ -311,7 +324,9 @@ fun EcouteAppRoot(isExpandedNav: Boolean) {
                                 onNightModeChange = readerVm::setNightMode,
                                 onDownloadTranslationPack = readerVm::downloadActiveBookTranslationPack,
                                 onDismissTranslationError = readerVm::dismissTranslationError,
-                                onOpenFullPlayer = { navigateTopLevel(AppRoute.PlayerLab) }
+                                onOpenFullPlayer = { navigateTopLevel(AppRoute.PlayerLab) },
+                                isImmersive = isReaderImmersive,
+                                onToggleImmersive = { isReaderImmersive = !isReaderImmersive }
                             )
                         }
 
