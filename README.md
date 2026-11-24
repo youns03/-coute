@@ -1,25 +1,78 @@
-# Écoute — قراءة الكتب الفرنسية والاستماع العصبي والترجمة المحلية دون إنترنت
+<div align="center">
 
-تطبيق Android أصلي (Kotlin + Jetpack Compose + Material 3) لتعلّم اللغة الفرنسية (ودعم قراءة وترجمة الإنجليزية) للمتحدثين باللغة العربية، مع تشغيل نماذج النطق العصبي والترجمة على الجهاز بالكامل دون الحاجة إلى الإنترنت بعد تنزيل الحزم.
+<img src=".github/assets/ecoute-banner.svg" alt="Écoute — Read, listen, understand" width="100%"/>
 
-## المتطلبات وإعادة البناء من نسخة نظيفة (Clean Clone)
+[![Android CI](https://github.com/youns03/-coute/actions/workflows/android-ci.yml/badge.svg?branch=main)](https://github.com/youns03/-coute/actions/workflows/android-ci.yml)
+[![Latest Release](https://img.shields.io/github/v/release/youns03/-coute?display_name=tag&color=2c9c86)](https://github.com/youns03/-coute/releases/latest)
+[![Platform](https://img.shields.io/badge/platform-Android-3DDC84?logo=android&logoColor=white)](https://www.android.com/)
 
-### 1. Gradle Wrapper وبيئة البناء
-- يحتوي المستودع على Gradle Wrapper كامل (`gradlew` و`gradlew.bat` و`gradle/wrapper/gradle-wrapper.jar`) لإصدار **Gradle 9.3.1**.
-- يتطلب البناء **JDK 17+** و**Android SDK (compileSdk 36, minSdk 24, targetSdk 36)**.
+**A focused Android reading and listening companion for language learners.**
 
-### 2. اعتماد Sherpa-ONNX (`app/libs/sherpa-onnx-2.0.2.aar`)
-- يضيف ملف `app/build.gradle.kts` مهمة `ensureSherpaAar` مرتبطة بمهام ما قبل البناء (`preBuild` / `preDebugBuild` / `preReleaseBuild`).
-- عند غياب الملف `app/libs/sherpa-onnx-2.0.2.aar` في نسخة GitHub نظيفة، يقوم Gradle تلقائياً بتنزيله من الإصدار الرسمي والتحقق من بصمة `SHA-256`:
-  - المصدر: `https://github.com/k2-fsa/sherpa-onnx/releases/download/v2.0.2/sherpa-onnx-2.0.2.aar`
-  - الحجم: `52,321,252` بايت
-  - البصمة (`SHA-256`): `6420cfb86c2ef8462dadd77b2202b7430487bdfb2bc715e9ce2864871209a80e`
-- إذا كان الملف موجوداً محلياً على القرص، يتجاوز Gradle التنزيل فوراً دون اتصال شبكي.
+قارئ للكتب، استماع بالنطق العصبي، وترجمة محلية مصممة لمساعدة متعلمي الفرنسية والإنجليزية الناطقين بالعربية.
 
-### 3. إعداد التوقيع (Debug وRelease) خارج المستودع
-ملف `debug.keystore` مستثنى عمداً من Git لأسباب أمنية. قبل تشغيل البناء المحلي لأول مرة خارج بيئة AI Studio، أنشئ `debug.keystore` في جذر المشروع بالأمر التالي:
+[Latest APK](https://github.com/youns03/-coute/releases/latest) · [Releases](https://github.com/youns03/-coute/releases) · [Report a bug](https://github.com/youns03/-coute/issues)
 
-```bash
+</div>
+
+---
+
+## About Écoute
+
+Écoute brings reading, synchronized listening, and translation into one native Android app. Its interface is built around the original text: readable paragraphs first, with Arabic translation directly below each paragraph when requested.
+
+The app is designed for **French and English learning with Arabic support**. Speech and translation models are managed separately from the app and can be downloaded for local use; model files are not bundled into the APK.
+
+## Highlights
+
+- **A comfortable reader:** original text presented as natural paragraphs, with paragraph-level Arabic translation.
+- **Listen while reading:** sentence-aware playback highlighting and automatic scroll-follow, with manual-scroll control and a return-to-listening action.
+- **Neural speech:** local speech engines including Kokoro and Piper through Sherpa-ONNX.
+- **Offline translation:** on-device translation packs can be downloaded and used locally where supported.
+- **A global mini-player:** playback controls remain accessible outside the reader.
+- **Immersive reading:** hide app-level navigation chrome while keeping reader controls available.
+- **A personal library:** book progress, continue-reading actions, and vocabulary saving.
+- **Background file translation:** a separate workflow for document translation and result export.
+
+> Offline use depends on downloading the required language/model packs first. Some setup, downloads, and integrations require an internet connection.
+
+## Download
+
+Get the newest published build from **[GitHub Releases](https://github.com/youns03/-coute/releases/latest)**.
+
+| Build | Intended use |
+|---|---|
+| ARM64 APK | Recommended for most modern Android phones |
+| Universal APK | Larger fallback build for other supported ABIs |
+
+Always install updates from the same release signing identity. Android will reject an update if its signing certificate differs from the installed copy.
+
+## Technology
+
+- Kotlin and Jetpack Compose
+- Material 3
+- AndroidX Navigation, Lifecycle, Room, DataStore, and WorkManager
+- Media3 playback
+- Sherpa-ONNX for local speech pipelines
+- Kokoro and Piper speech models
+- ML Kit on-device translation
+- Gradle and GitHub Actions
+
+## Build from source
+
+### Requirements
+
+- JDK 17 or newer
+- Android SDK platform/build tools 36
+- Android Gradle Plugin and Gradle versions pinned in the project
+- Android minSdk 24, targetSdk 36
+
+### Local debug build
+
+The debug signing configuration expects a local debug.keystore in the repository root. It is intentionally excluded from Git.
+
+Create a standard Android debug keystore if your environment does not already have one:
+
+~~~bash
 keytool -genkeypair -v \
   -keystore debug.keystore \
   -storepass android \
@@ -29,64 +82,52 @@ keytool -genkeypair -v \
   -keysize 2048 \
   -validity 10000 \
   -dname "CN=Android Debug,O=Android,C=US"
-```
+~~~
 
-أما لبناء Release محلياً، فعيّن متغيرات البيئة `ANDROID_KEYSTORE_PATH` و`ANDROID_KEYSTORE_PASSWORD` و`ANDROID_KEY_ALIAS` و`ANDROID_KEY_PASSWORD`. لا توجد قيم افتراضية للمفتاح أو كلمات مروره؛ يجب توفيرها خارج المستودع.
+Then run:
 
-### 4. إصدار GitHub Release
-
-الـworkflow `.github/workflows/android-release.yml` يعمل عند دفع tag يبدأ بـ`v`، ويتحقق من تنسيق SemVer مثل `v1.0.0`، ثم يبني APK موقّعة ويرفقها بـGitHub Release مع ملاحظات إصدار تلقائية. يأخذ `versionName` من الـtag بعد حذف `v`، ويضبط `versionCode` إلى `100000 + GITHUB_RUN_NUMBER`، لذلك يبدأ فوق `versionCode` الحالي (1) ويزداد مع كل تشغيل إصدار جديد.
-
-من صفحة المستودع افتح **Settings → Secrets and variables → Actions** وأضف هذه الأسرار الأربعة:
-
-- `ANDROID_KEYSTORE_BASE64`: محتوى ملف keystore بعد ترميزه إلى Base64.
-- `ANDROID_KEYSTORE_PASSWORD`: كلمة مرور ملف keystore.
-- `ANDROID_KEY_ALIAS`: اسم المفتاح/alias داخل keystore.
-- `ANDROID_KEY_PASSWORD`: كلمة مرور المفتاح.
-
-يُنشأ `ANDROID_KEYSTORE_PATH` مؤقتاً بواسطة الـworkflow على runner، ولا يلزم إضافته كـSecret. لإنشاء مفتاح Release جديد باستخدام JDK، شغّل الأمر التالي؛ سيطلب `keytool` كلمات المرور تفاعلياً. استخدم alias `ecoute-upload` أو غيّره، مع إدخال القيمة المطابقة في `ANDROID_KEY_ALIAS`:
-
-```bash
-keytool -genkeypair -v \
-  -keystore ecoute-release.jks \
-  -storetype JKS \
-  -alias ecoute-upload \
-  -keyalg RSA -keysize 2048 -validity 10000
-```
-
-حوّل الملف إلى Base64 في جذر المشروع ثم انسخ محتواه إلى السر `ANDROID_KEYSTORE_BASE64`:
-
-```bash
-base64 -w 0 ecoute-release.jks > ecoute-release.base64
-```
-
-على macOS استخدم `base64 < ecoute-release.jks | tr -d '\n' > ecoute-release.base64`، وفي PowerShell استخدم `[Convert]::ToBase64String([IO.File]::ReadAllBytes("ecoute-release.jks")) | Set-Content -NoNewline ecoute-release.base64`. ملفا keystore وBase64 مستثنيان من Git؛ لا ترفعهما للمستودع.
-
-بعد حفظ الأسرار والتأكد من وصول تغييرات الـworkflow إلى `main`، ادفع tag الإصدار هكذا:
-
-```bash
-git switch main
-git pull --ff-only origin main
-git tag -a v1.0.0 -m "Release v1.0.0"
-git push origin v1.0.0
-```
-
-**مهم لاستبدال نسخة مثبتة:** يجب أن تكون كل تحديثات Android موقعة بالمفتاح الخاص نفسه. ملف APK السابق الذي بُني محلياً بتوقيع Debug لن يقبل التحديث فوقه إذا أنشأت الآن مفتاح Release جديداً؛ Android سيرفض التوقيع المختلف. يلزم استخدام keystore الأصلي الذي وقّع النسخة المثبتة، وإلا فسيتطلب الانتقال إلى المفتاح الجديد إزالة النسخة القديمة أولاً، وقد يؤدي ذلك إلى فقد بيانات التطبيق.
-
-### 5. أوامر التحقق والبناء
-
-```bash
+~~~bash
 ./gradlew :app:testDebugUnitTest
-./gradlew :app:assembleDebug
 ./gradlew :app:lintDebug
-```
+./gradlew :app:assembleDebug
+~~~
 
-## التحقق في بيئة التطوير مقابل الجهاز الفعلي
-- **تم التحقق منها في بيئة البناء (JVM + Robolectric):**
-  - ترجمة Kotlin/Compose وتجميع الموارد بدون أخطاء.
-  - اختبارات الوحدة والمنطق في `app/src/test/java/com/example/` (تقطيع النصوص والترجمة، الاستيراد، Room v2 والترحيل، فحص المساحة، رفض ملفات SHA-256 التالفة وحذف الملف المؤقت).
-- **يجب اختبارها على جهاز Android فعلي (ARM64) لعدم توفر محاكي فعلي أو ADB داخل حاوية البناء:**
-  - جودة النطق الفعلي لـ Kokoro-82M (`ff_siwis`) وPiper (`siwis` / `tom`) على معالج الهاتف وقياس TTFA وRTF والذاكرة والحرارة.
-  - تنزيل النماذج الكبيرة واستئناف HTTP 206 على شبكات حقيقية ووضع الطيران بعد التثبيت.
-  - مسار التراجع من GPU إلى CPU على أجهزة OpenCL مختلفة.
-  - تنزيل حزم ML Kit On-Device Translation (`fr -> ar`, `en -> ar`) وتشغيل خدمة الترجمة في الخلفية والإشعارات.
+A clean clone automatically downloads the official Sherpa-ONNX AAR when it is missing and verifies its SHA-256 before compilation.
+
+## Automated checks and releases
+
+Every push to main and every pull request targeting main runs:
+
+- Font coverage and Arabic OpenType shaping checks
+- JVM unit tests
+- Android lint
+- Kotlin/Compose compilation
+
+A signed Android release is published by pushing a SemVer tag such as v1.0.4, or by a main-branch commit whose subject contains an explicit marker such as [release v1.0.4].
+
+The release workflow requires these GitHub Actions secrets:
+
+- ANDROID_KEYSTORE_BASE64
+- ANDROID_KEYSTORE_PASSWORD
+- ANDROID_KEY_ALIAS
+- ANDROID_KEY_PASSWORD
+
+**Keep the release keystore private and backed up.** Every update intended to install over an existing release must be signed with the same keystore.
+
+## Project status
+
+Écoute is under active development. CI verifies source-level checks and Android compilation; it does not replace testing on physical devices. In particular, speech quality, long-session memory use, model downloads, background execution, and Arabic text rendering should be checked on real Android hardware.
+
+There is currently no repository license declaration. Do not assume the source code is available for redistribution or reuse until a license is added.
+
+## Contributing and feedback
+
+Bug reports and focused improvement proposals are welcome through [GitHub Issues](https://github.com/youns03/-coute/issues). Please include the Android version, device architecture, steps to reproduce, and relevant logs—never upload private books, API keys, signing keys, or personal documents.
+
+---
+
+<div align="center">
+
+**Écoute** · Lire avec attention. Écouter avec intention. Comprendre durablement.
+
+</div>
