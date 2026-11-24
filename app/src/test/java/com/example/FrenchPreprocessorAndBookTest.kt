@@ -75,7 +75,23 @@ class FrenchPreprocessorAndBookTest {
         grouped.values.forEach { sentences ->
             assertTrue(sentences.joinToString(" ") { it.originalText }.length <= 430)
         }
+        val firstParagraphText = grouped.toSortedMap().values.first().joinToString(" ") { it.originalText }
+        assertTrue(
+            "When a long clause has commas, paragraph boundaries should prefer punctuation",
+            firstParagraphText.endsWith(",") || firstParagraphText.endsWith(";") || firstParagraphText.endsWith(":")
+        )
         assertEquals(source, processed.joinToString(" ") { it.originalText })
+    }
+
+    @Test
+    fun `explicit blank lines remain separate reader paragraphs`() {
+        val source = "First paragraph has one sentence.\\n\\nSecond paragraph has another sentence."
+        val processed = FrenchTextPreprocessor.splitAndPreprocess(source)
+        assertEquals(2, processed.map { it.paragraphIndex }.distinct().size)
+        assertEquals(
+            listOf("First paragraph has one sentence.", "Second paragraph has another sentence."),
+            processed.map { it.originalText }
+        )
     }
 
     @Test
