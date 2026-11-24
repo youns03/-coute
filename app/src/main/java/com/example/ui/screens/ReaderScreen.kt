@@ -431,6 +431,27 @@ fun ReaderScreen(
                                                     color = MaterialTheme.colorScheme.onSurface
                                                 )
                                             }
+                                            Row(
+                                                modifier = Modifier.fillMaxWidth(),
+                                                horizontalArrangement = Arrangement.End
+                                            ) {
+                                                paragraphSentences.forEach { sentence ->
+                                                    val translated = sentence.cachedArabicTranslation
+                                                    if (!translated.isNullOrBlank()) {
+                                                        IconButton(
+                                                            onClick = { onSaveSentenceVocab(sentence, translated) },
+                                                            modifier = Modifier.size(38.dp).testTag("save_sentence_${sentence.sentenceIndex}")
+                                                        ) {
+                                                            Icon(
+                                                                Icons.Rounded.BookmarkAdd,
+                                                                contentDescription = "حفظ ترجمة الجملة في القاموس",
+                                                                tint = MaterialTheme.colorScheme.tertiary,
+                                                                modifier = Modifier.size(18.dp)
+                                                            )
+                                                        }
+                                                    }
+                                                }
+                                            }
                                         }
                                         else -> Text("اضغط «ترجمة الفقرة» لعرض معناها بالعربية.",
                                             style = MaterialTheme.typography.bodySmall,
