@@ -350,7 +350,8 @@ fun ReaderScreen(
                                     Text("تُترجم الفقرة...", style = MaterialTheme.typography.labelMedium)
                                 } else {
                                     Icon(
-                                        if (!settings.showInlineTranslations && allParagraphCached && allParagraphRevealed)
+                                        if (!settings.showInlineTranslations &&
+                                            !cachedParagraphTranslation.isNullOrBlank() && allParagraphRevealed)
                                             Icons.Rounded.VisibilityOff else Icons.Rounded.Translate,
                                         contentDescription = null, modifier = Modifier.size(17.dp)
                                     )
