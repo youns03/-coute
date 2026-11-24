@@ -586,7 +586,7 @@ private fun buildParagraphAnnotatedString(
         if (sentenceEnd > sentenceStart) {
             addStringAnnotation("SENTENCE", sentence.id.toString(), sentenceStart, sentenceEnd)
         }
-        val wordRegex = Regex("""[\\p{L}\\p{N}]+(?:['’\\-][\\p{L}\\p{N}]+)*""")
+        val wordRegex = Regex("""[\p{L}\p{N}]+(?:['’\-][\p{L}\p{N}]+)*""")
         wordRegex.findAll(sentence.originalText).forEach { match ->
             addStringAnnotation("WORD", match.value, sentenceStart + match.range.first, sentenceStart + match.range.last + 1)
         }
@@ -597,7 +597,6 @@ private fun buildParagraphAnnotatedString(
             addStyle(
                 SpanStyle(
                     background = androidx.compose.ui.graphics.Color(0x5549A985),
-                    color = androidx.compose.ui.graphics.Color(0xFF176B50),
                     fontWeight = FontWeight.Bold,
                     textDecoration = TextDecoration.Underline
                 ),
@@ -874,91 +873,93 @@ private fun ReaderAudioBar(
     onOpenFullPlayer: () -> Unit
 ) {
     val speeds = listOf(0.75f, 1.0f, 1.25f, 1.5f)
+    val isBuffering = isPlayingThisChapter && playbackState.status == PlaybackStatus.BUFFERING
+    val isPlaying = isPlayingThisChapter && playbackState.status == PlaybackStatus.PLAYING
     Surface(
-        tonalElevation = 6.dp,
+        tonalElevation = 8.dp,
+        shadowElevation = 8.dp,
         color = MaterialTheme.colorScheme.surface,
-        modifier = Modifier.fillMaxWidth()
+        shape = MaterialTheme.shapes.extraLarge,
+        modifier = Modifier.fillMaxWidth().padding(horizontal = 10.dp, vertical = 7.dp)
     ) {
-        Column(modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp)) {
-            if (bookSourceLanguage == SourceLanguage.ENGLISH) {
-                Text(
-                    text = "كتاب إنجليزي: القراءة والترجمة (EN → AR) والنطق متاح عبر Kokoro-82M (نماذج Piper تدعم الفرنسية فقط).",
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.padding(bottom = 4.dp)
-                )
-            }
-            if (!playbackState.errorMessage.isNullOrBlank() &&
-                (isPlayingThisChapter || playbackState.bookId == null || playbackState.bookId == "_standalone_")
+        Column(
+            modifier = Modifier.padding(horizontal = 14.dp, vertical = 11.dp),
+            verticalArrangement = Arrangement.spacedBy(7.dp)
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween
             ) {
-                Text(
-                    text = playbackState.errorMessage,
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.error,
-                    maxLines = 2,
-                    overflow = TextOverflow.Ellipsis,
-                    modifier = Modifier.padding(bottom = 4.dp)
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        text = when {
+                            isBuffering -> "جارٍ تجهيز الصوت"
+                            isPlaying -> "يُقرأ الآن"
+                            isPlayingThisChapter && playbackState.status == PlaybackStatus.PAUSED -> "متوقف مؤقتاً"
+                            else -> "مشغّل القراءة"
+                        },
+                        style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.primary
+                    )
+                    Text(
+                        text = playbackState.currentSentenceText.ifBlank {
+                            if (bookSourceLanguage == SourceLanguage.FRENCH) "جاهز للاستماع" else "Ready to listen"
+                        },
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                }
+                FilterChip(
+                    selected = true,
+                    onClick = {
+                        val current = speeds.indexOfFirst { kotlin.math.abs(it - currentSpeed) < 0.01f }
+                            .takeIf { it >= 0 } ?: 1
+                        onSpeedSelected(speeds[(current + 1) % speeds.size])
+                    },
+                    label = { Text("${currentSpeed}×") },
+                    modifier = Modifier.testTag("reader_speed_chip")
                 )
             }
             Row(
                 modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.Center
             ) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    IconButton(
-                        onClick = onPrev,
-                        enabled = isPlayingThisChapter,
-                        modifier = Modifier.minimumInteractiveComponentSize()
-                    ) {
-                        Icon(Icons.Rounded.SkipPrevious, contentDescription = "الجملة السابقة")
-                    }
-                    FilledTonalButton(
-                        onClick = onTogglePlay,
-                        modifier = Modifier
-                            .minimumInteractiveComponentSize()
-                            .testTag("reader_play_pause_button")
-                    ) {
-                        when {
-                            isPlayingThisChapter && playbackState.status == PlaybackStatus.BUFFERING -> {
-                                CircularProgressIndicator(modifier = Modifier.size(18.dp), strokeWidth = 2.dp)
-                            }
-                            isPlayingThisChapter && playbackState.status == PlaybackStatus.PLAYING -> {
-                                Icon(Icons.Rounded.Pause, contentDescription = "إيقاف مؤقت")
-                            }
-                            else -> {
-                                Icon(Icons.Rounded.PlayArrow, contentDescription = "تشغيل")
-                            }
-                        }
-                        Spacer(Modifier.width(6.dp))
-                        Text(
-                            if (isPlayingThisChapter && playbackState.status == PlaybackStatus.PLAYING) "إيقاف"
-                            else "استماع"
-                        )
-                    }
-                    IconButton(
-                        onClick = onNext,
-                        enabled = isPlayingThisChapter,
-                        modifier = Modifier.minimumInteractiveComponentSize()
-                    ) {
-                        Icon(Icons.Rounded.SkipNext, contentDescription = "الجملة التالية")
-                    }
-                }
-
-                Row(
-                    horizontalArrangement = Arrangement.spacedBy(6.dp),
-                    verticalAlignment = Alignment.CenterVertically
+                IconButton(
+                    onClick = onPrev,
+                    enabled = isPlayingThisChapter,
+                    modifier = Modifier.minimumInteractiveComponentSize().testTag("reader_previous_button")
                 ) {
-                    val nextSpeed = speeds[(speeds.indexOfFirst { it == currentSpeed }.takeIf { it >= 0 } ?: 1).let { (it + 1) % speeds.size }]
-                    FilterChip(
-                        selected = true,
-                        onClick = { onSpeedSelected(nextSpeed) },
-                        label = { Text("${currentSpeed}x") },
-                        modifier = Modifier.testTag("reader_speed_chip")
-                    )
-                    OutlinedButton(onClick = onOpenFullPlayer) {
-                        Text("المشغّل")
+                    Icon(Icons.Rounded.SkipPrevious, contentDescription = "الجملة السابقة",
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+                FilledTonalButton(
+                    onClick = onTogglePlay,
+                    modifier = Modifier.minimumInteractiveComponentSize().testTag("reader_play_pause_button"),
+                    contentPadding = PaddingValues(horizontal = 25.dp, vertical = 12.dp)
+                ) {
+                    when {
+                        isBuffering -> CircularProgressIndicator(modifier = Modifier.size(19.dp), strokeWidth = 2.dp)
+                        isPlaying -> Icon(Icons.Rounded.Pause, contentDescription = "إيقاف مؤقت")
+                        else -> Icon(Icons.Rounded.PlayArrow, contentDescription = "تشغيل")
                     }
+                    Spacer(Modifier.width(8.dp))
+                    Text(if (isPlaying) "إيقاف مؤقت" else "استماع", style = MaterialTheme.typography.labelLarge)
+                }
+                IconButton(
+                    onClick = onNext,
+                    enabled = isPlayingThisChapter,
+                    modifier = Modifier.minimumInteractiveComponentSize().testTag("reader_next_button")
+                ) {
+                    Icon(Icons.Rounded.SkipNext, contentDescription = "الجملة التالية",
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+                Spacer(Modifier.width(5.dp))
+                TextButton(onClick = onOpenFullPlayer, modifier = Modifier.testTag("reader_full_player_button")) {
+                    Text("المشغّل")
                 }
             }
         }
