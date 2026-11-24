@@ -33,6 +33,8 @@ import androidx.compose.material.icons.rounded.Check
 import androidx.compose.material.icons.rounded.Close
 import androidx.compose.material.icons.rounded.DarkMode
 import androidx.compose.material.icons.rounded.FormatSize
+import androidx.compose.material.icons.rounded.Fullscreen
+import androidx.compose.material.icons.rounded.FullscreenExit
 import androidx.compose.material.icons.rounded.List
 import androidx.compose.material.icons.rounded.Pause
 import androidx.compose.material.icons.rounded.PlayArrow
@@ -138,6 +140,8 @@ fun ReaderScreen(
     onDownloadTranslationPack: () -> Unit,
     onDismissTranslationError: () -> Unit,
     onOpenFullPlayer: () -> Unit,
+    isImmersive: Boolean,
+    onToggleImmersive: () -> Unit,
     modifier: Modifier = Modifier
 ) {
     var showChaptersSheet by remember { mutableStateOf(false) }
@@ -298,6 +302,19 @@ fun ReaderScreen(
                                 .testTag("reader_appearance_button")
                         ) {
                             Icon(Icons.Rounded.FormatSize, contentDescription = stringResource(R.string.reader_appearance_content_description))
+                        }
+                        IconButton(
+                            onClick = onToggleImmersive,
+                            modifier = Modifier
+                                .minimumInteractiveComponentSize()
+                                .testTag("reader_immersive_button")
+                        ) {
+                            Icon(
+                                if (isImmersive) Icons.Rounded.FullscreenExit else Icons.Rounded.Fullscreen,
+                                contentDescription = stringResource(
+                                    if (isImmersive) R.string.reader_exit_immersive else R.string.reader_enter_immersive
+                                )
+                            )
                         }
                     }
                 }
