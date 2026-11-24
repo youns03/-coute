@@ -6,6 +6,7 @@ import android.os.Build
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.DragInteraction
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -94,6 +95,8 @@ import com.example.ui.theme.ArabicSansFamily
 import com.example.ui.theme.FrenchSerifFamily
 import com.example.ui.viewmodel.ReaderUiState
 import com.example.ui.viewmodel.WordLookupSheetState
+import kotlinx.coroutines.flow.collect
+import kotlinx.coroutines.launch
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -132,6 +135,7 @@ fun ReaderScreen(
     var showChaptersSheet by remember { mutableStateOf(false) }
     var showAppearanceSheet by remember { mutableStateOf(false) }
     val listState = rememberLazyListState()
+    val coroutineScope = androidx.compose.runtime.rememberCoroutineScope()
     val context = LocalContext.current
     val notificationPermissionLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestPermission()
@@ -160,13 +164,35 @@ fun ReaderScreen(
         state.sentences.groupBy { it.paragraphIndex }.toList().sortedBy { it.first }
     }
 
-    LaunchedEffect(activeSentenceIdx) {
-        if (activeSentenceIdx >= 0) {
-            val itemPos = groupedParagraphs.indexOfFirst { (_, sents) ->
-                sents.any { it.sentenceIndex == activeSentenceIdx }
+    var isAutoFollowEnabled by remember { mutableStateOf(true) }
+    val activeParagraphItemIndex = remember(groupedParagraphs, activeSentenceIdx) {
+        if (activeSentenceIdx < 0) -1 else groupedParagraphs.indexOfFirst { (_, sentences) ->
+            sentences.any { it.sentenceIndex == activeSentenceIdx }
+        }
+    }
+
+    // A real user drag suspends automatic following; it never pauses playback.
+    LaunchedEffect(listState) {
+        listState.interactionSource.interactions.collect { interaction ->
+            if (interaction is DragInteraction.Start) {
+                isAutoFollowEnabled = false
             }
-            if (itemPos >= 0) {
-                listState.animateScrollToItem(itemPos)
+        }
+    }
+
+    // A new book/chapter starts a fresh reading-follow session.
+    LaunchedEffect(activeBookId, state.activeChapterIndex) {
+        isAutoFollowEnabled = true
+    }
+
+    LaunchedEffect(activeSentenceIdx, playbackState.status, isAutoFollowEnabled, activeParagraphItemIndex) {
+        if (
+            shouldAutoFollowPlayback(playbackState.status, isAutoFollowEnabled) &&
+            activeParagraphItemIndex >= 0
+        ) {
+            val visibleItems = listState.layoutInfo.visibleItemsInfo.mapTo(mutableSetOf()) { it.index }
+            if (shouldScrollToParagraph(activeParagraphItemIndex, visibleItems)) {
+                listState.animateScrollToItem(activeParagraphItemIndex)
             }
         }
     }
@@ -303,6 +329,32 @@ fun ReaderScreen(
                         IconButton(onClick = onDismissTranslationError) {
                             Icon(Icons.Rounded.Close, contentDescription = "إغلاق")
                         }
+                    }
+                }
+            }
+
+            // Keep the return action outside the lazy content so it remains reachable.
+            if (!isAutoFollowEnabled && activeParagraphItemIndex >= 0) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 16.dp, vertical = 2.dp),
+                    horizontalArrangement = Arrangement.End
+                ) {
+                    TextButton(
+                        onClick = {
+                            isAutoFollowEnabled = true
+                            // Scroll only; the playback controller and audio position are untouched.
+                            val target = activeParagraphItemIndex
+                            if (target >= 0) {
+                                coroutineScope.launch {
+                                    listState.animateScrollToItem(target)
+                                }
+                            }
+                        },
+                        modifier = Modifier.testTag("reader_return_to_audio_button")
+                    ) {
+                        Text("العودة إلى موضع الاستماع")
                     }
                 }
             }
