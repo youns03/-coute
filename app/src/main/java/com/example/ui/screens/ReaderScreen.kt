@@ -339,7 +339,8 @@ fun ReaderScreen(
                                 color = MaterialTheme.colorScheme.onSurfaceVariant)
                             TextButton(
                                 onClick = { onTranslateOrToggleParagraph(paragraphIndex, paragraphSentences) },
-                                enabled = !isParagraphTranslating,
+                                enabled = !isParagraphTranslating &&
+                                    !(settings.showInlineTranslations && !cachedParagraphTranslation.isNullOrBlank()),
                                 modifier = Modifier.testTag("translate_paragraph_" + paragraphIndex)
                             ) {
                                 if (isParagraphTranslating) {
@@ -348,16 +349,19 @@ fun ReaderScreen(
                                     Text("تُترجم الفقرة...", style = MaterialTheme.typography.labelMedium)
                                 } else {
                                     Icon(
-                                        if (!settings.showInlineTranslations &&
-                                            !cachedParagraphTranslation.isNullOrBlank() && allParagraphRevealed)
-                                            Icons.Rounded.VisibilityOff else Icons.Rounded.Translate,
+                                        when {
+                                            cachedParagraphTranslation.isNullOrBlank() -> Icons.Rounded.Translate
+                                            settings.showInlineTranslations -> Icons.Rounded.CheckCircle
+                                            allParagraphRevealed -> Icons.Rounded.VisibilityOff
+                                            else -> Icons.Rounded.Translate
+                                        },
                                         contentDescription = null, modifier = Modifier.size(17.dp)
                                     )
                                     Spacer(Modifier.width(5.dp))
                                     Text(
                                         when {
-                                            !settings.showInlineTranslations &&
-                                                !cachedParagraphTranslation.isNullOrBlank() && allParagraphRevealed -> "إخفاء الترجمة"
+                                            !cachedParagraphTranslation.isNullOrBlank() && settings.showInlineTranslations -> "تمت الترجمة"
+                                            !cachedParagraphTranslation.isNullOrBlank() && allParagraphRevealed -> "إخفاء الترجمة"
                                             !cachedParagraphTranslation.isNullOrBlank() -> "عرض الترجمة"
                                             else -> "ترجمة الفقرة"
                                         },
