@@ -57,6 +57,7 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
     private val playbackController = app.playbackController
 
     private val _bookId = MutableStateFlow<String?>(null)
+    private var readerSessionGeneration = 0L
     private val _chapterIndex = MutableStateFlow(0)
     private val _searchQuery = MutableStateFlow("")
     private val _isSearchOpen = MutableStateFlow(false)
@@ -138,8 +139,10 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
 
     fun openBook(bookId: String) {
         if (_bookId.value == bookId) return
+        readerSessionGeneration++
         _bookId.value = bookId
         _revealedSentenceIds.value = emptySet()
+        _translatingParagraphIndices.value = emptySet()
         _paragraphTranslations.value = emptyMap()
         _translationError.value = null
         viewModelScope.launch {
@@ -154,8 +157,10 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
 
     fun selectChapter(chapterIndex: Int) {
         val bookId = _bookId.value ?: return
+        readerSessionGeneration++
         _chapterIndex.value = chapterIndex
         _revealedSentenceIds.value = emptySet()
+        _translatingParagraphIndices.value = emptySet()
         _paragraphTranslations.value = emptyMap()
         val pState = playbackController.state.value
         if (pState.bookId == bookId && pState.chapterIndex != chapterIndex) {
@@ -170,6 +175,8 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
         val book = readerState.value.book ?: return
         val current = SourceLanguage.fromCode(book.sourceLanguage)
         val next = if (current == SourceLanguage.FRENCH) SourceLanguage.ENGLISH else SourceLanguage.FRENCH
+        readerSessionGeneration++
+        _translatingParagraphIndices.value = emptySet()
         viewModelScope.launch {
             if (playbackController.state.value.bookId == book.id) {
                 playbackController.stop()
@@ -285,6 +292,7 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
 
         val sourceLang = SourceLanguage.fromCode(readerState.value.book?.sourceLanguage)
         val paragraphText = paragraphSentences.joinToString(" ") { it.originalText.trim() }
+        val requestGeneration = readerSessionGeneration
         viewModelScope.launch {
             _translationError.value = null
             _revealedSentenceIds.value = _revealedSentenceIds.value + sentenceIds
@@ -297,6 +305,9 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
                 originalText = paragraphText,
                 cachedTranslation = null
             )
+            // A chapter/book/language switch invalidates this request; never let an old result
+            // populate a different paragraph that happens to reuse the same paragraph index.
+            if (requestGeneration != readerSessionGeneration) return@launch
             _translatingParagraphIndices.value = _translatingParagraphIndices.value - paragraphIndex
             res.onSuccess { translated ->
                 if (translated.isNotBlank()) {
