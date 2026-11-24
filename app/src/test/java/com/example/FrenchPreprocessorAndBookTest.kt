@@ -85,7 +85,7 @@ class FrenchPreprocessorAndBookTest {
 
     @Test
     fun `explicit blank lines remain separate reader paragraphs`() {
-        val source = "First paragraph has one sentence.\\n\\nSecond paragraph has another sentence."
+        val source = "First paragraph has one sentence.\n\nSecond paragraph has another sentence."
         val processed = FrenchTextPreprocessor.splitAndPreprocess(source)
         assertEquals(2, processed.map { it.paragraphIndex }.distinct().size)
         assertEquals(
