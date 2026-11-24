@@ -321,7 +321,9 @@ fun ReaderScreen(
                     val allParagraphRevealed = paragraphSentences.all {
                         settings.showInlineTranslations || it.id in state.revealedSentenceIds
                     }
-                    val allParagraphCached = paragraphSentences.all { !it.cachedArabicTranslation.isNullOrBlank() }
+                    val cachedParagraphTranslation = state.paragraphTranslations[paragraphIndex]
+                    val allParagraphCached = !cachedParagraphTranslation.isNullOrBlank() ||
+                        paragraphSentences.all { !it.cachedArabicTranslation.isNullOrBlank() }
                     val showParagraphTranslation = settings.showInlineTranslations ||
                         paragraphSentences.any { it.id in state.revealedSentenceIds }
                     val currentSentence = paragraphSentences.firstOrNull { it.sentenceIndex == activeSentenceIdx }
@@ -420,11 +422,13 @@ fun ReaderScreen(
                                                     color = MaterialTheme.colorScheme.onSurfaceVariant)
                                             }
                                         }
-                                        paragraphSentences.any { !it.cachedArabicTranslation.isNullOrBlank() } -> {
+                                        !cachedParagraphTranslation.isNullOrBlank() ||
+                                            paragraphSentences.any { !it.cachedArabicTranslation.isNullOrBlank() } -> {
                                             CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Rtl) {
                                                 Text(
-                                                    text = paragraphSentences.mapNotNull { it.cachedArabicTranslation?.takeIf(String::isNotBlank) }
-                                                        .joinToString(" "),
+                                                    text = cachedParagraphTranslation?.takeIf(String::isNotBlank)
+                                                        ?: paragraphSentences.mapNotNull { it.cachedArabicTranslation?.takeIf(String::isNotBlank) }
+                                                            .joinToString(" "),
                                                     style = MaterialTheme.typography.bodyLarge.copy(
                                                         fontFamily = ArabicSansFamily, lineHeight = 29.sp
                                                     ),
