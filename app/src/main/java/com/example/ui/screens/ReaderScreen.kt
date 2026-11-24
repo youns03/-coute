@@ -322,8 +322,6 @@ fun ReaderScreen(
                         settings.showInlineTranslations || it.id in state.revealedSentenceIds
                     }
                     val cachedParagraphTranslation = state.paragraphTranslations[paragraphIndex]
-                    val allParagraphCached = !cachedParagraphTranslation.isNullOrBlank() ||
-                        paragraphSentences.all { !it.cachedArabicTranslation.isNullOrBlank() }
                     val showParagraphTranslation = settings.showInlineTranslations ||
                         paragraphSentences.any { it.id in state.revealedSentenceIds }
                     val currentSentence = paragraphSentences.firstOrNull { it.sentenceIndex == activeSentenceIdx }
