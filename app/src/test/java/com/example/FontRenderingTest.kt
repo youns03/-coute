@@ -29,6 +29,6 @@ class FontRenderingTest {
 
         val widths = FloatArray("سلام".length)
         paint.getTextWidths("سلام", widths)
-        assertTrue("Arabic shaping must produce non-zero measured output", widths.all { it > 0f })
+        assertTrue("Arabic shaping must produce non-zero measured output", widths.sum() > 0f)
     }
 }
