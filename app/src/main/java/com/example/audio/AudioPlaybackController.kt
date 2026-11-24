@@ -965,7 +965,7 @@ class AudioPlaybackController internal constructor(
         sampleRate: Int,
         timestamps: List<WordTimestampRange>
     ) {
-        if (timestamps.isEmpty() || !isSessionValid(sessionId)) return
+        if (!isSessionValid(sessionId)) return
         val head = synchronized(trackLock) {
             if (!isSessionValid(sessionId) ||
                 activeTrackSessionId != sessionId ||
@@ -977,15 +977,27 @@ class AudioPlaybackController internal constructor(
                 track.playbackHeadPosition
             }
         }
-        if (head < 0) return
-        val sec = head.toFloat() / sampleRate.toFloat()
-        val match = timestamps.firstOrNull { sec >= it.startSec && sec <= it.endSec }
-        if (match != null) {
-            updateStateIfSessionValid(sessionId) {
-                it.copy(
-                    activeWordStartChar = match.startChar,
-                    activeWordEndChar = match.endChar
-                )
+        if (head < 0 || sampleRate <= 0) return
+
+        val playbackSeconds = head.toFloat() / sampleRate.toFloat()
+        // Prefer the latest-starting interval if a synthesizer emits touching/overlapping ranges.
+        // Clear the old highlight during pauses between words instead of leaving a stale word lit.
+        val match = timestamps.asSequence()
+            .filter { it.startSec.isFinite() && it.endSec.isFinite() &&
+                it.endSec >= it.startSec && playbackSeconds >= it.startSec && playbackSeconds <= it.endSec }
+            .maxByOrNull { it.startSec }
+
+        updateStateIfSessionValid(sessionId) { current ->
+            val validMatch = match?.takeIf {
+                it.startChar >= 0 && it.endChar > it.startChar &&
+                    it.endChar <= current.currentSentenceText.length
+            }
+            val nextStart = validMatch?.startChar ?: -1
+            val nextEnd = validMatch?.endChar ?: -1
+            if (current.activeWordStartChar == nextStart && current.activeWordEndChar == nextEnd) {
+                current
+            } else {
+                current.copy(activeWordStartChar = nextStart, activeWordEndChar = nextEnd)
             }
         }
     }
