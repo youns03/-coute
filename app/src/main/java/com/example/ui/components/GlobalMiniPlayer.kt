@@ -48,6 +48,7 @@ fun GlobalMiniPlayer(
 
     val isPlaying = playbackState.status == PlaybackStatus.PLAYING
     val isBuffering = playbackState.status == PlaybackStatus.BUFFERING
+    val openDescription = stringResource(R.string.mini_player_open)
     val title = playbackState.bookTitle.ifBlank {
         playbackState.chapterTitle.ifBlank { stringResource(R.string.mini_player_title) }
     }
@@ -60,7 +61,7 @@ fun GlobalMiniPlayer(
             .fillMaxWidth()
             .semantics {
                 role = Role.Button
-                contentDescription = stringResource(R.string.mini_player_open)
+                contentDescription = openDescription
             }
             .clickable(onClick = onOpen),
         color = MaterialTheme.colorScheme.surfaceVariant,
