@@ -37,6 +37,43 @@ def codepoints(font_path: Path) -> set[int]:
     return {codepoint for table in font["cmap"].tables for codepoint in table.cmap}
 
 
+def arabic_shaping_features(font_path: Path) -> set[str]:
+    """Return GSUB features active for the Arabic script in this font."""
+    font = TTFont(font_path, lazy=False)
+    if "GSUB" not in font:
+        return set()
+
+    gsub = font["GSUB"].table
+    script_list = gsub.ScriptList
+    arabic_script = next(
+        (record.Script for record in script_list.ScriptRecord if record.ScriptTag == "arab"),
+        None,
+    )
+    if arabic_script is None:
+        return set()
+
+    feature_records = gsub.FeatureList.FeatureRecord
+    feature_indices: set[int] = set()
+    language_systems = []
+    if arabic_script.DefaultLangSys is not None:
+        language_systems.append(arabic_script.DefaultLangSys)
+    language_systems.extend(
+        record.LangSys for record in arabic_script.LangSysRecord
+    )
+
+    for language_system in language_systems:
+        required_index = language_system.ReqFeatureIndex
+        if required_index != 0xFFFF:
+            feature_indices.add(required_index)
+        feature_indices.update(language_system.FeatureIndex)
+
+    return {
+        feature_records[index].FeatureTag
+        for index in feature_indices
+        if 0 <= index < len(feature_records)
+    }
+
+
 def main() -> int:
     failures: list[str] = []
     for prefix, required in REQUIRED.items():
@@ -51,6 +88,21 @@ def main() -> int:
                 failures.append(f"{path.name}: missing {', '.join(missing)}")
             else:
                 print(f"OK {path.name}: {len(present)} code points")
+
+            if prefix == "readex_pro":
+                features = arabic_shaping_features(path)
+                required_features = {"init", "medi", "fina", "rlig"}
+                missing_features = sorted(required_features - features)
+                if missing_features:
+                    failures.append(
+                        f"{path.name}: missing Arabic GSUB shaping features "
+                        f"{', '.join(missing_features)}"
+                    )
+                else:
+                    print(
+                        f"OK {path.name}: Arabic GSUB shaping features "
+                        f"{', '.join(sorted(required_features))}"
+                    )
 
     if failures:
         print("Font coverage check failed:", file=sys.stderr)
