@@ -356,8 +356,12 @@ fun ReaderScreen(
                                     )
                                     Spacer(Modifier.width(5.dp))
                                     Text(
-                                        if (!settings.showInlineTranslations && allParagraphCached && allParagraphRevealed)
-                                            "إخفاء الترجمة" else "ترجمة الفقرة",
+                                        when {
+                                            !settings.showInlineTranslations &&
+                                                !cachedParagraphTranslation.isNullOrBlank() && allParagraphRevealed -> "إخفاء الترجمة"
+                                            !cachedParagraphTranslation.isNullOrBlank() -> "عرض الترجمة"
+                                            else -> "ترجمة الفقرة"
+                                        },
                                         style = MaterialTheme.typography.labelMedium
                                     )
                                 }
