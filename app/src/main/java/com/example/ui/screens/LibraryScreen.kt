@@ -311,9 +311,10 @@ private fun BookCard(
         Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
             Row(
                 modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
+                horizontalArrangement = Arrangement.spacedBy(12.dp),
                 verticalAlignment = Alignment.Top
             ) {
+                BookCover(book = book)
                 Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                     CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Ltr) {
                         Text(
@@ -370,20 +371,80 @@ private fun BookCard(
                 )
                 Row(
                     modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Text(
-                        text = "${book.totalChapters} فصول • ${book.totalSentences} جملة",
-                        style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                    Text(
-                        text = "${(progress * 100).toInt()}%",
-                        style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.primary
-                    )
+                    Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                        Text(
+                            text = "${book.totalChapters} فصول • ${book.totalSentences} جملة",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        Text(
+                            text = "${(progress * 100).toInt()}%",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.primary
+                        )
+                    }
+                    FilledTonalButton(
+                        onClick = onOpen,
+                        contentPadding = PaddingValues(horizontal = 12.dp, vertical = 7.dp),
+                        modifier = Modifier.testTag("continue_reading_${book.id}")
+                    ) {
+                        Icon(Icons.Rounded.AutoStories, contentDescription = null, modifier = Modifier.size(16.dp))
+                        Spacer(Modifier.width(6.dp))
+                        Text(
+                            if (book.currentSentenceIndex > 0) "متابعة القراءة" else "ابدأ القراءة",
+                            style = MaterialTheme.typography.labelMedium
+                        )
+                    }
                 }
             }
+        }
+    }
+}
+
+@Composable
+private fun BookCover(book: BookEntity) {
+    val coverBase = if (book.sourceLanguage.equals("fr", ignoreCase = true)) {
+        MaterialTheme.colorScheme.primaryContainer
+    } else {
+        MaterialTheme.colorScheme.tertiaryContainer
+    }
+    val coverInk = if (book.sourceLanguage.equals("fr", ignoreCase = true)) {
+        MaterialTheme.colorScheme.onPrimaryContainer
+    } else {
+        MaterialTheme.colorScheme.onTertiaryContainer
+    }
+
+    Box(
+        modifier = Modifier
+            .size(width = 76.dp, height = 104.dp)
+            .clip(RoundedCornerShape(12.dp))
+            .background(
+                Brush.linearGradient(
+                    colors = listOf(coverBase, coverBase.copy(alpha = 0.72f))
+                )
+            )
+            .padding(8.dp),
+        contentAlignment = Alignment.Center
+    ) {
+        Column(
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.spacedBy(4.dp)
+        ) {
+            Text(
+                text = book.title.trim().firstOrNull()?.uppercase() ?: "É",
+                style = MaterialTheme.typography.headlineLarge,
+                color = coverInk,
+                fontFamily = FrenchSerifFamily
+            )
+            Text(
+                text = "ÉCOUTE",
+                style = MaterialTheme.typography.labelSmall,
+                color = coverInk.copy(alpha = 0.78f),
+                maxLines = 1
+            )
         }
     }
 }
