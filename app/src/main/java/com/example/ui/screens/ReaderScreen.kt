@@ -940,7 +940,9 @@ private fun ReaderAudioBar(
                         color = MaterialTheme.colorScheme.primary
                     )
                     Text(
-                        text = playbackState.currentSentenceText.ifBlank {
+                        text = if (isPlayingThisChapter) playbackState.currentSentenceText.ifBlank {
+                            if (bookSourceLanguage == SourceLanguage.FRENCH) "جاهز للاستماع" else "Ready to listen"
+                        } else {
                             if (bookSourceLanguage == SourceLanguage.FRENCH) "جاهز للاستماع" else "Ready to listen"
                         },
                         style = MaterialTheme.typography.bodySmall,
