@@ -5,6 +5,7 @@ import android.net.Uri
 import androidx.test.core.app.ApplicationProvider
 import com.example.data.BookImporter
 import com.example.domain.FrenchTextPreprocessor
+import com.example.domain.SpeechTextProcessor
 import com.example.models.ModelCatalog
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
@@ -48,6 +49,28 @@ class FrenchPreprocessorAndBookTest {
         assertEquals("M. Bernard achète 3,75 kg de pommes.", sentences[0].originalText)
         assertEquals("Pourquoi êtes-vous ici ?", sentences[1].originalText)
         assertEquals("Aujourd'hui, il fait beau.", sentences[2].originalText)
+    }
+
+    @Test
+    fun `long unpunctuated source is split into readable translation paragraphs without losing words`() {
+        val source = (1..180).joinToString(" ") { "mot$it" }
+        val processed = FrenchTextPreprocessor.splitAndPreprocess(source)
+        val grouped = processed.groupBy { it.paragraphIndex }.toSortedMap()
+
+        assertTrue("A long run-on text should become multiple reader paragraphs", grouped.size > 1)
+        grouped.values.forEach { sentences ->
+            val paragraphText = sentences.joinToString(" ") { it.originalText }
+            assertTrue("Reader paragraph exceeded its readability bound", paragraphText.length <= 430)
+        }
+        assertEquals(source, processed.joinToString(" ") { it.originalText })
+    }
+
+    @Test
+    fun `English long paragraphs use the same smart reader segmentation`() {
+        val source = (1..170).joinToString(" ") { "word$it" }
+        val processed = SpeechTextProcessor.splitAndPreprocess(source, "en")
+        assertTrue(processed.map { it.paragraphIndex }.distinct().size > 1)
+        assertEquals(source, processed.joinToString(" ") { it.originalText })
     }
 
     @Test
