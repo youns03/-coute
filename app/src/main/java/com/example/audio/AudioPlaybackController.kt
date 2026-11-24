@@ -16,6 +16,7 @@ import com.example.data.SettingsRepository
 import com.example.data.UserSettings
 import com.example.domain.ModelSpec
 import com.example.domain.SpeechTextProcessor
+import com.example.domain.SpeechTimestampAligner
 import com.example.domain.SpeedControlMode
 import com.example.domain.WordTimestampRange
 import com.example.models.ModelStorageManager
@@ -574,6 +575,7 @@ class AudioPlaybackController internal constructor(
                         playCachedPayloadWithTracking(
                             sessionId = sessionId,
                             sentence = currentSentence,
+                            spokenText = spokenText,
                             payload = cachedHit,
                             speedMode = settings.speedControlMode
                         )
@@ -757,7 +759,11 @@ class AudioPlaybackController internal constructor(
                         usePcm16 = usePcm16,
                         sampleRate = activeSampleRate,
                         speedMode = speedMode,
-                        timestamps = collectedTimestamps
+                        timestamps = SpeechTimestampAligner.align(
+                            originalText = sentence.originalText,
+                            spokenText = spokenText,
+                            timestamps = collectedTimestamps
+                        )
                     )
                     totalFramesWritten += written
                 }
@@ -783,7 +789,13 @@ class AudioPlaybackController internal constructor(
 
             val track = activeTrack
             if (track != null && totalFramesWritten > 0 && isSessionValid(sessionId)) {
-                drainAudioTrack(sessionId, track, activeSampleRate, totalFramesWritten, collectedTimestamps)
+                drainAudioTrack(
+                    sessionId,
+                    track,
+                    activeSampleRate,
+                    totalFramesWritten,
+                    SpeechTimestampAligner.align(sentence.originalText, spokenText, collectedTimestamps)
+                )
             }
         } finally {
             releaseAudioTrackIfOwner(sessionId)
@@ -793,6 +805,7 @@ class AudioPlaybackController internal constructor(
     private suspend fun playCachedPayloadWithTracking(
         sessionId: Long,
         sentence: SentenceEntity,
+        spokenText: String,
         payload: CachedAudioPayload,
         speedMode: SpeedControlMode
     ) = withContext(Dispatchers.IO) {
@@ -817,10 +830,24 @@ class AudioPlaybackController internal constructor(
                 usePcm16 = usePcm16,
                 sampleRate = sampleRate,
                 speedMode = speedMode,
-                timestamps = payload.wordTimestamps
+                timestamps = SpeechTimestampAligner.align(
+                    originalText = sentence.originalText,
+                    spokenText = spokenText,
+                    timestamps = payload.wordTimestamps
+                )
             )
             if (isActive && isSessionValid(sessionId) && written > 0) {
-                drainAudioTrack(sessionId, track, sampleRate, written, payload.wordTimestamps)
+                drainAudioTrack(
+                    sessionId,
+                    track,
+                    sampleRate,
+                    written,
+                    SpeechTimestampAligner.align(
+                        originalText = sentence.originalText,
+                        spokenText = spokenText,
+                        timestamps = payload.wordTimestamps
+                    )
+                )
             }
         } finally {
             releaseAudioTrackIfOwner(sessionId)
