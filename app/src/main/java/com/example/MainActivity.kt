@@ -58,6 +58,7 @@ import androidx.navigation.toRoute
 import com.example.domain.BenchmarkCorpus
 import com.example.ui.navigation.AppRoute
 import com.example.ui.components.GlobalMiniPlayer
+import com.example.ui.components.shouldHideAppChrome
 import com.example.ui.components.shouldShowGlobalMiniPlayer
 import com.example.ui.screens.FileTranslatorScreen
 import com.example.ui.screens.LibraryScreen
@@ -131,7 +132,7 @@ fun EcouteAppRoot(isExpandedNav: Boolean) {
         isReaderDestination = isReaderDestination,
         isFullPlayerDestination = isFullPlayerDestination
     )
-    val hideAppChrome = isReaderDestination && isReaderImmersive
+    val hideAppChrome = shouldHideAppChrome(isReaderDestination, isReaderImmersive)
 
     val defaultBookId = settings.activeBookId
         ?: libraryState.books.firstOrNull()?.id
