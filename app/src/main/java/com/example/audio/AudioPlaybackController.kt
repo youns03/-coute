@@ -16,6 +16,7 @@ import com.example.data.SettingsRepository
 import com.example.data.UserSettings
 import com.example.domain.ModelSpec
 import com.example.domain.SpeechTextProcessor
+import com.example.domain.SpeechTimestampAligner
 import com.example.domain.SpeedControlMode
 import com.example.domain.WordTimestampRange
 import com.example.models.ModelStorageManager
@@ -574,6 +575,7 @@ class AudioPlaybackController internal constructor(
                         playCachedPayloadWithTracking(
                             sessionId = sessionId,
                             sentence = currentSentence,
+                            spokenText = spokenText,
                             payload = cachedHit,
                             speedMode = settings.speedControlMode
                         )
@@ -757,7 +759,11 @@ class AudioPlaybackController internal constructor(
                         usePcm16 = usePcm16,
                         sampleRate = activeSampleRate,
                         speedMode = speedMode,
-                        timestamps = collectedTimestamps
+                        timestamps = SpeechTimestampAligner.align(
+                            originalText = sentence.originalText,
+                            spokenText = spokenText,
+                            timestamps = collectedTimestamps
+                        )
                     )
                     totalFramesWritten += written
                 }
@@ -783,7 +789,13 @@ class AudioPlaybackController internal constructor(
 
             val track = activeTrack
             if (track != null && totalFramesWritten > 0 && isSessionValid(sessionId)) {
-                drainAudioTrack(sessionId, track, activeSampleRate, totalFramesWritten, collectedTimestamps)
+                drainAudioTrack(
+                    sessionId,
+                    track,
+                    activeSampleRate,
+                    totalFramesWritten,
+                    SpeechTimestampAligner.align(sentence.originalText, spokenText, collectedTimestamps)
+                )
             }
         } finally {
             releaseAudioTrackIfOwner(sessionId)
@@ -793,6 +805,7 @@ class AudioPlaybackController internal constructor(
     private suspend fun playCachedPayloadWithTracking(
         sessionId: Long,
         sentence: SentenceEntity,
+        spokenText: String,
         payload: CachedAudioPayload,
         speedMode: SpeedControlMode
     ) = withContext(Dispatchers.IO) {
@@ -817,10 +830,24 @@ class AudioPlaybackController internal constructor(
                 usePcm16 = usePcm16,
                 sampleRate = sampleRate,
                 speedMode = speedMode,
-                timestamps = payload.wordTimestamps
+                timestamps = SpeechTimestampAligner.align(
+                    originalText = sentence.originalText,
+                    spokenText = spokenText,
+                    timestamps = payload.wordTimestamps
+                )
             )
             if (isActive && isSessionValid(sessionId) && written > 0) {
-                drainAudioTrack(sessionId, track, sampleRate, written, payload.wordTimestamps)
+                drainAudioTrack(
+                    sessionId,
+                    track,
+                    sampleRate,
+                    written,
+                    SpeechTimestampAligner.align(
+                        originalText = sentence.originalText,
+                        spokenText = spokenText,
+                        timestamps = payload.wordTimestamps
+                    )
+                )
             }
         } finally {
             releaseAudioTrackIfOwner(sessionId)
@@ -965,7 +992,7 @@ class AudioPlaybackController internal constructor(
         sampleRate: Int,
         timestamps: List<WordTimestampRange>
     ) {
-        if (timestamps.isEmpty() || !isSessionValid(sessionId)) return
+        if (!isSessionValid(sessionId)) return
         val head = synchronized(trackLock) {
             if (!isSessionValid(sessionId) ||
                 activeTrackSessionId != sessionId ||
@@ -977,15 +1004,27 @@ class AudioPlaybackController internal constructor(
                 track.playbackHeadPosition
             }
         }
-        if (head < 0) return
-        val sec = head.toFloat() / sampleRate.toFloat()
-        val match = timestamps.firstOrNull { sec >= it.startSec && sec <= it.endSec }
-        if (match != null) {
-            updateStateIfSessionValid(sessionId) {
-                it.copy(
-                    activeWordStartChar = match.startChar,
-                    activeWordEndChar = match.endChar
-                )
+        if (head < 0 || sampleRate <= 0) return
+
+        val playbackSeconds = head.toFloat() / sampleRate.toFloat()
+        // Prefer the latest-starting interval if a synthesizer emits touching/overlapping ranges.
+        // Clear the old highlight during pauses between words instead of leaving a stale word lit.
+        val match = timestamps.asSequence()
+            .filter { it.startSec.isFinite() && it.endSec.isFinite() &&
+                it.endSec >= it.startSec && playbackSeconds >= it.startSec && playbackSeconds <= it.endSec }
+            .maxByOrNull { it.startSec }
+
+        updateStateIfSessionValid(sessionId) { current ->
+            val validMatch = match?.takeIf {
+                it.startChar >= 0 && it.endChar > it.startChar &&
+                    it.endChar <= current.currentSentenceText.length
+            }
+            val nextStart = validMatch?.startChar ?: -1
+            val nextEnd = validMatch?.endChar ?: -1
+            if (current.activeWordStartChar == nextStart && current.activeWordEndChar == nextEnd) {
+                current
+            } else {
+                current.copy(activeWordStartChar = nextStart, activeWordEndChar = nextEnd)
             }
         }
     }

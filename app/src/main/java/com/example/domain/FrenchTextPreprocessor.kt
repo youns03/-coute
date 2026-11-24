@@ -13,6 +13,62 @@ data class ProcessedSentence(
  * Independent French Text Preprocessor.
  * Never alters stored/displayed French text; produces a separate TTS-ready spokenText string.
  */
+
+/**
+ * Builds reader-sized paragraphs without losing source text. Explicit blank-line paragraphs
+ * remain boundaries; long run-on text is split at natural punctuation, then at word boundaries.
+ * Four sentences / roughly 420 characters keeps paragraph translation coherent and readable.
+ */
+internal object ReadingParagraphSegmenter {
+    private const val MAX_PARAGRAPH_CHARS = 420
+    private const val MAX_SENTENCES_PER_PARAGRAPH = 4
+
+    fun segment(sentences: List<String>): List<List<String>> {
+        if (sentences.isEmpty()) return emptyList()
+        val units = sentences.flatMap(::splitLongUnit).filter { it.isNotBlank() }
+        val result = mutableListOf<List<String>>()
+        var current = mutableListOf<String>()
+        var currentChars = 0
+
+        units.forEach { unit ->
+            val projected = currentChars + if (current.isEmpty()) unit.length else unit.length + 1
+            if (current.isNotEmpty() &&
+                (projected > MAX_PARAGRAPH_CHARS || current.size >= MAX_SENTENCES_PER_PARAGRAPH)
+            ) {
+                result.add(current.toList())
+                current = mutableListOf()
+                currentChars = 0
+            }
+            current.add(unit)
+            currentChars += unit.length + if (current.size > 1) 1 else 0
+        }
+        if (current.isNotEmpty()) result.add(current.toList())
+        return result
+    }
+
+    private fun splitLongUnit(raw: String): List<String> {
+        val text = raw.trim()
+        if (text.length <= MAX_PARAGRAPH_CHARS) return listOf(text)
+        val result = mutableListOf<String>()
+        var remaining = text
+        while (remaining.length > MAX_PARAGRAPH_CHARS) {
+            val windowEnd = MAX_PARAGRAPH_CHARS.coerceAtMost(remaining.length)
+            val preferredStart = (MAX_PARAGRAPH_CHARS * 0.55f).toInt()
+            val punctuation = remaining.substring(preferredStart, windowEnd)
+                .indexOfLast { it == ',' || it == ';' || it == ':' }
+            val split = if (punctuation >= 0) preferredStart + punctuation + 1 else {
+                val whitespace = remaining.substring(preferredStart, windowEnd).indexOfLast { it.isWhitespace() }
+                if (whitespace >= 0) preferredStart + whitespace else windowEnd
+            }
+            val boundary = split.coerceIn(1, windowEnd)
+            result.add(remaining.substring(0, boundary).trim())
+            remaining = remaining.substring(boundary).trimStart()
+        }
+        if (remaining.isNotBlank()) result.add(remaining)
+        return result
+    }
+}
+
 object FrenchTextPreprocessor {
 
     private val nonBreakingAbbreviations = setOf(
@@ -51,24 +107,28 @@ object FrenchTextPreprocessor {
 
         val output = mutableListOf<ProcessedSentence>()
         var sentenceCounter = 0
+        var readingParagraphIndex = 0
 
-        paragraphs.forEachIndexed { pIdx, paragraph ->
+        paragraphs.forEach { paragraph ->
             val cleanParagraph = paragraph
                 .replace(Regex("""\n+"""), " ")
                 .replace(Regex("""\s+"""), " ")
                 .trim()
-            val sentences = splitIntoSentences(cleanParagraph)
-            for (original in sentences) {
-                if (original.isNotBlank()) {
-                    output.add(
-                        ProcessedSentence(
-                            index = sentenceCounter++,
-                            paragraphIndex = pIdx,
-                            originalText = original,
-                            spokenText = prepareForSpeech(original)
+            val readingParagraphs = ReadingParagraphSegmenter.segment(splitIntoSentences(cleanParagraph))
+            readingParagraphs.forEach { readingParagraph ->
+                readingParagraph.forEach { original ->
+                    if (original.isNotBlank()) {
+                        output.add(
+                            ProcessedSentence(
+                                index = sentenceCounter++,
+                                paragraphIndex = readingParagraphIndex,
+                                originalText = original,
+                                spokenText = prepareForSpeech(original)
+                            )
                         )
-                    )
+                    }
                 }
+                readingParagraphIndex++
             }
         }
         return output
