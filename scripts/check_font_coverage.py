@@ -8,8 +8,27 @@ from fontTools.ttLib import TTFont
 
 FONT_DIR = Path(__file__).resolve().parents[1] / "app" / "src" / "main" / "res" / "font"
 REQUIRED = {
-    "readex_pro": (0x0628, 0x0644, 0x0629, 0x0041, 0x0061, 0x0030),
-    "newsreader": (0x0041, 0x0061, 0x00E9, 0x0030),
+    # Arabic letters, hamza forms, tatweel and the common harakat used by
+    # reader labels and translated examples. Readex Pro also carries the
+    # Latin/French set so mixed-direction strings do not silently fall back.
+    "readex_pro": tuple(
+        ord(char)
+        for char in (
+            "ءآأؤإئابةتثجحخدذرزسشصضطظعغـفقكلمنهويى"
+            "ًٌٍَُِّْ"
+            "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz"
+            "ÀÂÆÇÉÈÊËÎÏÔŒÙÛÜŸàâæçéèêëîïôœùûüÿ"
+            "0123456789"
+        )
+    ),
+    "newsreader": tuple(
+        ord(char)
+        for char in (
+            "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz"
+            "ÀÂÆÇÉÈÊËÎÏÔŒÙÛÜŸàâæçéèêëîïôœùûüÿ"
+            "0123456789"
+        )
+    ),
 }
 
 
