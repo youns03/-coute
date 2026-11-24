@@ -1,0 +1,25 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1440" height="420" viewBox="0 0 1440 420" role="img" aria-labelledby="title desc">
+  <title id="title">Écoute — Read, listen, understand</title>
+  <desc id="desc">A dark navy and teal banner with an open book and sound-wave symbol.</desc>
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#101d32"/><stop offset="1" stop-color="#1c3850"/></linearGradient>
+    <linearGradient id="accent" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#79e0c3"/><stop offset="1" stop-color="#42a9b4"/></linearGradient>
+  </defs>
+  <rect width="1440" height="420" rx="30" fill="url(#bg)"/>
+  <circle cx="1230" cy="80" r="210" fill="#6bd6c2" opacity=".06"/>
+  <circle cx="130" cy="400" r="260" fill="#6bd6c2" opacity=".04"/>
+  <g transform="translate(112 106)">
+    <path d="M0 28 Q78 0 156 30 V184 Q78 154 0 182 Z" fill="#eaf5f2" opacity=".96"/>
+    <path d="M156 30 Q234 0 312 28 V182 Q234 154 156 184 Z" fill="#d5ebe6"/>
+    <path d="M156 30 V184" stroke="#17364a" stroke-width="8" stroke-linecap="round" opacity=".55"/>
+    <path d="M32 65 Q85 48 126 66 M32 94 Q85 77 126 95 M32 123 Q85 106 126 124" fill="none" stroke="#789a9a" stroke-width="7" stroke-linecap="round"/>
+    <path d="M188 65 Q240 48 280 66 M188 94 Q240 77 280 95 M188 123 Q240 106 280 124" fill="none" stroke="#789a9a" stroke-width="7" stroke-linecap="round"/>
+    <g transform="translate(220 8)" fill="none" stroke="url(#accent)" stroke-width="9" stroke-linecap="round"><path d="M0 0 V28 M22 -14 V42 M44 -2 V30 M66 -22 V50 M88 3 V25"/></g>
+  </g>
+  <g font-family="Inter,Segoe UI,Arial,sans-serif" fill="#f3fbf8">
+    <text x="500" y="175" font-size="84" font-weight="700" letter-spacing="-2">Écoute</text>
+    <text x="505" y="235" font-size="29" fill="#a9d8ce" font-weight="600">READ · LISTEN · UNDERSTAND</text>
+    <text x="505" y="292" font-size="25" fill="#d2e4e0">A calmer way to read, listen and learn languages.</text>
+    <text x="505" y="340" font-size="22" fill="#a9d8ce">قارئ ذكي · استماع عصبي · ترجمة محلية</text>
+  </g>
+</svg>
