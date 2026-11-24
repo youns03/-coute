@@ -1,0 +1,16 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512" role="img" aria-labelledby="title">
+  <title id="title">Écoute app mark</title>
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1"><stop stop-color="#14243d"/><stop offset="1" stop-color="#24536a"/></linearGradient>
+    <linearGradient id="mint" x1="0" y1="0" x2="1" y2="1"><stop stop-color="#8ce8cf"/><stop offset="1" stop-color="#48b6b5"/></linearGradient>
+  </defs>
+  <rect width="512" height="512" rx="112" fill="url(#bg)"/>
+  <path d="M76 156 Q164 122 250 158 V370 Q164 334 76 366 Z" fill="#f1faf6"/>
+  <path d="M250 158 Q338 122 436 156 V366 Q338 334 250 370 Z" fill="#d7eee7"/>
+  <path d="M250 158 V370" stroke="#24536a" stroke-width="12" stroke-linecap="round" opacity=".6"/>
+  <g fill="none" stroke="#6f9b99" stroke-width="13" stroke-linecap="round">
+    <path d="M112 214 Q164 194 213 215 M112 260 Q164 240 213 261 M112 306 Q164 286 213 307"/>
+    <path d="M286 214 Q338 194 400 215 M286 260 Q338 240 400 261 M286 306 Q338 286 400 307"/>
+  </g>
+  <g fill="none" stroke="url(#mint)" stroke-width="17" stroke-linecap="round"><path d="M280 95 V137 M314 75 V157 M348 92 V140 M382 64 V168 M416 101 V131"/></g>
+</svg>
