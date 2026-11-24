@@ -7,6 +7,8 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.DragInteraction
+import androidx.compose.foundation.relocation.BringIntoViewRequester
+import androidx.compose.foundation.relocation.bringIntoViewRequester
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -70,12 +72,14 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.platform.testTag
 import androidx.core.content.ContextCompat
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.TextLayoutResult
 import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextDecoration
@@ -165,6 +169,7 @@ fun ReaderScreen(
     }
 
     var isAutoFollowEnabled by remember { mutableStateOf(true) }
+    var returnToAudioRequest by remember { mutableStateOf(0) }
     val activeParagraphItemIndex = remember(groupedParagraphs, activeSentenceIdx) {
         if (activeSentenceIdx < 0) -1 else groupedParagraphs.indexOfFirst { (_, sentences) ->
             sentences.any { it.sentenceIndex == activeSentenceIdx }
@@ -183,6 +188,7 @@ fun ReaderScreen(
     // A new book/chapter starts a fresh reading-follow session.
     LaunchedEffect(activeBookId, state.activeChapterIndex) {
         isAutoFollowEnabled = true
+        returnToAudioRequest = 0
     }
 
     LaunchedEffect(activeSentenceIdx, playbackState.status, isAutoFollowEnabled, activeParagraphItemIndex) {
@@ -344,6 +350,7 @@ fun ReaderScreen(
                     TextButton(
                         onClick = {
                             val target = activeParagraphItemIndex
+                            returnToAudioRequest++
                             isAutoFollowEnabled = true
                             // While paused, follow mode alone cannot scroll, so perform a view-only jump.
                             // While playing, the keyed effect performs the single automatic scroll.
@@ -378,6 +385,8 @@ fun ReaderScreen(
                     val showParagraphTranslation = settings.showInlineTranslations ||
                         paragraphSentences.any { it.id in state.revealedSentenceIds }
                     val currentSentence = paragraphSentences.firstOrNull { it.sentenceIndex == activeSentenceIdx }
+                    val paragraphBringIntoViewRequester = remember(paragraphIndex) { BringIntoViewRequester() }
+                    var paragraphTextLayout by remember(paragraphIndex) { mutableStateOf<TextLayoutResult?>(null) }
 
                     Column(
                         modifier = Modifier.fillMaxWidth().padding(bottom = 18.dp),
@@ -437,8 +446,43 @@ fun ReaderScreen(
                                     wordHighlightColor
                                 )
                             }
+                            LaunchedEffect(
+                                activeSentenceIdx,
+                                playbackState.status,
+                                isAutoFollowEnabled,
+                                returnToAudioRequest,
+                                paragraphTextLayout,
+                                annotated
+                            ) {
+                                val shouldRevealCurrentSentence = currentSentence != null &&
+                                    isAutoFollowEnabled &&
+                                    (playbackState.status == PlaybackStatus.PLAYING || returnToAudioRequest > 0)
+                                val layout = paragraphTextLayout
+                                if (shouldRevealCurrentSentence && layout != null && layout.size.width > 0) {
+                                    val sentenceRange = annotated.getStringAnnotations(
+                                        tag = "SENTENCE",
+                                        start = 0,
+                                        end = annotated.length
+                                    ).firstOrNull { it.item == currentSentence?.id?.toString() }
+                                    if (sentenceRange != null && sentenceRange.end > sentenceRange.start) {
+                                        val firstLine = layout.getLineForOffset(sentenceRange.start)
+                                        val lastLine = layout.getLineForOffset(sentenceRange.end - 1)
+                                        paragraphBringIntoViewRequester.bringIntoView(
+                                            Rect(
+                                                left = 0f,
+                                                top = layout.getLineTop(firstLine),
+                                                right = layout.size.width.toFloat(),
+                                                bottom = layout.getLineBottom(lastLine)
+                                            )
+                                        )
+                                    }
+                                }
+                            }
+
                             ClickableText(
                                 text = annotated,
+                                modifier = Modifier.bringIntoViewRequester(paragraphBringIntoViewRequester),
+                                onTextLayout = { paragraphTextLayout = it },
                                 style = TextStyle(
                                     fontFamily = FrenchSerifFamily,
                                     fontSize = settings.readerFontSizeSp.sp,
