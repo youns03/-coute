@@ -6,6 +6,7 @@ import android.os.Build
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.interaction.DragInteraction
 import androidx.compose.foundation.relocation.BringIntoViewRequester
 import androidx.compose.foundation.relocation.bringIntoViewRequester
@@ -102,7 +103,7 @@ import com.example.ui.viewmodel.WordLookupSheetState
 import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.launch
 
-@OptIn(ExperimentalMaterial3Api::class)
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class)
 @Composable
 fun ReaderScreen(
     state: ReaderUiState,
@@ -481,7 +482,10 @@ fun ReaderScreen(
 
                             ClickableText(
                                 text = annotated,
-                                modifier = Modifier.bringIntoViewRequester(paragraphBringIntoViewRequester),
+                                modifier = Modifier
+                                    .bringIntoViewRequester(paragraphBringIntoViewRequester)
+                                    .fillMaxWidth()
+                                    .testTag("reader_paragraph_text_" + paragraphIndex),
                                 onTextLayout = { paragraphTextLayout = it },
                                 style = TextStyle(
                                     fontFamily = FrenchSerifFamily,
@@ -503,8 +507,7 @@ fun ReaderScreen(
                                         requestNotificationIfNeeded()
                                         onPlayFromSentence(currentSentence)
                                     }
-                                },
-                                modifier = Modifier.fillMaxWidth().testTag("reader_paragraph_text_" + paragraphIndex)
+                                }
                             )
                         }
 
