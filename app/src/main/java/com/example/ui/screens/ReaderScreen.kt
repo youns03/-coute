@@ -340,7 +340,7 @@ fun ReaderScreen(
                             TextButton(
                                 onClick = { onTranslateOrToggleParagraph(paragraphIndex, paragraphSentences) },
                                 enabled = !isParagraphTranslating,
-                                modifier = Modifier.testTag("translate_paragraph_$"+"{paragraphIndex}")
+                                modifier = Modifier.testTag("translate_paragraph_" + paragraphIndex)
                             ) {
                                 if (isParagraphTranslating) {
                                     CircularProgressIndicator(modifier = Modifier.size(15.dp), strokeWidth = 2.dp)
@@ -400,7 +400,7 @@ fun ReaderScreen(
                                         onPlayFromSentence(currentSentence)
                                     }
                                 },
-                                modifier = Modifier.fillMaxWidth().testTag("reader_paragraph_text_$"+"{paragraphIndex}")
+                                modifier = Modifier.fillMaxWidth().testTag("reader_paragraph_text_" + paragraphIndex)
                             )
                         }
 
