@@ -53,6 +53,7 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.LayoutDirection
@@ -394,7 +395,7 @@ private fun BookCard(
                         Icon(Icons.Rounded.AutoStories, contentDescription = null, modifier = Modifier.size(16.dp))
                         Spacer(Modifier.width(6.dp))
                         Text(
-                            if (book.currentSentenceIndex > 0) "متابعة القراءة" else "ابدأ القراءة",
+                            if (book.currentSentenceIndex > 0) stringResource(R.string.library_continue_reading) else stringResource(R.string.library_start_reading),
                             style = MaterialTheme.typography.labelMedium
                         )
                     }
