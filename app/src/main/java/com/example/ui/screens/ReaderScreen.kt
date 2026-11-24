@@ -76,6 +76,8 @@ import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.res.pluralStringResource
+import androidx.compose.ui.res.stringResource
 import androidx.core.content.ContextCompat
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.TextStyle
@@ -231,12 +233,12 @@ fun ReaderScreen(
                                 .minimumInteractiveComponentSize()
                                 .testTag("chapter_selector_button")
                         ) {
-                            Icon(Icons.Rounded.List, contentDescription = "فصول الكتاب")
+                            Icon(Icons.Rounded.List, contentDescription = stringResource(R.string.reader_chapters_title))
                         }
                         Column(modifier = Modifier.weight(1f)) {
                             CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Ltr) {
                                 Text(
-                                    text = state.book?.title ?: "اختر كتاباً من المكتبة",
+                                    text = state.book?.title ?: stringResource(R.string.reader_choose_book),
                                     style = MaterialTheme.typography.titleSmall,
                                     maxLines = 1,
                                     overflow = TextOverflow.Ellipsis
@@ -269,7 +271,7 @@ fun ReaderScreen(
                                 .minimumInteractiveComponentSize()
                                 .testTag("reader_search_button")
                         ) {
-                            Icon(Icons.Rounded.Search, contentDescription = "بحث داخل الكتاب")
+                            Icon(Icons.Rounded.Search, contentDescription = stringResource(R.string.reader_search_content_description))
                         }
                         IconButton(
                             onClick = onToggleInlineTranslations,
@@ -279,7 +281,7 @@ fun ReaderScreen(
                         ) {
                             Icon(
                                 if (settings.showInlineTranslations) Icons.Rounded.Translate else Icons.Rounded.VisibilityOff,
-                                contentDescription = "إظهار أو إخفاء جميع الترجمات",
+                                contentDescription = stringResource(R.string.reader_toggle_translations_content_description),
                                 tint = if (settings.showInlineTranslations) {
                                     MaterialTheme.colorScheme.secondary
                                 } else {
@@ -293,7 +295,7 @@ fun ReaderScreen(
                                 .minimumInteractiveComponentSize()
                                 .testTag("reader_appearance_button")
                         ) {
-                            Icon(Icons.Rounded.FormatSize, contentDescription = "تخصيص الخط والمظهر")
+                            Icon(Icons.Rounded.FormatSize, contentDescription = stringResource(R.string.reader_appearance_content_description))
                         }
                     }
                 }
@@ -327,13 +329,13 @@ fun ReaderScreen(
                         if (activePackState.status != TranslationPackStatus.READY) {
                             FilledTonalButton(onClick = onDownloadTranslationPack) {
                                 Text(
-                                    if (activePackState.status == TranslationPackStatus.DOWNLOADING) "جاري التنزيل..."
-                                    else "تنزيل (${bookDirection.shortBadge})"
+                                    if (activePackState.status == TranslationPackStatus.DOWNLOADING) stringResource(R.string.reader_download_in_progress)
+                                    else stringResource(R.string.reader_download_translation_pack, bookDirection.shortBadge)
                                 )
                             }
                         }
                         IconButton(onClick = onDismissTranslationError) {
-                            Icon(Icons.Rounded.Close, contentDescription = "إغلاق")
+                            Icon(Icons.Rounded.Close, contentDescription = stringResource(R.string.common_close))
                         }
                     }
                 }
@@ -362,7 +364,7 @@ fun ReaderScreen(
                         },
                         modifier = Modifier.testTag("reader_return_to_audio_button")
                     ) {
-                        Text("العودة إلى موضع الاستماع")
+                        Text(stringResource(R.string.reader_return_to_audio))
                     }
                 }
             }
@@ -397,7 +399,7 @@ fun ReaderScreen(
                             horizontalArrangement = Arrangement.SpaceBetween,
                             verticalAlignment = Alignment.CenterVertically
                         ) {
-                            Text("الفقرة ${paragraphIndex + 1}", style = MaterialTheme.typography.labelMedium,
+                            Text(stringResource(R.string.reader_paragraph_number, paragraphIndex + 1), style = MaterialTheme.typography.labelMedium,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant)
                             TextButton(
                                 onClick = { onTranslateOrToggleParagraph(paragraphIndex, paragraphSentences) },
@@ -408,7 +410,7 @@ fun ReaderScreen(
                                 if (isParagraphTranslating) {
                                     CircularProgressIndicator(modifier = Modifier.size(15.dp), strokeWidth = 2.dp)
                                     Spacer(Modifier.width(7.dp))
-                                    Text("تُترجم الفقرة...", style = MaterialTheme.typography.labelMedium)
+                                    Text(stringResource(R.string.reader_paragraph_translating), style = MaterialTheme.typography.labelMedium)
                                 } else {
                                     Icon(
                                         when {
@@ -422,10 +424,10 @@ fun ReaderScreen(
                                     Spacer(Modifier.width(5.dp))
                                     Text(
                                         when {
-                                            !cachedParagraphTranslation.isNullOrBlank() && settings.showInlineTranslations -> "تمت الترجمة"
-                                            !cachedParagraphTranslation.isNullOrBlank() && allParagraphRevealed -> "إخفاء الترجمة"
-                                            !cachedParagraphTranslation.isNullOrBlank() -> "عرض الترجمة"
-                                            else -> "ترجمة الفقرة"
+                                            !cachedParagraphTranslation.isNullOrBlank() && settings.showInlineTranslations -> stringResource(R.string.reader_translation_complete)
+                                            !cachedParagraphTranslation.isNullOrBlank() && allParagraphRevealed -> stringResource(R.string.reader_hide_translation)
+                                            !cachedParagraphTranslation.isNullOrBlank() -> stringResource(R.string.reader_show_translation)
+                                            else -> stringResource(R.string.reader_translate_paragraph)
                                         },
                                         style = MaterialTheme.typography.labelMedium
                                     )
@@ -518,14 +520,14 @@ fun ReaderScreen(
                                     modifier = Modifier.padding(horizontal = 16.dp, vertical = 13.dp),
                                     verticalArrangement = Arrangement.spacedBy(7.dp)
                                 ) {
-                                    Text("الترجمة العربية", style = MaterialTheme.typography.labelMedium,
+                                    Text(stringResource(R.string.reader_arabic_translation), style = MaterialTheme.typography.labelMedium,
                                         color = MaterialTheme.colorScheme.primary)
                                     when {
                                         isParagraphTranslating -> {
                                             Row(verticalAlignment = Alignment.CenterVertically) {
                                                 CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp)
                                                 Spacer(Modifier.width(9.dp))
-                                                Text("تُترجم الفقرة محلياً...", style = MaterialTheme.typography.bodySmall,
+                                                Text(stringResource(R.string.reader_translating_paragraph_locally), style = MaterialTheme.typography.bodySmall,
                                                     color = MaterialTheme.colorScheme.onSurfaceVariant)
                                             }
                                         }
@@ -555,7 +557,7 @@ fun ReaderScreen(
                                                         ) {
                                                             Icon(
                                                                 Icons.Rounded.BookmarkAdd,
-                                                                contentDescription = "حفظ ترجمة الجملة في القاموس",
+                                                                contentDescription = stringResource(R.string.reader_save_sentence_translation_content_description),
                                                                 tint = MaterialTheme.colorScheme.tertiary,
                                                                 modifier = Modifier.size(18.dp)
                                                             )
@@ -564,7 +566,7 @@ fun ReaderScreen(
                                                 }
                                             }
                                         }
-                                        else -> Text("اضغط «ترجمة الفقرة» لعرض معناها بالعربية.",
+                                        else -> Text(stringResource(R.string.reader_translate_paragraph_hint),
                                             style = MaterialTheme.typography.bodySmall,
                                             color = MaterialTheme.colorScheme.onSurfaceVariant)
                                     }
@@ -602,7 +604,7 @@ fun ReaderScreen(
                     .padding(horizontal = 18.dp, vertical = 8.dp),
                 verticalArrangement = Arrangement.spacedBy(8.dp)
             ) {
-                Text("فصول الكتاب", style = MaterialTheme.typography.titleLarge)
+                Text(stringResource(R.string.reader_chapters_title), style = MaterialTheme.typography.titleLarge)
                 state.chapters.forEach { ch ->
                     val selected = ch.chapterIndex == state.activeChapterIndex
                     Surface(
@@ -628,7 +630,7 @@ fun ReaderScreen(
                                 )
                             }
                             Text(
-                                text = "${ch.sentenceCount} جملة",
+                                text = pluralStringResource(R.plurals.reader_sentence_count, ch.sentenceCount, ch.sentenceCount),
                                 style = MaterialTheme.typography.labelSmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
@@ -648,15 +650,15 @@ fun ReaderScreen(
                     .padding(horizontal = 20.dp, vertical = 8.dp),
                 verticalArrangement = Arrangement.spacedBy(14.dp)
             ) {
-                Text("مظهر القراءة ولغة النص", style = MaterialTheme.typography.titleLarge)
+                Text(stringResource(R.string.reader_appearance_title), style = MaterialTheme.typography.titleLarge)
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.SpaceBetween,
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Text("لغة الكتاب للترجمة (${bookDirection.shortBadge})", style = MaterialTheme.typography.bodyMedium)
+                    Text(stringResource(R.string.reader_language_for_translation, bookDirection.shortBadge), style = MaterialTheme.typography.bodyMedium)
                     OutlinedButton(onClick = onToggleBookLanguage) {
-                        Text(if (bookSourceLang == SourceLanguage.FRENCH) "تبديل للإنجليزية" else "تبديل للفرنسية")
+                        Text(if (bookSourceLang == SourceLanguage.FRENCH) stringResource(R.string.reader_switch_to_english) else stringResource(R.string.reader_switch_to_french))
                     }
                 }
                 Row(
@@ -667,12 +669,12 @@ fun ReaderScreen(
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Icon(Icons.Rounded.DarkMode, contentDescription = null)
                         Spacer(Modifier.width(8.dp))
-                        Text("الوضع الليلي للقراءة", style = MaterialTheme.typography.bodyLarge)
+                        Text(stringResource(R.string.reader_night_mode), style = MaterialTheme.typography.bodyLarge)
                     }
                     Switch(checked = settings.nightMode, onCheckedChange = onNightModeChange)
                 }
                 Column {
-                    Text("حجم الخط الأصلي: ${settings.readerFontSizeSp.toInt()} sp")
+                    Text(stringResource(R.string.reader_font_size_label, settings.readerFontSizeSp.toInt()))
                     Slider(
                         value = settings.readerFontSizeSp,
                         onValueChange = onFontSizeChange,
@@ -680,7 +682,7 @@ fun ReaderScreen(
                     )
                 }
                 Column {
-                    Text("تباعد الأسطر: ${"%.2f".format(settings.readerLineHeightMultiplier)}x")
+                    Text(stringResource(R.string.reader_line_spacing_label, "%.2f".format(settings.readerLineHeightMultiplier)))
                     Slider(
                         value = settings.readerLineHeightMultiplier,
                         onValueChange = onLineHeightChange,
@@ -781,7 +783,7 @@ private fun SentenceReaderItem(
             if (showTranslation) {
                 CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Ltr) {
                     Text(
-                        text = if (sourceLanguage == SourceLanguage.FRENCH) "Texte original" else "Original text",
+                        text = if (sourceLanguage == SourceLanguage.FRENCH) stringResource(R.string.reader_original_text_french) else stringResource(R.string.reader_original_text_english),
                         style = MaterialTheme.typography.labelSmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         modifier = Modifier.padding(bottom = 2.dp)
@@ -822,7 +824,7 @@ private fun SentenceReaderItem(
                 HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.3f))
                 Spacer(Modifier.height(6.dp))
                 Text(
-                    text = "الترجمة العربية",
+                    text = stringResource(R.string.reader_arabic_translation),
                     style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
@@ -832,7 +834,7 @@ private fun SentenceReaderItem(
                         Row(verticalAlignment = Alignment.CenterVertically) {
                             CircularProgressIndicator(modifier = Modifier.size(14.dp), strokeWidth = 2.dp)
                             Spacer(Modifier.width(8.dp))
-                            Text("جاري الترجمة محلياً...", style = MaterialTheme.typography.bodySmall)
+                            Text(stringResource(R.string.reader_translation_loading), style = MaterialTheme.typography.bodySmall)
                         }
                     }
                     !sentence.cachedArabicTranslation.isNullOrBlank() -> {
@@ -849,7 +851,7 @@ private fun SentenceReaderItem(
                     }
                     else -> {
                         Text(
-                            text = "اضغط على أيقونة الترجمة لإظهار المعنى بالعربية.",
+                            text = stringResource(R.string.reader_translation_tap_hint),
                             style = MaterialTheme.typography.labelSmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
@@ -871,7 +873,7 @@ private fun SentenceReaderItem(
                 ) {
                     Icon(
                         Icons.Rounded.VolumeUp,
-                        contentDescription = "تشغيل من هذه الجملة",
+                        contentDescription = stringResource(R.string.reader_play_from_sentence_content_description),
                         tint = if (isCurrent) MaterialTheme.colorScheme.secondary else MaterialTheme.colorScheme.onSurfaceVariant,
                         modifier = Modifier.size(18.dp)
                     )
@@ -886,7 +888,7 @@ private fun SentenceReaderItem(
                         } else {
                             Icons.Rounded.Translate
                         },
-                        contentDescription = if (showTranslation) "إخفاء أو تحديث الترجمة" else "ترجمة الجملة للعربية",
+                        contentDescription = if (showTranslation) stringResource(R.string.reader_hide_or_refresh_translation_content_description) else stringResource(R.string.reader_translate_sentence_content_description),
                         tint = MaterialTheme.colorScheme.primary,
                         modifier = Modifier.size(18.dp)
                     )
@@ -898,7 +900,7 @@ private fun SentenceReaderItem(
                     ) {
                         Icon(
                             Icons.Rounded.BookmarkAdd,
-                            contentDescription = "حفظ الجملة في القاموس",
+                            contentDescription = stringResource(R.string.reader_save_sentence_to_vocabulary_content_description),
                             tint = MaterialTheme.colorScheme.tertiary,
                             modifier = Modifier.size(18.dp)
                         )
@@ -955,12 +957,12 @@ private fun ReaderSearchPanel(
                 OutlinedTextField(
                     value = query,
                     onValueChange = onQueryChange,
-                    placeholder = { Text("ابحث عن كلمة أو جملة داخل النص...") },
+                    placeholder = { Text(stringResource(R.string.reader_search_placeholder)) },
                     singleLine = true,
                     modifier = Modifier.weight(1f)
                 )
                 IconButton(onClick = onClose) {
-                    Icon(Icons.Rounded.Close, contentDescription = "إغلاق البحث")
+                    Icon(Icons.Rounded.Close, contentDescription = stringResource(R.string.reader_close_search_content_description))
                 }
             }
             if (results.isNotEmpty()) {
@@ -981,7 +983,7 @@ private fun ReaderSearchPanel(
                                 )
                             }
                             Text(
-                                text = "الفصل ${s.chapterIndex + 1} • جملة ${s.sentenceIndex + 1}",
+                                text = stringResource(R.string.reader_search_result_position, s.chapterIndex + 1, s.sentenceIndex + 1),
                                 style = MaterialTheme.typography.labelSmall,
                                 color = MaterialTheme.colorScheme.primary
                             )
@@ -1028,10 +1030,10 @@ private fun ReaderAudioBar(
                 Column(modifier = Modifier.weight(1f)) {
                     Text(
                         text = when {
-                            isBuffering -> "جارٍ تجهيز الصوت"
-                            isPlaying -> "يُقرأ الآن"
-                            isPlayingThisChapter && playbackState.status == PlaybackStatus.PAUSED -> "متوقف مؤقتاً"
-                            else -> "مشغّل القراءة"
+                            isBuffering -> stringResource(R.string.reader_audio_preparing)
+                            isPlaying -> stringResource(R.string.reader_audio_now_reading)
+                            isPlayingThisChapter && playbackState.status == PlaybackStatus.PAUSED -> stringResource(R.string.reader_audio_paused)
+                            else -> stringResource(R.string.reader_audio_player)
                         },
                         style = MaterialTheme.typography.labelMedium,
                         color = MaterialTheme.colorScheme.primary
@@ -1039,7 +1041,7 @@ private fun ReaderAudioBar(
                     Text(
                         text = playbackState.currentSentenceText.takeIf {
                             isPlayingThisChapter && it.isNotBlank()
-                        } ?: if (bookSourceLanguage == SourceLanguage.FRENCH) "جاهز للاستماع" else "Ready to listen",
+                        } ?: if (bookSourceLanguage == SourceLanguage.FRENCH) stringResource(R.string.reader_ready_to_listen_french) else stringResource(R.string.reader_ready_to_listen_english),
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         maxLines = 1,
@@ -1053,7 +1055,7 @@ private fun ReaderAudioBar(
                             .takeIf { it >= 0 } ?: 1
                         onSpeedSelected(speeds[(current + 1) % speeds.size])
                     },
-                    label = { Text("${currentSpeed}×") },
+                    label = { Text(stringResource(R.string.reader_speed_multiplier, currentSpeed.toString())) },
                     modifier = Modifier.testTag("reader_speed_chip")
                 )
             }
@@ -1067,7 +1069,7 @@ private fun ReaderAudioBar(
                     enabled = isPlayingThisChapter,
                     modifier = Modifier.minimumInteractiveComponentSize().testTag("reader_previous_button")
                 ) {
-                    Icon(Icons.Rounded.SkipPrevious, contentDescription = "الجملة السابقة",
+                    Icon(Icons.Rounded.SkipPrevious, contentDescription = stringResource(R.string.reader_previous_sentence_content_description),
                         tint = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
                 FilledTonalButton(
@@ -1077,23 +1079,23 @@ private fun ReaderAudioBar(
                 ) {
                     when {
                         isBuffering -> CircularProgressIndicator(modifier = Modifier.size(19.dp), strokeWidth = 2.dp)
-                        isPlaying -> Icon(Icons.Rounded.Pause, contentDescription = "إيقاف مؤقت")
-                        else -> Icon(Icons.Rounded.PlayArrow, contentDescription = "تشغيل")
+                        isPlaying -> Icon(Icons.Rounded.Pause, contentDescription = stringResource(R.string.reader_pause_content_description))
+                        else -> Icon(Icons.Rounded.PlayArrow, contentDescription = stringResource(R.string.reader_play_content_description))
                     }
                     Spacer(Modifier.width(8.dp))
-                    Text(if (isPlaying) "إيقاف مؤقت" else "استماع", style = MaterialTheme.typography.labelLarge)
+                    Text(if (isPlaying) stringResource(R.string.reader_pause_content_description) else stringResource(R.string.reader_listen_button), style = MaterialTheme.typography.labelLarge)
                 }
                 IconButton(
                     onClick = onNext,
                     enabled = isPlayingThisChapter,
                     modifier = Modifier.minimumInteractiveComponentSize().testTag("reader_next_button")
                 ) {
-                    Icon(Icons.Rounded.SkipNext, contentDescription = "الجملة التالية",
+                    Icon(Icons.Rounded.SkipNext, contentDescription = stringResource(R.string.reader_next_sentence_content_description),
                         tint = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
                 Spacer(Modifier.width(5.dp))
                 TextButton(onClick = onOpenFullPlayer, modifier = Modifier.testTag("reader_full_player_button")) {
-                    Text("المشغّل")
+                    Text(stringResource(R.string.reader_full_player_button))
                 }
             }
         }
@@ -1136,7 +1138,7 @@ private fun WordLookupModalSheet(
                 ) {
                     Icon(Icons.Rounded.VolumeUp, contentDescription = null)
                     Spacer(Modifier.width(6.dp))
-                    Text("نطق")
+                    Text(stringResource(R.string.reader_pronounce_button))
                 }
             }
 
@@ -1145,7 +1147,7 @@ private fun WordLookupModalSheet(
                 modifier = Modifier.fillMaxWidth()
             ) {
                 Column(modifier = Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                    Text("الترجمة العربية (${direction.shortBadge} دون اتصال):", style = MaterialTheme.typography.labelMedium)
+                    Text(stringResource(R.string.reader_offline_translation_label, direction.shortBadge), style = MaterialTheme.typography.labelMedium)
                     when {
                         sheet.isLoading -> {
                             CircularProgressIndicator(modifier = Modifier.size(20.dp), strokeWidth = 2.dp)
@@ -1161,7 +1163,7 @@ private fun WordLookupModalSheet(
                         }
                         else -> {
                             Text(
-                                text = sheet.error ?: "تعذر الترجمة.",
+                                text = sheet.error ?: stringResource(R.string.reader_translation_failed),
                                 style = MaterialTheme.typography.bodyMedium,
                                 color = MaterialTheme.colorScheme.error
                             )
@@ -1171,8 +1173,8 @@ private fun WordLookupModalSheet(
                                     enabled = packStatus != TranslationPackStatus.DOWNLOADING
                                 ) {
                                     Text(
-                                        if (packStatus == TranslationPackStatus.DOWNLOADING) "جاري التنزيل..."
-                                        else "تنزيل حزمة ${direction.shortBadge} (~30 MB)"
+                                        if (packStatus == TranslationPackStatus.DOWNLOADING) stringResource(R.string.reader_download_in_progress)
+                                        else stringResource(R.string.reader_download_translation_pack_with_size, direction.shortBadge)
                                     )
                                 }
                             }
@@ -1203,7 +1205,7 @@ private fun WordLookupModalSheet(
                         contentDescription = null
                     )
                     Spacer(Modifier.width(8.dp))
-                    Text(if (sheet.savedToVocab) "تم الحفظ في قاموس المفردات" else "حفظ في قاموس المفردات")
+                    Text(if (sheet.savedToVocab) stringResource(R.string.reader_saved_to_vocabulary) else stringResource(R.string.reader_save_to_vocabulary))
                 }
             }
 
