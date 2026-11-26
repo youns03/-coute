@@ -171,6 +171,14 @@ jobs:
           echo "Verified universal APK: $(stat -c '%s bytes' "$UNIVERSAL_APK")"
           sha256sum "$ARM64_APK" "$UNIVERSAL_APK" | tee release-artifacts/SHA256SUMS.txt
 
+      - name: Upload signed APKs as workflow artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: Ecoute-${{ env.ANDROID_VERSION_NAME }}-signed-apks
+          path: release-artifacts/*
+          if-no-files-found: error
+          retention-days: 30
+
       - name: Publish GitHub Release
         uses: softprops/action-gh-release@v2
         with:
