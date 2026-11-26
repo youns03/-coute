@@ -9,33 +9,21 @@ import androidx.compose.ui.unit.sp
 import com.example.R
 
 val EditorialDisplayFamily = FontFamily(
-    Font(R.font.cormorant_garamond, FontWeight.Normal),
-    Font(R.font.cormorant_garamond, FontWeight.SemiBold),
-    Font(R.font.cormorant_garamond, FontWeight.Bold)
+    Font(R.font.cormorant_garamond, FontWeight.Normal)
 )
 
 val FrenchSerifFamily = FontFamily(
-    Font(R.font.newsreader, FontWeight.Normal),
-    Font(R.font.newsreader_medium, FontWeight.Medium),
-    Font(R.font.newsreader_semibold, FontWeight.SemiBold)
+    Font(R.font.newsreader, FontWeight.Normal)
 )
 
-/**
- * Readex Pro is bundled as fixed weights so Arabic shaping and Latin fallback
- * work consistently on minSdk 24 without relying on variable-font support.
- */
 val UiSansFamily = FontFamily(
-    Font(R.font.readex_pro, FontWeight.Normal),
-    Font(R.font.readex_pro_medium, FontWeight.Medium),
-    Font(R.font.readex_pro_semibold, FontWeight.SemiBold),
-    Font(R.font.readex_pro_bold, FontWeight.Bold)
+    Font(R.font.readex_pro, FontWeight.Normal)
 )
 
 val ArabicSansFamily = UiSansFamily
 
 val StudioMonoFamily = FontFamily(
-    Font(R.font.jetbrains_mono, FontWeight.Normal),
-    Font(R.font.jetbrains_mono, FontWeight.Medium)
+    Font(R.font.jetbrains_mono, FontWeight.Normal)
 )
 
 val Typography = Typography(
