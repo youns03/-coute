@@ -67,10 +67,12 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
+import com.example.R
 import com.example.data.TranslationChunkEntity
 import com.example.data.TranslationJobEntity
 import com.example.translation.ExportMode
@@ -115,6 +117,7 @@ fun FileTranslatorScreen(
     var pendingExportRequest by remember { mutableStateOf<Pair<TranslationJobEntity, ExportMode>?>(null) }
     var exportChoiceJob by remember { mutableStateOf<TranslationJobEntity?>(null) }
     var languageResetConfirm by remember { mutableStateOf<Pair<TranslationJobEntity, SourceLanguage>?>(null) }
+    var pendingDeleteJob by remember { mutableStateOf<TranslationJobEntity?>(null) }
 
     val notifLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.RequestPermission()
@@ -192,9 +195,9 @@ fun FileTranslatorScreen(
                                             color = MaterialTheme.colorScheme.secondary
                                         )
                                     }
-                                    Text("مترجم الملفات المحلي", style = MaterialTheme.typography.titleLarge)
+                                    Text(stringResource(R.string.title_translator), style = MaterialTheme.typography.titleLarge)
                                     Text(
-                                        "ترجمة المستندات الطويلة على دفعات • تستمر في الخلفية دون إنترنت",
+                                        stringResource(R.string.translator_header_subtitle),
                                         style = MaterialTheme.typography.bodySmall,
                                         color = MaterialTheme.colorScheme.onSurfaceVariant
                                     )
@@ -222,7 +225,7 @@ fun FileTranslatorScreen(
                                     verticalAlignment = Alignment.CenterVertically,
                                     horizontalArrangement = Arrangement.spacedBy(6.dp)
                                 ) {
-                                    Text("لغة المصدر", style = MaterialTheme.typography.labelMedium)
+                                    Text(stringResource(R.string.translator_source_lang), style = MaterialTheme.typography.labelMedium)
                                     Icon(
                                         Icons.AutoMirrored.Rounded.ArrowForward,
                                         contentDescription = null,
@@ -230,7 +233,7 @@ fun FileTranslatorScreen(
                                         modifier = Modifier.size(15.dp)
                                     )
                                     Text(
-                                        "اللغة الهدف (العربية)",
+                                        stringResource(R.string.translator_target_lang),
                                         style = MaterialTheme.typography.labelMedium,
                                         color = MaterialTheme.colorScheme.primary
                                     )
@@ -281,7 +284,7 @@ fun FileTranslatorScreen(
                             ) {
                                 Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
                                     Text(
-                                        text = "المحرك المشترك: ${activeDirection.displayNameAr}",
+                                        text = stringResource(R.string.translator_shared_engine, activeDirection.displayNameAr),
                                         style = MaterialTheme.typography.labelMedium
                                     )
                                     Text(
@@ -303,12 +306,18 @@ fun FileTranslatorScreen(
                                             Icon(Icons.Rounded.Download, contentDescription = null, modifier = Modifier.size(16.dp))
                                         }
                                         Spacer(Modifier.width(6.dp))
-                                        Text(if (activePack.status == TranslationPackStatus.DOWNLOADING) "جاري التنزيل..." else "تنزيل المحرك")
+                                        Text(
+                                            if (activePack.status == TranslationPackStatus.DOWNLOADING) {
+                                                stringResource(R.string.reader_download_in_progress)
+                                            } else {
+                                                stringResource(R.string.translator_download_engine)
+                                            }
+                                        )
                                     }
                                 } else {
                                     Icon(
                                         Icons.Rounded.CloudDone,
-                                        contentDescription = "جاهز دون اتصال",
+                                        contentDescription = stringResource(R.string.translator_ready_offline_cd),
                                         tint = MaterialTheme.colorScheme.tertiary
                                     )
                                 }
@@ -343,11 +352,11 @@ fun FileTranslatorScreen(
                                 Icon(Icons.Rounded.UploadFile, contentDescription = null)
                             }
                             Spacer(Modifier.width(8.dp))
-                            Text("استيراد ملف نصي للترجمة (TXT / EPUB)")
+                            Text(stringResource(R.string.translator_import_button))
                         }
 
                         Text(
-                            text = "يدعم TXT وEPUB حالياً مع الحفاظ على العناوين والفقرات، وقابلية إضافة PDF لاحقاً.",
+                            text = stringResource(R.string.translator_supported_formats),
                             style = MaterialTheme.typography.labelSmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
@@ -377,7 +386,7 @@ fun FileTranslatorScreen(
                                 onClick = onDismissBanner,
                                 modifier = Modifier.minimumInteractiveComponentSize()
                             ) {
-                                Icon(Icons.Rounded.Close, contentDescription = "إغلاق التنبيه")
+                                Icon(Icons.Rounded.Close, contentDescription = stringResource(R.string.common_dismiss_banner))
                             }
                         }
                     }
@@ -386,7 +395,7 @@ fun FileTranslatorScreen(
 
             item {
                 EditorialSectionHeader(
-                    titleAr = "مهام الترجمة",
+                    titleAr = stringResource(R.string.translator_jobs_title),
                     folioTag = "Tâches",
                     countBadge = "${jobs.size}"
                 )
@@ -419,9 +428,9 @@ fun FileTranslatorScreen(
                                     modifier = Modifier.size(26.dp)
                                 )
                             }
-                            Text("لا توجد ملفات قيد الترجمة بعد", style = MaterialTheme.typography.titleMedium)
+                            Text(stringResource(R.string.translator_empty_title), style = MaterialTheme.typography.titleMedium)
                             Text(
-                                "استورد ملف TXT أو EPUB بالفرنسية أو الإنجليزية؛ سيُقسَّم تلقائياً إلى دفعات وتستمر ترجمته في الخلفية مع حفظ كل جزء منجز.",
+                                stringResource(R.string.translator_empty_subtitle),
                                 style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
@@ -450,7 +459,7 @@ fun FileTranslatorScreen(
                         },
                         onPreview = { onOpenPreview(job.id) },
                         onExport = { exportChoiceJob = job },
-                        onDelete = { onDeleteJob(job.id) }
+                        onDelete = { pendingDeleteJob = job }
                     )
                 }
             }
@@ -609,7 +618,34 @@ fun FileTranslatorScreen(
             },
             dismissButton = {
                 TextButton(onClick = { languageResetConfirm = null }) {
-                    Text("إلغاء")
+                    Text(stringResource(R.string.common_cancel))
+                }
+            }
+        )
+    }
+
+    pendingDeleteJob?.let { targetJob ->
+        AlertDialog(
+            onDismissRequest = { pendingDeleteJob = null },
+            title = { Text(stringResource(R.string.confirm_delete_job_title)) },
+            text = { Text(stringResource(R.string.confirm_delete_job_message, targetJob.title)) },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        pendingDeleteJob = null
+                        onDeleteJob(targetJob.id)
+                    },
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = MaterialTheme.colorScheme.error,
+                        contentColor = MaterialTheme.colorScheme.onError
+                    )
+                ) {
+                    Text(stringResource(R.string.common_delete))
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { pendingDeleteJob = null }) {
+                    Text(stringResource(R.string.common_cancel))
                 }
             }
         )

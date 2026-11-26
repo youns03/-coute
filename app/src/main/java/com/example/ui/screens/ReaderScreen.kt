@@ -113,6 +113,7 @@ fun ReaderScreen(
     onTranslateOrToggleSentence: (SentenceEntity) -> Unit,
     onTranslateOrToggleParagraph: (Int, List<SentenceEntity>) -> Unit,
     onSaveSentenceVocab: (SentenceEntity, String) -> Unit,
+    onSaveParagraphVocab: (List<SentenceEntity>, String) -> Unit = { _, _ -> },
     onWordTapped: (String, SentenceEntity) -> Unit,
     onPronounceWord: (String) -> Unit,
     onSaveWordVocab: () -> Unit,
@@ -565,25 +566,56 @@ fun ReaderScreen(
                                                     HorizontalDivider(color = atelier.cardBorder.copy(alpha = 0.6f))
                                                     Row(
                                                         modifier = Modifier.fillMaxWidth(),
-                                                        horizontalArrangement = Arrangement.End
+                                                        horizontalArrangement = Arrangement.SpaceBetween,
+                                                        verticalAlignment = Alignment.CenterVertically
                                                     ) {
-                                                        paragraphSentences.forEach { sentence ->
-                                                            val translated = sentence.cachedArabicTranslation
-                                                            if (!translated.isNullOrBlank()) {
-                                                                IconButton(
-                                                                    onClick = { onSaveSentenceVocab(sentence, translated) },
-                                                                    modifier = Modifier
-                                                                        .minimumInteractiveComponentSize()
-                                                                        .testTag("save_sentence_${sentence.sentenceIndex}")
-                                                                ) {
-                                                                    Icon(
-                                                                        Icons.Rounded.BookmarkAdd,
-                                                                        contentDescription = stringResource(
-                                                                            R.string.reader_save_sentence_translation_content_description
-                                                                        ),
-                                                                        tint = MaterialTheme.colorScheme.tertiary,
-                                                                        modifier = Modifier.size(18.dp)
+                                                        if (!cachedParagraphTranslation.isNullOrBlank()) {
+                                                            TextButton(
+                                                                onClick = {
+                                                                    onSaveParagraphVocab(
+                                                                        paragraphSentences,
+                                                                        cachedParagraphTranslation
                                                                     )
+                                                                },
+                                                                modifier = Modifier.testTag("save_paragraph_$paragraphIndex")
+                                                            ) {
+                                                                Icon(
+                                                                    Icons.Rounded.BookmarkAdd,
+                                                                    contentDescription = stringResource(
+                                                                        R.string.reader_save_paragraph_content_description
+                                                                    ),
+                                                                    tint = MaterialTheme.colorScheme.tertiary,
+                                                                    modifier = Modifier.size(18.dp)
+                                                                )
+                                                                Spacer(Modifier.width(5.dp))
+                                                                Text(
+                                                                    stringResource(R.string.reader_save_paragraph_to_vocabulary),
+                                                                    style = MaterialTheme.typography.labelMedium,
+                                                                    color = MaterialTheme.colorScheme.tertiary
+                                                                )
+                                                            }
+                                                        } else {
+                                                            Spacer(Modifier.width(1.dp))
+                                                        }
+                                                        Row(horizontalArrangement = Arrangement.End) {
+                                                            paragraphSentences.forEach { sentence ->
+                                                                val translated = sentence.cachedArabicTranslation
+                                                                if (!translated.isNullOrBlank()) {
+                                                                    IconButton(
+                                                                        onClick = { onSaveSentenceVocab(sentence, translated) },
+                                                                        modifier = Modifier
+                                                                            .minimumInteractiveComponentSize()
+                                                                            .testTag("save_sentence_${sentence.sentenceIndex}")
+                                                                    ) {
+                                                                        Icon(
+                                                                            Icons.Rounded.BookmarkAdd,
+                                                                            contentDescription = stringResource(
+                                                                                R.string.reader_save_sentence_translation_content_description
+                                                                            ),
+                                                                            tint = MaterialTheme.colorScheme.tertiary,
+                                                                            modifier = Modifier.size(18.dp)
+                                                                        )
+                                                                    }
                                                                 }
                                                             }
                                                         }

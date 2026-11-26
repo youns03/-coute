@@ -22,7 +22,9 @@ import androidx.compose.material.icons.rounded.Download
 import androidx.compose.material.icons.rounded.Gavel
 import androidx.compose.material.icons.rounded.Memory
 import androidx.compose.material.icons.rounded.Translate
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
@@ -32,16 +34,23 @@ import androidx.compose.material3.Slider
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.minimumInteractiveComponentSize
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.example.R
 import com.example.data.UserSettings
 import com.example.domain.AcceleratorMode
 import com.example.domain.SpeedControlMode
@@ -75,6 +84,7 @@ fun SettingsScreen(
     modifier: Modifier = Modifier
 ) {
     val atelier = LocalEcouteAtelierColors.current
+    var pendingDeletePack by remember { mutableStateOf<TranslationDirection?>(null) }
 
     Box(modifier = modifier.fillMaxSize(), contentAlignment = Alignment.TopCenter) {
         LazyColumn(
@@ -90,9 +100,9 @@ fun SettingsScreen(
                         Row(verticalAlignment = Alignment.CenterVertically) {
                             Icon(Icons.Rounded.Memory, contentDescription = null, tint = MaterialTheme.colorScheme.secondary)
                             Spacer(Modifier.width(8.dp))
-                            Text("عتاد التنفيذ والسرعة", style = MaterialTheme.typography.titleMedium)
+                            Text(stringResource(R.string.settings_hardware_title), style = MaterialTheme.typography.titleMedium)
                         }
-                        Text("مسرّع التشغيل لـ Kokoro LiteRT:", style = MaterialTheme.typography.labelMedium)
+                        Text(stringResource(R.string.settings_kokoro_accelerator), style = MaterialTheme.typography.labelMedium)
                         Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
                             AcceleratorMode.entries.forEach { mode ->
                                 FilterChip(
@@ -105,7 +115,7 @@ fun SettingsScreen(
 
                         HorizontalDivider(color = atelier.cardBorder.copy(alpha = 0.6f))
 
-                        Text("آلية تغيير سرعة الصوت:", style = MaterialTheme.typography.labelMedium)
+                        Text(stringResource(R.string.settings_speed_mode), style = MaterialTheme.typography.labelMedium)
                         Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
                             SpeedControlMode.entries.forEach { mode ->
                                 FilterChip(
@@ -125,7 +135,7 @@ fun SettingsScreen(
                         Row(verticalAlignment = Alignment.CenterVertically) {
                             Icon(Icons.Rounded.Translate, contentDescription = null, tint = MaterialTheme.colorScheme.secondary)
                             Spacer(Modifier.width(8.dp))
-                            Text("محركات الترجمة المحلية (المرحلة الأولى: اتجاهان فقط)", style = MaterialTheme.typography.titleMedium)
+                            Text(stringResource(R.string.settings_translation_title), style = MaterialTheme.typography.titleMedium)
                         }
                         Text(
                             translationState.qualityDisclaimer,
@@ -169,18 +179,21 @@ fun SettingsScreen(
                                                 Icon(Icons.Rounded.Download, contentDescription = null)
                                                 Spacer(Modifier.width(6.dp))
                                                 Text(
-                                                    if (packState.status == TranslationPackStatus.DOWNLOADING) "جاري التنزيل..."
-                                                    else "تنزيل (${dir.shortBadge})"
+                                                    if (packState.status == TranslationPackStatus.DOWNLOADING) {
+                                                        stringResource(R.string.reader_download_in_progress)
+                                                    } else {
+                                                        stringResource(R.string.reader_download_translation_pack, dir.shortBadge)
+                                                    }
                                                 )
                                             }
                                         } else {
                                             OutlinedButton(
-                                                onClick = { onDeleteTranslationPack(dir) },
+                                                onClick = { pendingDeletePack = dir },
                                                 modifier = Modifier.minimumInteractiveComponentSize()
                                             ) {
                                                 Icon(Icons.Rounded.DeleteOutline, contentDescription = null)
                                                 Spacer(Modifier.width(6.dp))
-                                                Text("حذف الحزمة")
+                                                Text(stringResource(R.string.models_delete_pack))
                                             }
                                         }
                                     }
@@ -190,7 +203,7 @@ fun SettingsScreen(
 
                         HorizontalDivider(color = atelier.cardBorder)
                         Text(
-                            "مرجع أوزان OPUS-MT الستة (1,836 MB إجمالاً — المرحلة 1 تحصر التنزيل باتجاه العربية):",
+                            stringResource(R.string.settings_opus_reference_note),
                             style = MaterialTheme.typography.labelMedium
                         )
                         TranslationModelCatalog.opusReferenceMatrix.forEach { spec ->
@@ -220,22 +233,22 @@ fun SettingsScreen(
             item {
                 AtelierCard(modifier = Modifier.fillMaxWidth()) {
                     Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                        Text("إعدادات القراءة والذاكرة المؤقتة", style = MaterialTheme.typography.titleMedium)
+                        Text(stringResource(R.string.settings_reading_cache_title), style = MaterialTheme.typography.titleMedium)
                         Row(
                             modifier = Modifier.fillMaxWidth(),
                             horizontalArrangement = Arrangement.SpaceBetween,
                             verticalAlignment = Alignment.CenterVertically
                         ) {
-                            Text("الوضع الليلي", style = MaterialTheme.typography.bodyMedium)
+                            Text(stringResource(R.string.settings_night_mode), style = MaterialTheme.typography.bodyMedium)
                             Switch(checked = settings.nightMode, onCheckedChange = onNightModeChange)
                         }
                         Text(
-                            "حجم الخط الافتراضي: ${settings.readerFontSizeSp.toInt()} sp",
+                            stringResource(R.string.settings_font_size, settings.readerFontSizeSp.toInt()),
                             style = MaterialTheme.typography.labelMedium
                         )
                         Slider(value = settings.readerFontSizeSp, onValueChange = onFontSizeChange, valueRange = 15f..30f)
                         Text(
-                            "تباعد الأسطر: ${"%.2f".format(settings.readerLineHeightMultiplier)}x",
+                            stringResource(R.string.settings_line_height, "%.2f".format(settings.readerLineHeightMultiplier)),
                             style = MaterialTheme.typography.labelMedium
                         )
                         Slider(
@@ -281,7 +294,7 @@ fun SettingsScreen(
                         ) {
                             Icon(Icons.Rounded.CleaningServices, contentDescription = null)
                             Spacer(Modifier.width(6.dp))
-                            Text("مسح ذاكرة الصوت المؤقتة (cacheDir)")
+                            Text(stringResource(R.string.settings_clear_audio_cache))
                         }
                     }
                 }
@@ -290,7 +303,7 @@ fun SettingsScreen(
             item {
                 AtelierCard(modifier = Modifier.fillMaxWidth()) {
                     Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                        Text("معلومات جهاز الاختبار الفعلي", style = MaterialTheme.typography.titleSmall)
+                        Text(stringResource(R.string.settings_device_info_title), style = MaterialTheme.typography.titleSmall)
                         Row(
                             modifier = Modifier.fillMaxWidth(),
                             horizontalArrangement = Arrangement.spacedBy(8.dp)
@@ -321,7 +334,7 @@ fun SettingsScreen(
                 ) {
                     Icon(Icons.Rounded.Gavel, contentDescription = null, tint = MaterialTheme.colorScheme.secondary)
                     EditorialSectionHeader(
-                        titleAr = "سجل التراخيص وحقوق النشر (Section 14)",
+                        titleAr = stringResource(R.string.settings_licenses_title),
                         folioTag = "Licences",
                         countBadge = "${ModelCatalog.licenseLedger.size}",
                         modifier = Modifier.weight(1f)
@@ -358,6 +371,33 @@ fun SettingsScreen(
 
             item { Spacer(Modifier.height(72.dp)) }
         }
+    }
+
+    pendingDeletePack?.let { targetDir ->
+        AlertDialog(
+            onDismissRequest = { pendingDeletePack = null },
+            title = { Text(stringResource(R.string.confirm_delete_translation_pack_title)) },
+            text = { Text(stringResource(R.string.confirm_delete_translation_pack_message, targetDir.displayNameAr)) },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        pendingDeletePack = null
+                        onDeleteTranslationPack(targetDir)
+                    },
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = MaterialTheme.colorScheme.error,
+                        contentColor = MaterialTheme.colorScheme.onError
+                    )
+                ) {
+                    Text(stringResource(R.string.common_delete))
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { pendingDeletePack = null }) {
+                    Text(stringResource(R.string.common_cancel))
+                }
+            }
+        )
     }
 }
 

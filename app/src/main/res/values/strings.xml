@@ -77,4 +77,131 @@
     <string name="reader_exit_immersive">الخروج من وضع القراءة الغامر</string>
     <string name="library_continue_reading">متابعة القراءة</string>
     <string name="library_start_reading">ابدأ القراءة</string>
+
+    <string name="common_cancel">إلغاء</string>
+    <string name="common_delete">حذف</string>
+    <string name="common_ok">حسناً</string>
+    <string name="common_dismiss_banner">إغلاق الإشعار</string>
+
+    <string name="nav_library">المكتبة</string>
+    <string name="nav_reader">القارئ</string>
+    <string name="nav_translator">المترجم</string>
+    <string name="nav_player">المشغّل</string>
+    <string name="nav_models">النماذج</string>
+    <string name="nav_vocab">المفردات</string>
+    <string name="nav_settings">الإعدادات</string>
+
+    <string name="title_library">المكتبة</string>
+    <string name="title_reader">القارئ المتزامن</string>
+    <string name="title_translator">مترجم الملفات المحلي</string>
+    <string name="title_player">المشغّل ومختبر الصوت</string>
+    <string name="title_models">إدارة النماذج</string>
+    <string name="title_vocab">قاموس المفردات</string>
+    <string name="title_settings">الإعدادات والتراخيص</string>
+
+    <string name="confirm_delete_book_title">تأكيد حذف الكتاب</string>
+    <string name="confirm_delete_book_message">هل تريد حذف كتاب «%1$s» وجميع فصوله وترجماته المحفوظة؟ لا يمكن التراجع عن هذا الإجراء.</string>
+    <string name="confirm_delete_model_title">تأكيد حذف النموذج الصوتي</string>
+    <string name="confirm_delete_model_message">هل تريد حذف ملفات النموذج «%1$s» من التخزين المحلي؟</string>
+    <string name="confirm_delete_translation_pack_title">تأكيد حذف حزمة الترجمة</string>
+    <string name="confirm_delete_translation_pack_message">هل تريد حذف حزمة الترجمة «%1$s»؟ يمكنك إعادة تنزيلها لاحقاً.</string>
+    <string name="confirm_delete_vocab_title">تأكيد حذف المفردة</string>
+    <string name="confirm_delete_vocab_message">هل تريد حذف «%1$s» من قاموس المفردات؟</string>
+    <string name="confirm_delete_job_title">تأكيد حذف مهمة الترجمة</string>
+    <string name="confirm_delete_job_message">هل تريد حذف مهمة «%1$s» وجميع أجزائها المترجمة؟</string>
+    <string name="confirm_clear_reports_title">تأكيد مسح التقارير</string>
+    <string name="confirm_clear_reports_message">هل تريد مسح جميع تقارير قياس الأداء المحفوظة من السجل؟</string>
+
+    <string name="library_search_placeholder">ابحث في مكتبة الكتب الفرنسية والإنجليزية...</string>
+    <string name="library_section_title">كتبك ونصوصك</string>
+    <string name="library_empty_title">لا توجد كتب مطابقة لبحثك</string>
+    <string name="library_empty_subtitle">استورد ملف TXT أو EPUB بالفرنسية أو الإنجليزية لبدء القراءة والترجمة دون إنترنت.</string>
+    <string name="library_hero_content_description">مكتبة إيكوت لتعلم اللغات</string>
+    <string name="library_hero_headline">اقرأ الفرنسية والإنجليزية واستمع محلياً</string>
+    <string name="library_hero_subheadline">مزامنة النطق كلمة بكلمة، ترجمة جمل وفقرات للعربية، وتشغيل دون إنترنت.</string>
+    <string name="library_import_button">استيراد TXT / EPUB</string>
+    <string name="library_models_button">النماذج الصوتية</string>
+    <string name="library_delete_book_cd">حذف الكتاب</string>
+    <string name="library_book_stats">%1$d فصول • %2$d جملة</string>
+
+    <string name="reader_save_paragraph_to_vocabulary">حفظ الفقرة في القاموس</string>
+    <string name="reader_save_paragraph_content_description">حفظ الفقرة وترجمتها في قاموس المفردات</string>
+
+    <string name="models_catalog_title">كتالوج النماذج الصوتية</string>
+    <string name="models_primary_candidate">مرشح رئيسي</string>
+    <string name="models_translation_packs_title">حزم الترجمة المحلية المشتركة</string>
+    <string name="models_download_pack">تنزيل الحزمة</string>
+    <string name="models_delete_pack">حذف الحزمة</string>
+    <string name="models_storage_title">تفصيل التخزين والمساحة الحرة</string>
+    <string name="models_refresh_storage_cd">تحديث المساحة</string>
+    <string name="models_delete_model_cd">حذف النموذج</string>
+    <string name="models_activate_button">تفعيل النموذج</string>
+    <string name="models_active_button">نشط حالياً</string>
+    <string name="models_pause_button">إيقاف مؤقت</string>
+    <string name="models_resume_button">استكمال</string>
+    <string name="models_download_button">تنزيل</string>
+    <string name="models_retry_button">إعادة المحاولة</string>
+    <string name="models_incompatible_button">غير متوافق مع الجهاز</string>
+    <string name="models_verifying_button">جاري الفحص...</string>
+
+    <string name="vocab_search_placeholder">ابحث بالفرنسية أو الإنجليزية أو العربية...</string>
+    <string name="vocab_empty_cd">قاموس المفردات فارغ</string>
+    <string name="vocab_empty_title">قاموسك الشخصي فارغ حالياً</string>
+    <string name="vocab_empty_subtitle">أثناء قراءة أي نص، اضغط على أي كلمة لعرض ترجمتها العربية وحفظها هنا للمراجعة والاستماع.</string>
+    <string name="vocab_section_title">بطاقات المفردات المحفوظة</string>
+    <string name="vocab_pronounce_cd">نطق المفردة</string>
+    <string name="vocab_delete_cd">حذف المفردة</string>
+    <string name="vocab_source_label">المصدر: %1$s</string>
+
+    <string name="translator_header_subtitle">ترجمة المستندات الطويلة على دفعات • تستمر في الخلفية دون إنترنت</string>
+    <string name="translator_source_lang">لغة المصدر</string>
+    <string name="translator_target_lang">اللغة الهدف (العربية)</string>
+    <string name="translator_shared_engine">المحرك المشترك: %1$s</string>
+    <string name="translator_download_engine">تنزيل المحرك</string>
+    <string name="translator_ready_offline_cd">جاهز دون اتصال</string>
+    <string name="translator_import_button">استيراد ملف نصي للترجمة (TXT / EPUB)</string>
+    <string name="translator_supported_formats">يدعم ملفات TXT وEPUB حالياً مع الحفاظ على العناوين والفقرات.</string>
+    <string name="translator_jobs_title">مهام الترجمة</string>
+    <string name="translator_empty_title">لا توجد ملفات قيد الترجمة بعد</string>
+    <string name="translator_empty_subtitle">استورد ملف TXT أو EPUB بالفرنسية أو الإنجليزية؛ سيُقسَّم تلقائياً إلى دفعات وتستمر ترجمته في الخلفية مع حفظ كل جزء منجز.</string>
+    <string name="translator_delete_job_cd">حذف المهمة</string>
+    <string name="translator_export_completed_cd">تصدير الأجزاء المنجزة</string>
+
+    <string name="settings_hardware_title">عتاد التنفيذ والسرعة</string>
+    <string name="settings_kokoro_accelerator">مسرّع التشغيل لـ Kokoro LiteRT:</string>
+    <string name="settings_speed_mode">آلية تغيير سرعة الصوت:</string>
+    <string name="settings_translation_title">محركات الترجمة المحلية (اتجاهان فقط)</string>
+    <string name="settings_opus_reference_note">مرجع أوزان OPUS-MT الستة (1,836 MB إجمالاً — التحميل مقتصر على الترجمة إلى العربية):</string>
+    <string name="settings_reading_cache_title">إعدادات القراءة والذاكرة المؤقتة</string>
+    <string name="settings_night_mode">الوضع الليلي</string>
+    <string name="settings_font_size">حجم الخط الافتراضي: %1$d sp</string>
+    <string name="settings_line_height">تباعد الأسطر: %1$sx</string>
+    <string name="settings_clear_audio_cache">مسح ذاكرة الصوت المؤقتة</string>
+    <string name="settings_device_info_title">معلومات جهاز التشغيل الفعلي</string>
+    <string name="settings_licenses_title">سجل التراخيص وحقوق النشر</string>
+
+    <string name="player_tab_player">مشغّل الصوت</string>
+    <string name="player_tab_lab">مختبر الجودة</string>
+    <string name="player_no_active_playback">لا يوجد تشغيل نشط</string>
+    <string name="player_start_hint">ابدأ التشغيل من القارئ أو جرّب جملاً في مختبر الصوت</string>
+    <string name="player_prev_cd">الجملة السابقة</string>
+    <string name="player_replay_cd">إعادة الجملة الحالية</string>
+    <string name="player_play_pause_cd">تشغيل أو إيقاف</string>
+    <string name="player_pause_label">إيقاف مؤقت</string>
+    <string name="player_play_label">تشغيل</string>
+    <string name="player_next_cd">الجملة التالية</string>
+    <string name="player_stop_cd">إيقاف كامل</string>
+    <string name="player_speed_label">سرعة القراءة:</string>
+    <string name="player_repeat_label">تكرار</string>
+    <string name="player_engine_telemetry_title">حالة المحرك والذاكرة في الوقت الفعلي</string>
+    <string name="player_release_ram">تحرير RAM</string>
+    <string name="player_lab_title">مختبر قياس جودة الصوت</string>
+    <string name="player_lab_corpus_title">مجموعة النصوص المرجعية</string>
+    <string name="player_lab_reports_title">النتائج الفعلية المسجلة</string>
+    <string name="player_lab_clear_reports_cd">مسح التقارير</string>
+    <string name="playback_status_idle">جاهز</string>
+    <string name="playback_status_buffering">جارٍ التجهيز</string>
+    <string name="playback_status_playing">قيد التشغيل</string>
+    <string name="playback_status_paused">متوقف مؤقتاً</string>
+    <string name="playback_status_error">خطأ</string>
 </resources>

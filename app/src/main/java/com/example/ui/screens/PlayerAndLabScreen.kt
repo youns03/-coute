@@ -32,6 +32,7 @@ import androidx.compose.material.icons.rounded.Science
 import androidx.compose.material.icons.rounded.SkipNext
 import androidx.compose.material.icons.rounded.SkipPrevious
 import androidx.compose.material.icons.rounded.Stop
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
@@ -48,6 +49,7 @@ import androidx.compose.material3.SegmentedButtonDefaults
 import androidx.compose.material3.SingleChoiceSegmentedButtonRow
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.minimumInteractiveComponentSize
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
@@ -62,9 +64,11 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
+import com.example.R
 import com.example.audio.PlaybackStatus
 import com.example.audio.PlaybackUiState
 import com.example.data.BenchmarkReportEntity
@@ -123,7 +127,7 @@ fun PlayerAndLabScreen(
                     shape = SegmentedButtonDefaults.itemShape(index = 0, count = 2),
                     icon = { Icon(Icons.Rounded.GraphicEq, contentDescription = null) }
                 ) {
-                    Text("مشغّل الصوت")
+                    Text(stringResource(R.string.player_tab_player))
                 }
                 SegmentedButton(
                     selected = selectedTab == 1,
@@ -132,7 +136,7 @@ fun PlayerAndLabScreen(
                     icon = { Icon(Icons.Rounded.Science, contentDescription = null) },
                     modifier = Modifier.testTag("audio_lab_tab")
                 ) {
-                    Text("مختبر الجودة (المرحلة 0)")
+                    Text(stringResource(R.string.player_tab_lab))
                 }
             }
 
@@ -228,14 +232,14 @@ private fun PlayerTabContent(
                             }
                             Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
                                 Text(
-                                    text = playbackState.bookTitle.ifBlank { "لا يوجد تشغيل نشط" },
+                                    text = playbackState.bookTitle.ifBlank { stringResource(R.string.player_no_active_playback) },
                                     style = MaterialTheme.typography.titleMedium
                                 )
                                 Text(
                                     text = if (playbackState.totalSentencesInChapter > 0) {
                                         "${playbackState.chapterTitle} • جملة ${playbackState.sentenceIndex + 1} / ${playbackState.totalSentencesInChapter}"
                                     } else {
-                                        "ابدأ التشغيل من القارئ أو جرّب جملاً في مختبر الصوت"
+                                        stringResource(R.string.player_start_hint)
                                     },
                                     style = MaterialTheme.typography.bodySmall,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant
@@ -243,8 +247,15 @@ private fun PlayerTabContent(
                             }
                         }
                         Spacer(Modifier.width(8.dp))
+                        val statusLabel = when (playbackState.status) {
+                            PlaybackStatus.IDLE -> stringResource(R.string.playback_status_idle)
+                            PlaybackStatus.BUFFERING -> stringResource(R.string.playback_status_buffering)
+                            PlaybackStatus.PLAYING -> stringResource(R.string.playback_status_playing)
+                            PlaybackStatus.PAUSED -> stringResource(R.string.playback_status_paused)
+                            PlaybackStatus.ERROR -> stringResource(R.string.playback_status_error)
+                        }
                         MonospaceMetricPill(
-                            text = playbackState.status.name,
+                            text = statusLabel,
                             containerColor = if (isPlaying) MaterialTheme.colorScheme.secondaryContainer else MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.7f),
                             contentColor = if (isPlaying) MaterialTheme.colorScheme.secondary else MaterialTheme.colorScheme.primary
                         )
@@ -300,10 +311,10 @@ private fun PlayerTabContent(
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         IconButton(onClick = onPrev, modifier = Modifier.minimumInteractiveComponentSize()) {
-                            Icon(Icons.Rounded.SkipPrevious, contentDescription = "الجملة السابقة")
+                            Icon(Icons.Rounded.SkipPrevious, contentDescription = stringResource(R.string.player_prev_cd))
                         }
                         IconButton(onClick = onReplaySentence, modifier = Modifier.minimumInteractiveComponentSize()) {
-                            Icon(Icons.Rounded.Replay, contentDescription = "إعادة الجملة الحالية")
+                            Icon(Icons.Rounded.Replay, contentDescription = stringResource(R.string.player_replay_cd))
                         }
                         Button(
                             onClick = onTogglePlayPause,
@@ -319,22 +330,25 @@ private fun PlayerTabContent(
                         ) {
                             Icon(
                                 if (isPlaying) Icons.Rounded.Pause else Icons.Rounded.PlayArrow,
-                                contentDescription = "تشغيل أو إيقاف"
+                                contentDescription = stringResource(R.string.player_play_pause_cd)
                             )
                             Spacer(Modifier.width(6.dp))
-                            Text(if (isPlaying) "إيقاف مؤقت" else "تشغيل")
+                            Text(
+                                if (isPlaying) stringResource(R.string.player_pause_label)
+                                else stringResource(R.string.player_play_label)
+                            )
                         }
                         IconButton(onClick = onNext, modifier = Modifier.minimumInteractiveComponentSize()) {
-                            Icon(Icons.Rounded.SkipNext, contentDescription = "الجملة التالية")
+                            Icon(Icons.Rounded.SkipNext, contentDescription = stringResource(R.string.player_next_cd))
                         }
                         IconButton(onClick = onStop, modifier = Modifier.minimumInteractiveComponentSize()) {
-                            Icon(Icons.Rounded.Stop, contentDescription = "إيقاف كامل")
+                            Icon(Icons.Rounded.Stop, contentDescription = stringResource(R.string.player_stop_cd))
                         }
                     }
 
                     // Speed Pills & Repeat Current Sentence
                     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                        Text("سرعة القراءة:", style = MaterialTheme.typography.labelMedium)
+                        Text(stringResource(R.string.player_speed_label), style = MaterialTheme.typography.labelMedium)
                         Row(
                             modifier = Modifier.fillMaxWidth(),
                             horizontalArrangement = Arrangement.spacedBy(8.dp),
@@ -359,7 +373,7 @@ private fun PlayerTabContent(
                                 leadingIcon = {
                                     Icon(Icons.Rounded.RepeatOne, contentDescription = null, modifier = Modifier.size(16.dp))
                                 },
-                                label = { Text("تكرار") }
+                                label = { Text(stringResource(R.string.player_repeat_label)) }
                             )
                         }
                     }
@@ -382,10 +396,10 @@ private fun PlayerTabContent(
                         Row(verticalAlignment = Alignment.CenterVertically) {
                             Icon(Icons.Rounded.Memory, contentDescription = null, tint = MaterialTheme.colorScheme.secondary)
                             Spacer(Modifier.width(8.dp))
-                            Text("حالة المحرك والذاكرة في الوقت الفعلي", style = MaterialTheme.typography.titleSmall)
+                            Text(stringResource(R.string.player_engine_telemetry_title), style = MaterialTheme.typography.titleSmall)
                         }
                         OutlinedButton(onClick = onReleaseEngine) {
-                            Text("تحرير RAM")
+                            Text(stringResource(R.string.player_release_ram))
                         }
                     }
 
@@ -482,6 +496,7 @@ private fun AudioLabTabContent(
         mutableStateOf(installedModels.firstOrNull()?.spec?.id ?: "")
     }
     var testSpeed by remember { mutableFloatStateOf(1.0f) }
+    var confirmClearReports by remember { mutableStateOf(false) }
 
     LazyColumn(
         modifier = Modifier.fillMaxSize(),
@@ -496,7 +511,7 @@ private fun AudioLabTabContent(
                 Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
                     Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         Icon(Icons.Rounded.Science, contentDescription = null, tint = MaterialTheme.colorScheme.secondary)
-                        Text("مختبر قياس جودة الصوت (Section 13)", style = MaterialTheme.typography.titleMedium)
+                        Text(stringResource(R.string.player_lab_title), style = MaterialTheme.typography.titleMedium)
                     }
                     Text(
                         "يقيس الأداء الفعلي على جهازك الحالي: زمن التحميل، زمن أول صوت (TTFA)، معامل الزمن الحقيقي (RTF)، واستهلاك RAM الحقيقي مع حفظ عينات WAV للاستماع البشري.",
@@ -582,7 +597,7 @@ private fun AudioLabTabContent(
         if (installedModels.isNotEmpty() && selectedModelId.isNotBlank()) {
             item {
                 EditorialSectionHeader(
-                    titleAr = "مجموعة النصوص المرجعية (Section 13)",
+                    titleAr = stringResource(R.string.player_lab_corpus_title),
                     folioTag = "Corpus",
                     countBadge = "${BenchmarkCorpus.items.size}"
                 )
@@ -618,16 +633,16 @@ private fun AudioLabTabContent(
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     EditorialSectionHeader(
-                        titleAr = "النتائج الفعلية المسجلة",
+                        titleAr = stringResource(R.string.player_lab_reports_title),
                         folioTag = "Benchmarks",
                         countBadge = "${reports.size}",
                         modifier = Modifier.weight(1f)
                     )
                     IconButton(
-                        onClick = onClearReports,
+                        onClick = { confirmClearReports = true },
                         modifier = Modifier.minimumInteractiveComponentSize()
                     ) {
-                        Icon(Icons.Rounded.DeleteSweep, contentDescription = "مسح التقارير")
+                        Icon(Icons.Rounded.DeleteSweep, contentDescription = stringResource(R.string.player_lab_clear_reports_cd))
                     }
                 }
             }
@@ -699,5 +714,32 @@ private fun AudioLabTabContent(
                 }
             }
         }
+    }
+
+    if (confirmClearReports) {
+        AlertDialog(
+            onDismissRequest = { confirmClearReports = false },
+            title = { Text(stringResource(R.string.confirm_clear_reports_title)) },
+            text = { Text(stringResource(R.string.confirm_clear_reports_message)) },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        confirmClearReports = false
+                        onClearReports()
+                    },
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = MaterialTheme.colorScheme.error,
+                        contentColor = MaterialTheme.colorScheme.onError
+                    )
+                ) {
+                    Text(stringResource(R.string.common_delete))
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { confirmClearReports = false }) {
+                    Text(stringResource(R.string.common_cancel))
+                }
+            }
+        )
     }
 }

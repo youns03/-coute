@@ -14,11 +14,10 @@ import com.example.domain.ModelSpec
 import com.example.domain.StorageBreakdown
 import com.example.tts.MemoryDiagnostics
 import com.example.tts.TtsEngineManager
-import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.combine
-import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 data class ModelUiEntry(
     val spec: ModelSpec,
@@ -196,7 +195,7 @@ class ModelRepository(
             .build()
         workManager.enqueueUniqueWork(
             "model_dl_$modelId",
-            ExistingWorkPolicy.REPLACE,
+            ExistingWorkPolicy.KEEP,
             request
         )
     }
@@ -205,12 +204,10 @@ class ModelRepository(
         workManager.cancelUniqueWork("model_dl_$modelId")
     }
 
-    fun cancelAndDiscardDownload(modelId: String) {
-        workManager.cancelUniqueWork("model_dl_$modelId")
+    suspend fun cancelAndDiscardDownload(modelId: String) = withContext(Dispatchers.IO) {
+        runCatching { workManager.cancelUniqueWork("model_dl_$modelId").result.get() }
         storageManager.getTempPartFile(modelId).delete()
-        CoroutineScope(Dispatchers.IO).launch {
-            modelRecordDao.delete(modelId)
-        }
+        modelRecordDao.delete(modelId)
     }
 
     suspend fun deleteInstalledModel(modelId: String, activeModelId: String): Result<Unit> {

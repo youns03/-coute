@@ -66,8 +66,10 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.annotation.StringRes
 import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.LayoutDirection
@@ -118,7 +120,7 @@ class MainActivity : ComponentActivity() {
 }
 
 private data class TopLevelNavItem(
-    val label: String,
+    @StringRes val labelRes: Int,
     val selectedIcon: ImageVector,
     val unselectedIcon: ImageVector,
     val testTag: String,
@@ -171,35 +173,35 @@ fun EcouteAppRoot(isExpandedNav: Boolean) {
 
     val primaryTabs = listOf(
         TopLevelNavItem(
-            label = "المكتبة",
+            labelRes = R.string.nav_library,
             selectedIcon = Icons.AutoMirrored.Rounded.LibraryBooks,
             unselectedIcon = Icons.AutoMirrored.Outlined.LibraryBooks,
             testTag = "nav_library",
             route = AppRoute.Library
         ),
         TopLevelNavItem(
-            label = "القارئ",
+            labelRes = R.string.nav_reader,
             selectedIcon = Icons.Rounded.AutoStories,
             unselectedIcon = Icons.Outlined.AutoStories,
             testTag = "nav_reader",
             route = AppRoute.Reader(defaultBookId)
         ),
         TopLevelNavItem(
-            label = "المترجم",
+            labelRes = R.string.nav_translator,
             selectedIcon = Icons.Rounded.Translate,
             unselectedIcon = Icons.Outlined.Translate,
             testTag = "nav_file_translator",
             route = AppRoute.FileTranslator
         ),
         TopLevelNavItem(
-            label = "المشغّل",
+            labelRes = R.string.nav_player,
             selectedIcon = Icons.Rounded.GraphicEq,
             unselectedIcon = Icons.Outlined.GraphicEq,
             testTag = "nav_player",
             route = AppRoute.PlayerLab
         ),
         TopLevelNavItem(
-            label = "النماذج",
+            labelRes = R.string.nav_models,
             selectedIcon = Icons.Rounded.CloudDownload,
             unselectedIcon = Icons.Outlined.CloudDownload,
             testTag = "nav_models",
@@ -213,19 +215,20 @@ fun EcouteAppRoot(isExpandedNav: Boolean) {
                 saveState = true
             }
             launchSingleTop = true
-            restoreState = true
+            // Reader carries active bookId in its route; avoid restoring a stale bookId stack entry.
+            restoreState = target !is AppRoute.Reader
         }
     }
 
     val currentTitle = when {
-        currentDest?.hasRoute<AppRoute.Library>() == true -> "المكتبة"
-        currentDest?.hasRoute<AppRoute.Reader>() == true -> "القارئ المتزامن"
-        currentDest?.hasRoute<AppRoute.FileTranslator>() == true -> "مترجم الملفات المحلي"
-        currentDest?.hasRoute<AppRoute.PlayerLab>() == true -> "المشغّل ومختبر الصوت"
-        currentDest?.hasRoute<AppRoute.Models>() == true -> "إدارة النماذج"
-        currentDest?.hasRoute<AppRoute.Vocabulary>() == true -> "قاموس المفردات"
-        currentDest?.hasRoute<AppRoute.Settings>() == true -> "الإعدادات والتراخيص"
-        else -> "Écoute"
+        currentDest?.hasRoute<AppRoute.Library>() == true -> stringResource(R.string.title_library)
+        currentDest?.hasRoute<AppRoute.Reader>() == true -> stringResource(R.string.title_reader)
+        currentDest?.hasRoute<AppRoute.FileTranslator>() == true -> stringResource(R.string.title_translator)
+        currentDest?.hasRoute<AppRoute.PlayerLab>() == true -> stringResource(R.string.title_player)
+        currentDest?.hasRoute<AppRoute.Models>() == true -> stringResource(R.string.title_models)
+        currentDest?.hasRoute<AppRoute.Vocabulary>() == true -> stringResource(R.string.title_vocab)
+        currentDest?.hasRoute<AppRoute.Settings>() == true -> stringResource(R.string.title_settings)
+        else -> stringResource(R.string.app_name)
     }
 
     val isVocabSelected = isNavItemSelected(AppRoute.Vocabulary, currentDest)
@@ -314,7 +317,7 @@ fun EcouteAppRoot(isExpandedNav: Boolean) {
                                         ) {
                                             Icon(
                                                 if (isVocabSelected) Icons.Rounded.Bookmarks else Icons.Outlined.Bookmarks,
-                                                contentDescription = "قاموس المفردات"
+                                                contentDescription = stringResource(R.string.title_vocab)
                                             )
                                         }
                                         IconButton(
@@ -333,7 +336,7 @@ fun EcouteAppRoot(isExpandedNav: Boolean) {
                                         ) {
                                             Icon(
                                                 if (isSettingsSelected) Icons.Rounded.Settings else Icons.Outlined.Settings,
-                                                contentDescription = "الإعدادات والتراخيص"
+                                                contentDescription = stringResource(R.string.title_settings)
                                             )
                                         }
                                     }
@@ -369,18 +372,19 @@ fun EcouteAppRoot(isExpandedNav: Boolean) {
                                     ) {
                                         primaryTabs.forEach { tab ->
                                             val selected = isNavItemSelected(tab.route, currentDest)
+                                            val tabLabel = stringResource(tab.labelRes)
                                             NavigationBarItem(
                                                 selected = selected,
                                                 onClick = { navigateTopLevel(tab.route) },
                                                 icon = {
                                                     Icon(
                                                         if (selected) tab.selectedIcon else tab.unselectedIcon,
-                                                        contentDescription = tab.label
+                                                        contentDescription = tabLabel
                                                     )
                                                 },
                                                 label = {
                                                     Text(
-                                                        tab.label,
+                                                        tabLabel,
                                                         maxLines = 1,
                                                         overflow = TextOverflow.Ellipsis
                                                     )
@@ -413,16 +417,17 @@ fun EcouteAppRoot(isExpandedNav: Boolean) {
                                 Spacer(Modifier.height(8.dp))
                                 primaryTabs.forEach { tab ->
                                     val selected = isNavItemSelected(tab.route, currentDest)
+                                    val tabLabel = stringResource(tab.labelRes)
                                     NavigationRailItem(
                                         selected = selected,
                                         onClick = { navigateTopLevel(tab.route) },
                                         icon = {
                                             Icon(
                                                 if (selected) tab.selectedIcon else tab.unselectedIcon,
-                                                contentDescription = tab.label
+                                                contentDescription = tabLabel
                                             )
                                         },
-                                        label = { Text(tab.label) },
+                                        label = { Text(tabLabel) },
                                         colors = NavigationRailItemDefaults.colors(
                                             selectedIconColor = MaterialTheme.colorScheme.secondary,
                                             selectedTextColor = MaterialTheme.colorScheme.primary,
@@ -437,10 +442,10 @@ fun EcouteAppRoot(isExpandedNav: Boolean) {
                                     icon = {
                                         Icon(
                                             if (isVocabSelected) Icons.Rounded.Bookmarks else Icons.Outlined.Bookmarks,
-                                            contentDescription = "المفردات"
+                                            contentDescription = stringResource(R.string.nav_vocab)
                                         )
                                     },
-                                    label = { Text("المفردات") },
+                                    label = { Text(stringResource(R.string.nav_vocab)) },
                                     colors = NavigationRailItemDefaults.colors(
                                         selectedIconColor = MaterialTheme.colorScheme.secondary,
                                         selectedTextColor = MaterialTheme.colorScheme.primary,
@@ -453,10 +458,10 @@ fun EcouteAppRoot(isExpandedNav: Boolean) {
                                     icon = {
                                         Icon(
                                             if (isSettingsSelected) Icons.Rounded.Settings else Icons.Outlined.Settings,
-                                            contentDescription = "الإعدادات"
+                                            contentDescription = stringResource(R.string.nav_settings)
                                         )
                                     },
-                                    label = { Text("الإعدادات") },
+                                    label = { Text(stringResource(R.string.nav_settings)) },
                                     colors = NavigationRailItemDefaults.colors(
                                         selectedIconColor = MaterialTheme.colorScheme.secondary,
                                         selectedTextColor = MaterialTheme.colorScheme.primary,
@@ -517,6 +522,7 @@ fun EcouteAppRoot(isExpandedNav: Boolean) {
                                     onTranslateOrToggleSentence = readerVm::toggleOrTranslateSentence,
                                     onTranslateOrToggleParagraph = readerVm::translateOrToggleParagraph,
                                     onSaveSentenceVocab = readerVm::saveSentenceToVocab,
+                                    onSaveParagraphVocab = readerVm::saveParagraphToVocab,
                                     onWordTapped = readerVm::onWordTapped,
                                     onPronounceWord = readerVm::pronounceSelectedWord,
                                     onSaveWordVocab = readerVm::saveSelectedWordToVocab,

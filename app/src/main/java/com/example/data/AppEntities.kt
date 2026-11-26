@@ -64,6 +64,33 @@ data class SentenceEntity(
     val cachedArabicTranslation: String? = null
 )
 
+@Entity(
+    tableName = "paragraph_translations",
+    foreignKeys = [
+        ForeignKey(
+            entity = BookEntity::class,
+            parentColumns = ["id"],
+            childColumns = ["bookId"],
+            onDelete = ForeignKey.CASCADE
+        )
+    ],
+    indices = [
+        Index(
+            value = ["bookId", "chapterIndex", "paragraphIndex", "sourceLanguage"],
+            unique = true
+        )
+    ]
+)
+data class ParagraphTranslationEntity(
+    @PrimaryKey(autoGenerate = true) val id: Long = 0,
+    val bookId: String,
+    val chapterIndex: Int,
+    val paragraphIndex: Int,
+    val sourceLanguage: String,
+    val arabicTranslation: String,
+    val updatedAt: Long = System.currentTimeMillis()
+)
+
 @Entity(tableName = "vocabulary")
 data class VocabularyEntity(
     @PrimaryKey(autoGenerate = true) val id: Long = 0,

@@ -6,6 +6,7 @@ import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.EcouteApplication
 import com.example.data.BookEntity
+import com.example.data.LibraryRepository
 import com.example.data.VocabularyEntity
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -19,6 +20,7 @@ import kotlinx.coroutines.launch
 
 data class LibraryUiState(
     val books: List<BookEntity> = emptyList(),
+    val bookProgress: Map<String, Float> = emptyMap(),
     val searchQuery: String = "",
     val isImporting: Boolean = false,
     val statusBanner: String? = null
@@ -36,10 +38,15 @@ class LibraryAndVocabViewModel(application: Application) : AndroidViewModel(appl
 
     val libraryState: StateFlow<LibraryUiState> = combine(
         libraryRepo.observeAllBooks(),
+        libraryRepo.observeAllChapters(),
         _bookSearchQuery,
         _isImporting,
         _statusBanner
-    ) { books, query, importing, banner ->
+    ) { books, allChapters, query, importing, banner ->
+        val chaptersByBook = allChapters.groupBy { it.bookId }
+        val progressMap = books.associate { book ->
+            book.id to LibraryRepository.calculateBookProgress(book, chaptersByBook[book.id].orEmpty())
+        }
         val filtered = if (query.isBlank()) books else {
             books.filter {
                 it.title.contains(query, ignoreCase = true) ||
@@ -48,6 +55,7 @@ class LibraryAndVocabViewModel(application: Application) : AndroidViewModel(appl
         }
         LibraryUiState(
             books = filtered,
+            bookProgress = progressMap,
             searchQuery = query,
             isImporting = importing,
             statusBanner = banner

@@ -16,10 +16,11 @@ import androidx.sqlite.db.SupportSQLiteDatabase
         ModelRecordEntity::class,
         BenchmarkReportEntity::class,
         TranslationJobEntity::class,
-        TranslationChunkEntity::class
+        TranslationChunkEntity::class,
+        ParagraphTranslationEntity::class
     ],
-    version = 3,
-    exportSchema = false
+    version = 4,
+    exportSchema = true
 )
 abstract class AppDatabase : RoomDatabase() {
     abstract fun bookDao(): BookDao
@@ -77,6 +78,31 @@ abstract class AppDatabase : RoomDatabase() {
             }
         }
 
+        val MIGRATION_3_4 = object : Migration(3, 4) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL(
+                    """
+                    CREATE TABLE IF NOT EXISTS `paragraph_translations` (
+                        `id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                        `bookId` TEXT NOT NULL,
+                        `chapterIndex` INTEGER NOT NULL,
+                        `paragraphIndex` INTEGER NOT NULL,
+                        `sourceLanguage` TEXT NOT NULL,
+                        `arabicTranslation` TEXT NOT NULL,
+                        `updatedAt` INTEGER NOT NULL,
+                        FOREIGN KEY(`bookId`) REFERENCES `books`(`id`) ON UPDATE NO ACTION ON DELETE CASCADE
+                    )
+                    """.trimIndent()
+                )
+                db.execSQL(
+                    """
+                    CREATE UNIQUE INDEX IF NOT EXISTS `index_paragraph_translations_bookId_chapterIndex_paragraphIndex_sourceLanguage`
+                    ON `paragraph_translations` (`bookId`, `chapterIndex`, `paragraphIndex`, `sourceLanguage`)
+                    """.trimIndent()
+                )
+            }
+        }
+
         @Volatile
         private var INSTANCE: AppDatabase? = null
 
@@ -87,7 +113,7 @@ abstract class AppDatabase : RoomDatabase() {
                     AppDatabase::class.java,
                     "ecoute_studio.db"
                 )
-                    .addMigrations(MIGRATION_1_2, MIGRATION_2_3)
+                    .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4)
                     .build()
                     .also { INSTANCE = it }
             }

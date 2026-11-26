@@ -11,12 +11,15 @@ import com.k2fsa.sherpa.onnx.OfflineTts
 import com.k2fsa.sherpa.onnx.OfflineTtsConfig
 import com.k2fsa.sherpa.onnx.OfflineTtsModelConfig
 import com.k2fsa.sherpa.onnx.OfflineTtsVitsModelConfig
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.channels.awaitClose
 import kotlinx.coroutines.channels.trySendBlocking
+import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.callbackFlow
 import kotlinx.coroutines.flow.flowOn
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.withContext
 import java.io.File
 
@@ -152,19 +155,46 @@ class PiperSherpaTtsEngine internal constructor(
         speed: Float,
         locale: String
     ): Result<TtsSynthesisResult> = withContext(Dispatchers.IO) {
-        runCatching {
+        val activeContext = currentCoroutineContext()
+        val res = runCatching {
             validateLocaleSupported(locale)
             val engine = session ?: error("محرك Sherpa-ONNX غير مهيأ.")
             cancelled = false
             val startMs = SystemClock.elapsedRealtime()
+            val chunks = mutableListOf<FloatArray>()
+            var totalSamples = 0
             // Piper VITS single-speaker models always encode their speaker in the ONNX weights (sid = 0)
-            val rawSamples = engine.generate(
+            engine.generateWithCallback(
                 text = spokenText,
                 sid = 0,
                 speed = speed.coerceIn(0.5f, 2.0f)
-            )
+            ) { chunk ->
+                if (cancelled || !activeContext.isActive) {
+                    return@generateWithCallback 0
+                }
+                if (chunk.isNotEmpty()) {
+                    val copy = chunk.copyOf()
+                    chunks.add(copy)
+                    totalSamples += copy.size
+                }
+                1
+            }
+            if (!activeContext.isActive) {
+                throw CancellationException("تم إلغاء التوليد")
+            }
             if (cancelled) {
                 error("تم إلغاء التوليد")
+            }
+            val rawSamples = if (chunks.size == 1) {
+                chunks[0]
+            } else {
+                FloatArray(totalSamples).also { merged ->
+                    var offset = 0
+                    for (seg in chunks) {
+                        seg.copyInto(merged, offset)
+                        offset += seg.size
+                    }
+                }
             }
             val elapsedMs = SystemClock.elapsedRealtime() - startMs
             val rate = engine.sampleRateHz.takeIf { it in 8000..96000 } ?: sampleRateHz
@@ -179,6 +209,9 @@ class PiperSherpaTtsEngine internal constructor(
                 fallbackReason = fallbackReason
             )
         }
+        val err = res.exceptionOrNull()
+        if (err is CancellationException) throw err
+        res
     }
 
     override fun synthesizeStream(
@@ -253,6 +286,7 @@ class PiperSherpaTtsEngine internal constructor(
     }
 
     override fun release() {
+        cancelled = true
         runCatching { session?.release() }
         session = null
         activeAccelerator = "RELEASED"

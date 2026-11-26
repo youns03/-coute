@@ -30,6 +30,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.async
+import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -235,6 +236,8 @@ class AudioPlaybackController internal constructor(
     private var activeTrackSessionId: Long = 0L
 
     private var focusRequest: AudioFocusRequest? = null
+    @Suppress("DEPRECATION")
+    private var legacyFocusListener: AudioManager.OnAudioFocusChangeListener? = null
     private var focusOwnerSessionId: Long = 0L
 
     @Volatile
@@ -886,7 +889,7 @@ class AudioPlaybackController internal constructor(
         return createdTrack to usePcm16
     }
 
-    private fun writeSamplesToTrack(
+    private suspend fun writeSamplesToTrack(
         sessionId: Long,
         track: AudioTrackHandle,
         samples: FloatArray,
@@ -907,7 +910,7 @@ class AudioPlaybackController internal constructor(
         val stepFrames = 512
         var zeroWriteCount = 0
 
-        while (offset < samples.size && isSessionValid(sessionId)) {
+        while (offset < samples.size && isSessionValid(sessionId) && currentCoroutineContext().isActive) {
             if (isPausedFlag) {
                 synchronized(trackLock) {
                     if (isSessionValid(sessionId) && activeTrackSessionId == sessionId && currentTrackHandle === track) {
@@ -915,10 +918,10 @@ class AudioPlaybackController internal constructor(
                     }
                 }
                 updateStateIfSessionValid(sessionId) { it.copy(status = PlaybackStatus.PAUSED) }
-                while (isPausedFlag && isSessionValid(sessionId)) {
-                    Thread.sleep(45L)
+                while (isPausedFlag && isSessionValid(sessionId) && currentCoroutineContext().isActive) {
+                    delay(45L)
                 }
-                if (!isSessionValid(sessionId)) break
+                if (!isSessionValid(sessionId) || !currentCoroutineContext().isActive) break
                 synchronized(trackLock) {
                     if (isSessionValid(sessionId) && activeTrackSessionId == sessionId && currentTrackHandle === track) {
                         applyPlaybackSpeedToTrack(track, speedMode)
@@ -949,7 +952,7 @@ class AudioPlaybackController internal constructor(
             if (written == 0) {
                 zeroWriteCount++
                 if (zeroWriteCount > 50) break
-                Thread.sleep(10L)
+                delay(10L)
                 continue
             }
             zeroWriteCount = 0
@@ -959,7 +962,7 @@ class AudioPlaybackController internal constructor(
         return offset
     }
 
-    private fun drainAudioTrack(
+    private suspend fun drainAudioTrack(
         sessionId: Long,
         track: AudioTrackHandle,
         sampleRate: Int,
@@ -968,7 +971,11 @@ class AudioPlaybackController internal constructor(
     ) {
         val estimatedDurationMs = ((totalFrames.toLong() * 1000L) / sampleRate.toLong()).coerceAtLeast(300L)
         val drainDeadlineMs = System.currentTimeMillis() + estimatedDurationMs + 1500L
-        while (isSessionValid(sessionId) && !isPausedFlag && System.currentTimeMillis() < drainDeadlineMs) {
+        while (isSessionValid(sessionId) &&
+            !isPausedFlag &&
+            currentCoroutineContext().isActive &&
+            System.currentTimeMillis() < drainDeadlineMs
+        ) {
             val (head, isPlaying) = synchronized(trackLock) {
                 if (!isSessionValid(sessionId) ||
                     activeTrackSessionId != sessionId ||
@@ -982,7 +989,7 @@ class AudioPlaybackController internal constructor(
             }
             updateWordHighlightIfAvailable(sessionId, track, sampleRate, timestamps)
             if (head >= totalFrames - 256 || !isPlaying) break
-            Thread.sleep(25L)
+            delay(25L)
         }
     }
 
@@ -1227,11 +1234,10 @@ class AudioPlaybackController internal constructor(
                 )
                 .setOnAudioFocusChangeListener { change ->
                     if (change == AudioManager.AUDIOFOCUS_LOSS || change == AudioManager.AUDIOFOCUS_LOSS_TRANSIENT) {
-                        synchronized(sessionLock) {
-                            if (focusOwnerSessionId == sessionId && isSessionValid(sessionId)) {
-                                pause()
-                            }
+                        val shouldPause = synchronized(sessionLock) {
+                            focusOwnerSessionId == sessionId && isSessionValid(sessionId)
                         }
+                        if (shouldPause) pause()
                     }
                 }
                 .build()
@@ -1239,6 +1245,7 @@ class AudioPlaybackController internal constructor(
             synchronized(sessionLock) {
                 if (granted && isSessionValid(sessionId)) {
                     focusRequest = req
+                    legacyFocusListener = null
                     focusOwnerSessionId = sessionId
                 } else if (granted) {
                     audioManager.abandonAudioFocusRequest(req)
@@ -1248,17 +1255,28 @@ class AudioPlaybackController internal constructor(
             granted
         } else {
             @Suppress("DEPRECATION")
+            val listener = AudioManager.OnAudioFocusChangeListener { change ->
+                if (change == AudioManager.AUDIOFOCUS_LOSS || change == AudioManager.AUDIOFOCUS_LOSS_TRANSIENT) {
+                    val shouldPause = synchronized(sessionLock) {
+                        focusOwnerSessionId == sessionId && isSessionValid(sessionId)
+                    }
+                    if (shouldPause) pause()
+                }
+            }
+            @Suppress("DEPRECATION")
             val granted = audioManager.requestAudioFocus(
-                null,
+                listener,
                 AudioManager.STREAM_MUSIC,
                 AudioManager.AUDIOFOCUS_GAIN
             ) == AudioManager.AUDIOFOCUS_REQUEST_GRANTED
             synchronized(sessionLock) {
                 if (granted && isSessionValid(sessionId)) {
+                    legacyFocusListener = listener
+                    focusRequest = null
                     focusOwnerSessionId = sessionId
                 } else if (granted) {
                     @Suppress("DEPRECATION")
-                    audioManager.abandonAudioFocus(null)
+                    audioManager.abandonAudioFocus(listener)
                     return false
                 }
             }
@@ -1268,26 +1286,40 @@ class AudioPlaybackController internal constructor(
 
     private fun abandonAudioFocusIfOwner(sessionId: Long) {
         val reqToAbandon: AudioFocusRequest?
+        @Suppress("DEPRECATION")
+        val legacyToAbandon: AudioManager.OnAudioFocusChangeListener?
         synchronized(sessionLock) {
             if (focusOwnerSessionId != sessionId) return
             reqToAbandon = focusRequest
+            legacyToAbandon = legacyFocusListener
             focusRequest = null
+            legacyFocusListener = null
             focusOwnerSessionId = 0L
         }
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             reqToAbandon?.let { audioManager.abandonAudioFocusRequest(it) }
+        } else {
+            @Suppress("DEPRECATION")
+            legacyToAbandon?.let { audioManager.abandonAudioFocus(it) }
         }
     }
 
     private fun abandonAudioFocusUnconditionally() {
         val reqToAbandon: AudioFocusRequest?
+        @Suppress("DEPRECATION")
+        val legacyToAbandon: AudioManager.OnAudioFocusChangeListener?
         synchronized(sessionLock) {
             reqToAbandon = focusRequest
+            legacyToAbandon = legacyFocusListener
             focusRequest = null
+            legacyFocusListener = null
             focusOwnerSessionId = 0L
         }
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             reqToAbandon?.let { audioManager.abandonAudioFocusRequest(it) }
+        } else {
+            @Suppress("DEPRECATION")
+            legacyToAbandon?.let { audioManager.abandonAudioFocus(it) }
         }
     }
 

@@ -32,6 +32,7 @@ import androidx.compose.material.icons.rounded.Close
 import androidx.compose.material.icons.rounded.DeleteOutline
 import androidx.compose.material.icons.rounded.Headphones
 import androidx.compose.material.icons.rounded.Search
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
@@ -44,9 +45,14 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.minimumInteractiveComponentSize
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -82,6 +88,8 @@ fun LibraryScreen(
     onOpenModels: () -> Unit,
     modifier: Modifier = Modifier
 ) {
+    var pendingDeleteBook by remember { mutableStateOf<BookEntity?>(null) }
+
     val filePickerLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.OpenDocument()
     ) { uri: Uri? ->
@@ -130,7 +138,7 @@ fun LibraryScreen(
                                 onClick = onDismissBanner,
                                 modifier = Modifier.minimumInteractiveComponentSize()
                             ) {
-                                Icon(Icons.Rounded.Close, contentDescription = "إغلاق الإشعار")
+                                Icon(Icons.Rounded.Close, contentDescription = stringResource(R.string.common_dismiss_banner))
                             }
                         }
                     }
@@ -141,7 +149,7 @@ fun LibraryScreen(
                 OutlinedTextField(
                     value = state.searchQuery,
                     onValueChange = onSearchChange,
-                    placeholder = { Text("ابحث في مكتبة الكتب الفرنسية والإنجليزية...") },
+                    placeholder = { Text(stringResource(R.string.library_search_placeholder)) },
                     leadingIcon = {
                         Icon(
                             Icons.Rounded.Search,
@@ -165,7 +173,7 @@ fun LibraryScreen(
 
             item {
                 EditorialSectionHeader(
-                    titleAr = "كتبك ونصوصك",
+                    titleAr = stringResource(R.string.library_section_title),
                     folioTag = "Bibliothèque",
                     countBadge = "${state.books.size}"
                 )
@@ -199,11 +207,11 @@ fun LibraryScreen(
                                 )
                             }
                             Text(
-                                "لا توجد كتب مطابقة لبحثك",
+                                stringResource(R.string.library_empty_title),
                                 style = MaterialTheme.typography.titleMedium
                             )
                             Text(
-                                "استورد ملف TXT أو EPUB بالفرنسية أو الإنجليزية لبدء القراءة والترجمة دون إنترنت.",
+                                stringResource(R.string.library_empty_subtitle),
                                 style = MaterialTheme.typography.bodyMedium,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
@@ -212,16 +220,47 @@ fun LibraryScreen(
                 }
             } else {
                 items(state.books, key = { it.id }) { book ->
+                    val bookProgress = state.bookProgress[book.id] ?: if (book.totalSentences > 0) {
+                        ((book.currentSentenceIndex + 1).toFloat() / book.totalSentences.toFloat()).coerceIn(0f, 1f)
+                    } else 0f
                     BookCard(
                         book = book,
+                        progress = bookProgress,
                         onOpen = { onOpenBook(book.id) },
-                        onDelete = { onDeleteBook(book.id) }
+                        onDelete = { pendingDeleteBook = book }
                     )
                 }
             }
 
             item { Spacer(modifier = Modifier.height(72.dp)) }
         }
+    }
+
+    pendingDeleteBook?.let { target ->
+        AlertDialog(
+            onDismissRequest = { pendingDeleteBook = null },
+            title = { Text(stringResource(R.string.confirm_delete_book_title)) },
+            text = { Text(stringResource(R.string.confirm_delete_book_message, target.title)) },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        pendingDeleteBook = null
+                        onDeleteBook(target.id)
+                    },
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = MaterialTheme.colorScheme.error,
+                        contentColor = MaterialTheme.colorScheme.onError
+                    )
+                ) {
+                    Text(stringResource(R.string.common_delete))
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { pendingDeleteBook = null }) {
+                    Text(stringResource(R.string.common_cancel))
+                }
+            }
+        )
     }
 }
 
@@ -241,7 +280,7 @@ private fun LibraryHeroBanner(
         Box(modifier = Modifier.height(228.dp)) {
             Image(
                 painter = painterResource(id = R.drawable.img_library_hero),
-                contentDescription = "مكتبة إيكوت لتعلم الفرنسية",
+                contentDescription = stringResource(R.string.library_hero_content_description),
                 contentScale = ContentScale.Crop,
                 modifier = Modifier.fillMaxSize()
             )
@@ -294,12 +333,12 @@ private fun LibraryHeroBanner(
                         }
                     }
                     Text(
-                        text = "اقرأ الفرنسية والإنجليزية واستمع محلياً",
+                        text = stringResource(R.string.library_hero_headline),
                         style = MaterialTheme.typography.headlineSmall,
                         color = Color.White
                     )
                     Text(
-                        text = "مزامنة النطق الفرنسي كلمة بكلمة، ترجمة جمل وفقرات للعربية، وتشغيل دون إنترنت.",
+                        text = stringResource(R.string.library_hero_subheadline),
                         style = MaterialTheme.typography.bodySmall,
                         color = Color(0xFFDCE3EE)
                     )
@@ -331,7 +370,7 @@ private fun LibraryHeroBanner(
                             Icon(Icons.Rounded.Add, contentDescription = null, modifier = Modifier.size(18.dp))
                         }
                         Spacer(Modifier.width(6.dp))
-                        Text("استيراد TXT / EPUB")
+                        Text(stringResource(R.string.library_import_button))
                     }
 
                     FilledTonalButton(
@@ -343,7 +382,7 @@ private fun LibraryHeroBanner(
                     ) {
                         Icon(Icons.Rounded.Headphones, contentDescription = null, modifier = Modifier.size(18.dp))
                         Spacer(Modifier.width(6.dp))
-                        Text("النماذج الصوتية")
+                        Text(stringResource(R.string.library_models_button))
                     }
                 }
             }
@@ -354,12 +393,11 @@ private fun LibraryHeroBanner(
 @Composable
 private fun BookCard(
     book: BookEntity,
+    progress: Float,
     onOpen: () -> Unit,
     onDelete: () -> Unit
 ) {
-    val progress = if (book.totalSentences > 0) {
-        ((book.currentSentenceIndex + 1).toFloat() / book.totalSentences.toFloat()).coerceIn(0f, 1f)
-    } else 0f
+    val clampedProgress = progress.coerceIn(0f, 1f)
 
     AtelierCard(
         onClick = onOpen,
@@ -393,7 +431,7 @@ private fun BookCard(
                             ) {
                                 Icon(
                                     Icons.Rounded.DeleteOutline,
-                                    contentDescription = "حذف الكتاب",
+                                    contentDescription = stringResource(R.string.library_delete_book_cd),
                                     tint = MaterialTheme.colorScheme.error
                                 )
                             }
@@ -423,7 +461,7 @@ private fun BookCard(
 
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 LinearProgressIndicator(
-                    progress = { progress },
+                    progress = { clampedProgress },
                     modifier = Modifier
                         .fillMaxWidth()
                         .height(6.dp)
@@ -441,12 +479,12 @@ private fun BookCard(
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         MonospaceMetricPill(
-                            text = "${(progress * 100).toInt()}%",
+                            text = "${(clampedProgress * 100).toInt()}%",
                             containerColor = MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.8f),
                             contentColor = MaterialTheme.colorScheme.onSecondaryContainer
                         )
                         Text(
-                            text = "${book.totalChapters} فصول • ${book.totalSentences} جملة",
+                            text = stringResource(R.string.library_book_stats, book.totalChapters, book.totalSentences),
                             style = MaterialTheme.typography.labelSmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
@@ -462,8 +500,11 @@ private fun BookCard(
                         Icon(Icons.Rounded.AutoStories, contentDescription = null, modifier = Modifier.size(16.dp))
                         Spacer(Modifier.width(6.dp))
                         Text(
-                            if (book.currentSentenceIndex > 0) stringResource(R.string.library_continue_reading)
-                            else stringResource(R.string.library_start_reading),
+                            if (book.currentChapterIndex > 0 || book.currentSentenceIndex > 0) {
+                                stringResource(R.string.library_continue_reading)
+                            } else {
+                                stringResource(R.string.library_start_reading)
+                            },
                             style = MaterialTheme.typography.labelMedium
                         )
                     }

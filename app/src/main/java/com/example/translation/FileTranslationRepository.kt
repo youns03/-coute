@@ -96,23 +96,25 @@ class FileTranslationRepository(
     }
 
     suspend fun startOrResumeJob(jobId: String) {
-        val job = jobDao.getJob(jobId) ?: return
-        if (job.status == "COMPLETED") return
-        jobDao.updateJobProgress(jobId, job.completedChunks, "RUNNING", null)
+        jobMutationMutex.withLock {
+            val job = jobDao.getJob(jobId) ?: return@withLock
+            if (job.status == "COMPLETED" || job.status == "RUNNING") return@withLock
+            jobDao.updateJobProgress(jobId, job.completedChunks, "RUNNING", null)
 
-        val data = Data.Builder()
-            .putString(FileTranslationWorker.KEY_JOB_ID, jobId)
-            .build()
-        val request = OneTimeWorkRequestBuilder<FileTranslationWorker>()
-            .setInputData(data)
-            .addTag("file_translation_$jobId")
-            .build()
+            val data = Data.Builder()
+                .putString(FileTranslationWorker.KEY_JOB_ID, jobId)
+                .build()
+            val request = OneTimeWorkRequestBuilder<FileTranslationWorker>()
+                .setInputData(data)
+                .addTag("file_translation_$jobId")
+                .build()
 
-        workManager.enqueueUniqueWork(
-            "file_tx_$jobId",
-            ExistingWorkPolicy.REPLACE,
-            request
-        )
+            workManager.enqueueUniqueWork(
+                "file_tx_$jobId",
+                ExistingWorkPolicy.KEEP,
+                request
+            )
+        }
     }
 
     suspend fun pauseJob(jobId: String) {

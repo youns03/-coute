@@ -13,6 +13,7 @@ import com.example.translation.SourceLanguage
 import com.example.translation.TranslationDirection
 import com.example.translation.TranslationManagerUiState
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
@@ -20,7 +21,9 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.flowOf
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 
 data class WordLookupSheetState(
@@ -58,13 +61,13 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
 
     private val _bookId = MutableStateFlow<String?>(null)
     private var readerSessionGeneration = 0L
+    private var inlineTranslationJob: Job? = null
     private val _chapterIndex = MutableStateFlow(0)
     private val _searchQuery = MutableStateFlow("")
     private val _isSearchOpen = MutableStateFlow(false)
     private val _searchResults = MutableStateFlow<List<SentenceEntity>>(emptyList())
     private val _translatingSentenceIds = MutableStateFlow<Set<Long>>(emptySet())
     private val _translatingParagraphIndices = MutableStateFlow<Set<Int>>(emptySet())
-    private val _paragraphTranslations = MutableStateFlow<Map<Int, String>>(emptyMap())
     private val _revealedSentenceIds = MutableStateFlow<Set<Long>>(emptySet())
     private val _translationError = MutableStateFlow<String?>(null)
 
@@ -88,6 +91,17 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
         .flatMapLatest { (id, ch) ->
             if (id == null) flowOf(emptyList()) else libraryRepo.observeChapterSentences(id, ch)
         }
+    private val paragraphTranslationsFlow = combine(_bookId, _chapterIndex, bookFlow) { id, ch, book ->
+        Triple(id, ch, SourceLanguage.fromCode(book?.sourceLanguage).code)
+    }.flatMapLatest { (id, ch, langCode) ->
+        if (id == null) {
+            flowOf(emptyMap())
+        } else {
+            libraryRepo.observeParagraphTranslations(id, ch, langCode).map { list ->
+                list.associate { it.paragraphIndex to it.arabicTranslation }
+            }
+        }
+    }
 
     private val searchBundleFlow = combine(_searchResults, _searchQuery, _isSearchOpen) { res, q, open ->
         Triple(res, q, open)
@@ -97,7 +111,7 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
         _translatingParagraphIndices,
         _revealedSentenceIds,
         _translationError,
-        _paragraphTranslations
+        paragraphTranslationsFlow
     ) { sIds, pIdxs, revealed, err, paragraphTranslations ->
         TranslationStatusBundle(sIds, pIdxs, paragraphTranslations, revealed, err)
     }
@@ -140,10 +154,10 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
     fun openBook(bookId: String) {
         if (_bookId.value == bookId) return
         readerSessionGeneration++
+        inlineTranslationJob?.cancel()
         _bookId.value = bookId
         _revealedSentenceIds.value = emptySet()
         _translatingParagraphIndices.value = emptySet()
-        _paragraphTranslations.value = emptyMap()
         _translationError.value = null
         viewModelScope.launch {
             settingsRepo.setActiveBookId(bookId)
@@ -158,10 +172,10 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
     fun selectChapter(chapterIndex: Int) {
         val bookId = _bookId.value ?: return
         readerSessionGeneration++
+        inlineTranslationJob?.cancel()
         _chapterIndex.value = chapterIndex
         _revealedSentenceIds.value = emptySet()
         _translatingParagraphIndices.value = emptySet()
-        _paragraphTranslations.value = emptyMap()
         val pState = playbackController.state.value
         if (pState.bookId == bookId && pState.chapterIndex != chapterIndex) {
             playbackController.stop()
@@ -176,12 +190,12 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
         val current = SourceLanguage.fromCode(book.sourceLanguage)
         val next = if (current == SourceLanguage.FRENCH) SourceLanguage.ENGLISH else SourceLanguage.FRENCH
         readerSessionGeneration++
+        inlineTranslationJob?.cancel()
         _translatingParagraphIndices.value = emptySet()
         viewModelScope.launch {
             if (playbackController.state.value.bookId == book.id) {
                 playbackController.stop()
             }
-            _paragraphTranslations.value = emptyMap()
             _revealedSentenceIds.value = emptySet()
             libraryRepo.updateBookSourceLanguage(book.id, next.code)
         }
@@ -221,17 +235,55 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
     }
 
     fun toggleInlineTranslations() {
-        viewModelScope.launch {
+        inlineTranslationJob?.cancel()
+        inlineTranslationJob = viewModelScope.launch {
             val next = !settings.value.showInlineTranslations
             settingsRepo.setShowInlineTranslations(next)
             if (!next) {
                 _revealedSentenceIds.value = emptySet()
+                _translatingParagraphIndices.value = emptySet()
             } else {
-                val sourceLang = SourceLanguage.fromCode(readerState.value.book?.sourceLanguage)
-                val pending = readerState.value.sentences
-                    .filter { it.cachedArabicTranslation.isNullOrBlank() }
-                    .take(15)
-                pending.forEach { translateSentenceInternal(it, sourceLang) }
+                val snap = readerState.value
+                val book = snap.book ?: return@launch
+                val chapterIndex = snap.activeChapterIndex
+                val sourceLang = SourceLanguage.fromCode(book.sourceLanguage)
+                val existingParagraphs = snap.paragraphTranslations
+                val requestGeneration = readerSessionGeneration
+                val paragraphs = snap.sentences
+                    .groupBy { it.paragraphIndex }
+                    .toSortedMap()
+                    .filter { (pIdx, sents) ->
+                        existingParagraphs[pIdx].isNullOrBlank() &&
+                            sents.any { it.cachedArabicTranslation.isNullOrBlank() }
+                    }
+                for ((paragraphIndex, paragraphSentences) in paragraphs) {
+                    if (!isActive || requestGeneration != readerSessionGeneration) break
+                    val paragraphText = paragraphSentences.joinToString(" ") { it.originalText.trim() }
+                    if (paragraphText.isBlank()) continue
+                    _translationError.value = null
+                    _translatingParagraphIndices.value = _translatingParagraphIndices.value + paragraphIndex
+                    val res = engineManager.translateSentence(
+                        sentenceId = -1L,
+                        sourceLanguage = sourceLang,
+                        originalText = paragraphText,
+                        cachedTranslation = null
+                    )
+                    _translatingParagraphIndices.value = _translatingParagraphIndices.value - paragraphIndex
+                    if (requestGeneration != readerSessionGeneration) break
+                    val translated = res.getOrNull()
+                    if (res.isSuccess && !translated.isNullOrBlank()) {
+                        libraryRepo.saveParagraphTranslation(
+                            bookId = book.id,
+                            chapterIndex = chapterIndex,
+                            paragraphIndex = paragraphIndex,
+                            sourceLanguage = sourceLang.code,
+                            arabicTranslation = translated
+                        )
+                    } else {
+                        _translationError.value = res.exceptionOrNull()?.message ?: "تعذر ترجمة الفصل محلياً."
+                        break
+                    }
+                }
             }
         }
     }
@@ -276,10 +328,13 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
 
     fun translateOrToggleParagraph(paragraphIndex: Int, paragraphSentences: List<SentenceEntity>) {
         if (paragraphSentences.isEmpty()) return
+        val snap = readerState.value
+        val book = snap.book ?: return
+        val chapterIndex = snap.activeChapterIndex
         val globalShown = settings.value.showInlineTranslations
         val sentenceIds = paragraphSentences.map { it.id }.toSet()
         val allRevealed = sentenceIds.all { it in _revealedSentenceIds.value }
-        val cachedParagraph = _paragraphTranslations.value[paragraphIndex]
+        val cachedParagraph = snap.paragraphTranslations[paragraphIndex]
 
         if (!globalShown && cachedParagraph != null && allRevealed) {
             _revealedSentenceIds.value = _revealedSentenceIds.value - sentenceIds
@@ -290,7 +345,7 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
             return
         }
 
-        val sourceLang = SourceLanguage.fromCode(readerState.value.book?.sourceLanguage)
+        val sourceLang = SourceLanguage.fromCode(book.sourceLanguage)
         val paragraphText = paragraphSentences.joinToString(" ") { it.originalText.trim() }
         val requestGeneration = readerSessionGeneration
         viewModelScope.launch {
@@ -311,7 +366,13 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
             _translatingParagraphIndices.value = _translatingParagraphIndices.value - paragraphIndex
             res.onSuccess { translated ->
                 if (translated.isNotBlank()) {
-                    _paragraphTranslations.value = _paragraphTranslations.value + (paragraphIndex to translated)
+                    libraryRepo.saveParagraphTranslation(
+                        bookId = book.id,
+                        chapterIndex = chapterIndex,
+                        paragraphIndex = paragraphIndex,
+                        sourceLanguage = sourceLang.code,
+                        arabicTranslation = translated
+                    )
                 } else {
                     _revealedSentenceIds.value = _revealedSentenceIds.value - sentenceIds
                     _translationError.value = "أعاد محرك الترجمة نتيجة فارغة."
@@ -375,6 +436,20 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
                 frenchTerm = sentence.originalText,
                 arabicTranslation = arabic,
                 contextSentence = sentence.originalText,
+                bookTitle = bookTitle
+            )
+        }
+    }
+
+    fun saveParagraphToVocab(paragraphSentences: List<SentenceEntity>, arabic: String) {
+        if (paragraphSentences.isEmpty() || arabic.isBlank()) return
+        val bookTitle = readerState.value.book?.title ?: "مكتبتي"
+        val sourceParagraph = paragraphSentences.joinToString(" ") { it.originalText.trim() }
+        viewModelScope.launch {
+            libraryRepo.saveVocabulary(
+                frenchTerm = sourceParagraph,
+                arabicTranslation = arabic,
+                contextSentence = sourceParagraph,
                 bookTitle = bookTitle
             )
         }

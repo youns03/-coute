@@ -1,6 +1,7 @@
 package com.example
 
 import android.app.Application
+import com.example.audio.AudioChunkCache
 import com.example.audio.AudioPlaybackController
 import com.example.data.AppDatabase
 import com.example.data.BookImporter
@@ -75,6 +76,7 @@ class EcouteApplication : Application() {
         )
 
         appScope.launch {
+            AudioChunkCache.pruneIfOversized(storageManager.audioCacheRoot)
             libraryRepository.seedStarterBooksIfEmpty()
             modelRepository.reconcileStorageOnStartup()
             fileTranslationRepository.reconcileOnStartup()

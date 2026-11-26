@@ -12,12 +12,21 @@ class LibraryRepository(
 ) {
     fun observeAllBooks(): Flow<List<BookEntity>> = bookDao.observeAllBooks()
 
+    fun observeAllChapters(): Flow<List<ChapterEntity>> = bookDao.observeAllChapters()
+
     fun observeBook(bookId: String): Flow<BookEntity?> = bookDao.observeBook(bookId)
 
     fun observeChapters(bookId: String): Flow<List<ChapterEntity>> = bookDao.observeChapters(bookId)
 
     fun observeChapterSentences(bookId: String, chapterIndex: Int): Flow<List<SentenceEntity>> =
         bookDao.observeChapterSentences(bookId, chapterIndex)
+
+    fun observeParagraphTranslations(
+        bookId: String,
+        chapterIndex: Int,
+        sourceLanguage: String
+    ): Flow<List<ParagraphTranslationEntity>> =
+        bookDao.observeParagraphTranslations(bookId, chapterIndex, sourceLanguage)
 
     fun observeVocabulary(query: String): Flow<List<VocabularyEntity>> =
         if (query.isBlank()) vocabularyDao.observeAll() else vocabularyDao.search(query.trim())
@@ -87,6 +96,25 @@ class LibraryRepository(
         bookDao.updateSentenceTranslation(sentenceId, arabic)
     }
 
+    suspend fun saveParagraphTranslation(
+        bookId: String,
+        chapterIndex: Int,
+        paragraphIndex: Int,
+        sourceLanguage: String,
+        arabicTranslation: String
+    ) {
+        if (arabicTranslation.isBlank()) return
+        bookDao.upsertParagraphTranslation(
+            ParagraphTranslationEntity(
+                bookId = bookId,
+                chapterIndex = chapterIndex,
+                paragraphIndex = paragraphIndex,
+                sourceLanguage = sourceLanguage,
+                arabicTranslation = arabicTranslation.trim()
+            )
+        )
+    }
+
     suspend fun updateBookSourceLanguage(bookId: String, sourceLanguage: String) {
         bookDao.updateBookSourceLanguage(bookId, sourceLanguage)
     }
@@ -114,4 +142,19 @@ class LibraryRepository(
     }
 
     suspend fun deleteVocabulary(id: Long) = vocabularyDao.deleteById(id)
+
+    companion object {
+        fun calculateBookProgress(book: BookEntity, bookChapters: List<ChapterEntity>): Float {
+            val total = book.totalSentences.coerceAtLeast(bookChapters.sumOf { it.sentenceCount })
+            if (total <= 0) return 0f
+            val hasStarted = book.currentChapterIndex > 0 || book.currentSentenceIndex > 0
+            if (!hasStarted) return 0f
+            val priorChapterSentences = bookChapters
+                .filter { it.chapterIndex < book.currentChapterIndex }
+                .sumOf { it.sentenceCount }
+            val currentOffset = (priorChapterSentences + book.currentSentenceIndex + 1)
+                .coerceIn(0, total)
+            return (currentOffset.toFloat() / total.toFloat()).coerceIn(0f, 1f)
+        }
+    }
 }

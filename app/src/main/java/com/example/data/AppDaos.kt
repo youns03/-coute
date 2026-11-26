@@ -42,6 +42,9 @@ interface BookDao {
         insertSentences(sentences)
     }
 
+    @Query("SELECT * FROM chapters ORDER BY bookId ASC, chapterIndex ASC")
+    fun observeAllChapters(): Flow<List<ChapterEntity>>
+
     @Query("SELECT * FROM chapters WHERE bookId = :bookId ORDER BY chapterIndex ASC")
     fun observeChapters(bookId: String): Flow<List<ChapterEntity>>
 
@@ -57,6 +60,18 @@ interface BookDao {
         "SELECT * FROM sentences WHERE bookId = :bookId AND chapterIndex = :chapterIndex ORDER BY sentenceIndex ASC"
     )
     suspend fun getChapterSentences(bookId: String, chapterIndex: Int): List<SentenceEntity>
+
+    @Query(
+        "SELECT * FROM paragraph_translations WHERE bookId = :bookId AND chapterIndex = :chapterIndex AND sourceLanguage = :sourceLanguage ORDER BY paragraphIndex ASC"
+    )
+    fun observeParagraphTranslations(
+        bookId: String,
+        chapterIndex: Int,
+        sourceLanguage: String
+    ): Flow<List<ParagraphTranslationEntity>>
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun upsertParagraphTranslation(entry: ParagraphTranslationEntity)
 
     @Query(
         "SELECT * FROM sentences WHERE bookId = :bookId AND LOWER(originalText) LIKE '%' || LOWER(:query) || '%' ORDER BY chapterIndex ASC, sentenceIndex ASC LIMIT 100"

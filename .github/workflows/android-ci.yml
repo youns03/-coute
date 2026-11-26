@@ -42,5 +42,5 @@ jobs:
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@v4
 
-      - name: Run unit tests, lint, and Kotlin compilation
-        run: ./gradlew --no-daemon --stacktrace :app:testDebugUnitTest :app:lintDebug :app:compileDebugKotlin
+      - name: Run unit tests, lint, Kotlin compilation, and debug APK assembly
+        run: ./gradlew --no-daemon --stacktrace :app:testDebugUnitTest :app:lintDebug :app:compileDebugKotlin :app:assembleDebug

@@ -20,6 +20,9 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.VolumeUp
 import androidx.compose.material.icons.rounded.DeleteOutline
 import androidx.compose.material.icons.rounded.Search
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -29,9 +32,14 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.minimumInteractiveComponentSize
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -39,6 +47,7 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
@@ -60,6 +69,7 @@ fun VocabularyScreen(
     modifier: Modifier = Modifier
 ) {
     val atelier = LocalEcouteAtelierColors.current
+    var pendingDeleteVocab by remember { mutableStateOf<VocabularyEntity?>(null) }
 
     Box(modifier = modifier.fillMaxSize(), contentAlignment = Alignment.TopCenter) {
         LazyColumn(
@@ -73,7 +83,7 @@ fun VocabularyScreen(
                 OutlinedTextField(
                     value = query,
                     onValueChange = onQueryChange,
-                    placeholder = { Text("ابحث بالفرنسية أو العربية...") },
+                    placeholder = { Text(stringResource(R.string.vocab_search_placeholder)) },
                     leadingIcon = {
                         Icon(
                             Icons.Rounded.Search,
@@ -116,14 +126,14 @@ fun VocabularyScreen(
                             ) {
                                 Image(
                                     painter = painterResource(id = R.drawable.img_empty_vocab),
-                                    contentDescription = "قاموس المفردات فارغ",
+                                    contentDescription = stringResource(R.string.vocab_empty_cd),
                                     contentScale = ContentScale.Crop,
                                     modifier = Modifier.fillMaxSize()
                                 )
                             }
-                            Text("قاموسك الشخصي فارغ حالياً", style = MaterialTheme.typography.titleMedium)
+                            Text(stringResource(R.string.vocab_empty_title), style = MaterialTheme.typography.titleMedium)
                             Text(
-                                "أثناء قراءة أي نص فرنسي، اضغط على أي كلمة لعرض ترجمتها العربية وحفظها هنا للمراجعة والاستماع.",
+                                stringResource(R.string.vocab_empty_subtitle),
                                 style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
@@ -133,7 +143,7 @@ fun VocabularyScreen(
             } else {
                 item {
                     EditorialSectionHeader(
-                        titleAr = "بطاقات المفردات المحفوظة",
+                        titleAr = stringResource(R.string.vocab_section_title),
                         folioTag = "Vocabulaire",
                         countBadge = "${entries.size}"
                     )
@@ -169,15 +179,18 @@ fun VocabularyScreen(
                                             .minimumInteractiveComponentSize()
                                             .testTag("vocab_pronounce_${item.id}")
                                     ) {
-                                        Icon(Icons.AutoMirrored.Rounded.VolumeUp, contentDescription = "نطق المفردة")
+                                        Icon(
+                                            Icons.AutoMirrored.Rounded.VolumeUp,
+                                            contentDescription = stringResource(R.string.vocab_pronounce_cd)
+                                        )
                                     }
                                     IconButton(
-                                        onClick = { onDelete(item.id) },
+                                        onClick = { pendingDeleteVocab = item },
                                         modifier = Modifier.minimumInteractiveComponentSize()
                                     ) {
                                         Icon(
                                             Icons.Rounded.DeleteOutline,
-                                            contentDescription = "حذف المفردة",
+                                            contentDescription = stringResource(R.string.vocab_delete_cd),
                                             tint = MaterialTheme.colorScheme.error
                                         )
                                     }
@@ -211,7 +224,7 @@ fun VocabularyScreen(
                             }
 
                             Text(
-                                text = "المصدر: ${item.bookTitle}",
+                                text = stringResource(R.string.vocab_source_label, item.bookTitle),
                                 style = MaterialTheme.typography.labelSmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
@@ -222,5 +235,32 @@ fun VocabularyScreen(
 
             item { Spacer(Modifier.height(72.dp)) }
         }
+    }
+
+    pendingDeleteVocab?.let { target ->
+        AlertDialog(
+            onDismissRequest = { pendingDeleteVocab = null },
+            title = { Text(stringResource(R.string.confirm_delete_vocab_title)) },
+            text = { Text(stringResource(R.string.confirm_delete_vocab_message, target.frenchTerm.take(60))) },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        pendingDeleteVocab = null
+                        onDelete(target.id)
+                    },
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = MaterialTheme.colorScheme.error,
+                        contentColor = MaterialTheme.colorScheme.onError
+                    )
+                ) {
+                    Text(stringResource(R.string.common_delete))
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { pendingDeleteVocab = null }) {
+                    Text(stringResource(R.string.common_cancel))
+                }
+            }
+        )
     }
 }

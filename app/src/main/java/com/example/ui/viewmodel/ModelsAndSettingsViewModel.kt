@@ -70,8 +70,10 @@ class ModelsAndSettingsViewModel(application: Application) : AndroidViewModel(ap
     }
 
     fun cancelDownload(modelId: String) {
-        modelRepo.cancelAndDiscardDownload(modelId)
-        _storageBreakdown.value = modelRepo.getStorageBreakdown()
+        viewModelScope.launch {
+            modelRepo.cancelAndDiscardDownload(modelId)
+            _storageBreakdown.value = modelRepo.getStorageBreakdown()
+        }
     }
 
     fun activateModel(entry: ModelUiEntry) {
@@ -110,13 +112,17 @@ class ModelsAndSettingsViewModel(application: Application) : AndroidViewModel(ap
 
     fun setAcceleratorMode(mode: AcceleratorMode) {
         viewModelScope.launch {
-            settingsRepo.setAcceleratorMode(mode)
             val loadedId = ttsEngineManager.runtimeState.value.loadedModelId
             if (loadedId != null) {
+                app.playbackController.stop()
                 val res = ttsEngineManager.switchModel(loadedId, mode)
-                res.onFailure { err ->
+                res.onSuccess {
+                    settingsRepo.setAcceleratorMode(mode)
+                }.onFailure { err ->
                     _actionMessage.value = "تعذر تطبيق وضع التسريع الجديد: ${err.message}"
                 }
+            } else {
+                settingsRepo.setAcceleratorMode(mode)
             }
         }
     }

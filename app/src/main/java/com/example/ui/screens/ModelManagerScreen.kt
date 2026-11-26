@@ -38,8 +38,9 @@ import androidx.compose.material.icons.rounded.Storage
 import androidx.compose.material.icons.rounded.Translate
 import androidx.compose.material.icons.rounded.VerifiedUser
 import androidx.compose.material.icons.rounded.Warning
-import androidx.compose.material3.AssistChip
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -48,14 +49,21 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.minimumInteractiveComponentSize
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
+import com.example.R
 import com.example.domain.ModelCompatibilityStatus
 import com.example.domain.ModelInstallStatus
 import com.example.domain.StorageBreakdown
@@ -86,6 +94,9 @@ fun ModelManagerScreen(
     onRefreshStorage: () -> Unit,
     modifier: Modifier = Modifier
 ) {
+    var pendingDeleteModel by remember { mutableStateOf<ModelUiEntry?>(null) }
+    var pendingDeletePack by remember { mutableStateOf<TranslationDirection?>(null) }
+
     val notifLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.RequestPermission()
     ) { _ -> }
@@ -127,7 +138,7 @@ fun ModelManagerScreen(
                                 color = MaterialTheme.colorScheme.onSecondaryContainer,
                                 modifier = Modifier.weight(1f)
                             )
-                            OutlinedButton(onClick = onDismissMessage) { Text("حسناً") }
+                            OutlinedButton(onClick = onDismissMessage) { Text(stringResource(R.string.common_ok)) }
                         }
                     }
                 }
@@ -135,7 +146,7 @@ fun ModelManagerScreen(
 
             item {
                 EditorialSectionHeader(
-                    titleAr = "كتالوج النماذج الصوتية",
+                    titleAr = stringResource(R.string.models_catalog_title),
                     folioTag = "Modèles TTS",
                     countBadge = "${models.size}"
                 )
@@ -148,13 +159,13 @@ fun ModelManagerScreen(
                     onPause = { onPause(entry.spec.id) },
                     onCancel = { onCancel(entry.spec.id) },
                     onActivate = { onActivate(entry) },
-                    onDelete = { onDelete(entry.spec.id) }
+                    onDelete = { pendingDeleteModel = entry }
                 )
             }
 
             item {
                 EditorialSectionHeader(
-                    titleAr = "حزم الترجمة المحلية المشتركة",
+                    titleAr = stringResource(R.string.models_translation_packs_title),
                     folioTag = "OPUS / ML Kit",
                     countBadge = "${TranslationDirection.entries.size}"
                 )
@@ -193,16 +204,22 @@ fun ModelManagerScreen(
                                 ) {
                                     Icon(Icons.Rounded.Download, contentDescription = null, modifier = Modifier.size(18.dp))
                                     Spacer(Modifier.width(6.dp))
-                                    Text(if (pack.status == TranslationPackStatus.DOWNLOADING) "جاري التنزيل..." else "تنزيل الحزمة")
+                                    Text(
+                                        if (pack.status == TranslationPackStatus.DOWNLOADING) {
+                                            stringResource(R.string.reader_download_in_progress)
+                                        } else {
+                                            stringResource(R.string.models_download_pack)
+                                        }
+                                    )
                                 }
                             } else {
                                 OutlinedButton(
-                                    onClick = { onDeleteTranslationPack(dir) },
+                                    onClick = { pendingDeletePack = dir },
                                     modifier = Modifier.minimumInteractiveComponentSize()
                                 ) {
                                     Icon(Icons.Rounded.DeleteOutline, contentDescription = null, modifier = Modifier.size(18.dp))
                                     Spacer(Modifier.width(6.dp))
-                                    Text("حذف الحزمة")
+                                    Text(stringResource(R.string.models_delete_pack))
                                 }
                             }
                         }
@@ -212,6 +229,60 @@ fun ModelManagerScreen(
 
             item { Spacer(Modifier.height(72.dp)) }
         }
+    }
+
+    pendingDeleteModel?.let { target ->
+        AlertDialog(
+            onDismissRequest = { pendingDeleteModel = null },
+            title = { Text(stringResource(R.string.confirm_delete_model_title)) },
+            text = { Text(stringResource(R.string.confirm_delete_model_message, target.spec.displayName)) },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        pendingDeleteModel = null
+                        onDelete(target.spec.id)
+                    },
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = MaterialTheme.colorScheme.error,
+                        contentColor = MaterialTheme.colorScheme.onError
+                    )
+                ) {
+                    Text(stringResource(R.string.common_delete))
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { pendingDeleteModel = null }) {
+                    Text(stringResource(R.string.common_cancel))
+                }
+            }
+        )
+    }
+
+    pendingDeletePack?.let { targetDir ->
+        AlertDialog(
+            onDismissRequest = { pendingDeletePack = null },
+            title = { Text(stringResource(R.string.confirm_delete_translation_pack_title)) },
+            text = { Text(stringResource(R.string.confirm_delete_translation_pack_message, targetDir.displayNameAr)) },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        pendingDeletePack = null
+                        onDeleteTranslationPack(targetDir)
+                    },
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = MaterialTheme.colorScheme.error,
+                        contentColor = MaterialTheme.colorScheme.onError
+                    )
+                ) {
+                    Text(stringResource(R.string.common_delete))
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { pendingDeletePack = null }) {
+                    Text(stringResource(R.string.common_cancel))
+                }
+            }
+        )
     }
 }
 
@@ -238,7 +309,7 @@ private fun StorageSummaryCard(storage: StorageBreakdown, onRefresh: () -> Unit)
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Icon(Icons.Rounded.Storage, contentDescription = null, tint = MaterialTheme.colorScheme.secondary)
                     Spacer(Modifier.width(8.dp))
-                    Text("تفصيل التخزين والمساحة الحرة", style = MaterialTheme.typography.titleSmall)
+                    Text(stringResource(R.string.models_storage_title), style = MaterialTheme.typography.titleSmall)
                 }
                 Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                     MonospaceMetricPill(
@@ -250,7 +321,7 @@ private fun StorageSummaryCard(storage: StorageBreakdown, onRefresh: () -> Unit)
                         onClick = onRefresh,
                         modifier = Modifier.minimumInteractiveComponentSize()
                     ) {
-                        Icon(Icons.Rounded.Refresh, contentDescription = "تحديث المساحة")
+                        Icon(Icons.Rounded.Refresh, contentDescription = stringResource(R.string.models_refresh_storage_cd))
                     }
                 }
             }
@@ -354,7 +425,11 @@ private fun ModelCatalogCard(
                     )
                 }
                 if (spec.isPrimaryCandidate) {
-                    AssistChip(onClick = {}, label = { Text("مرشح رئيسي") })
+                    MonospaceMetricPill(
+                        text = stringResource(R.string.models_primary_candidate),
+                        containerColor = MaterialTheme.colorScheme.secondaryContainer,
+                        contentColor = MaterialTheme.colorScheme.secondary
+                    )
                 }
             }
 
@@ -481,9 +556,9 @@ private fun ModelCatalogCard(
                             Spacer(Modifier.width(6.dp))
                             Text(
                                 when {
-                                    !compat.isSupported -> "غير متوافق مع الجهاز"
-                                    entry.status == ModelInstallStatus.NOT_INSTALLED -> "تنزيل"
-                                    else -> "إعادة المحاولة"
+                                    !compat.isSupported -> stringResource(R.string.models_incompatible_button)
+                                    entry.status == ModelInstallStatus.NOT_INSTALLED -> stringResource(R.string.models_download_button)
+                                    else -> stringResource(R.string.models_retry_button)
                                 }
                             )
                         }
@@ -492,12 +567,12 @@ private fun ModelCatalogCard(
                         FilledTonalButton(onClick = onPause, modifier = Modifier.minimumInteractiveComponentSize()) {
                             Icon(Icons.Rounded.Pause, contentDescription = null, modifier = Modifier.size(18.dp))
                             Spacer(Modifier.width(6.dp))
-                            Text("إيقاف مؤقت")
+                            Text(stringResource(R.string.models_pause_button))
                         }
                         OutlinedButton(onClick = onCancel, modifier = Modifier.minimumInteractiveComponentSize()) {
                             Icon(Icons.Rounded.Cancel, contentDescription = null, modifier = Modifier.size(18.dp))
                             Spacer(Modifier.width(6.dp))
-                            Text("إلغاء")
+                            Text(stringResource(R.string.common_cancel))
                         }
                     }
                     ModelInstallStatus.PAUSED -> {
@@ -508,14 +583,14 @@ private fun ModelCatalogCard(
                         ) {
                             Icon(Icons.Rounded.PlayArrow, contentDescription = null, modifier = Modifier.size(18.dp))
                             Spacer(Modifier.width(6.dp))
-                            Text("استكمال")
+                            Text(stringResource(R.string.models_resume_button))
                         }
                         OutlinedButton(onClick = onCancel, modifier = Modifier.minimumInteractiveComponentSize()) {
-                            Text("إلغاء")
+                            Text(stringResource(R.string.common_cancel))
                         }
                     }
                     ModelInstallStatus.VERIFYING -> {
-                        Text("جاري الفحص...", style = MaterialTheme.typography.labelMedium)
+                        Text(stringResource(R.string.models_verifying_button), style = MaterialTheme.typography.labelMedium)
                     }
                     ModelInstallStatus.INSTALLED -> {
                         if (entry.isActive) {
@@ -526,7 +601,7 @@ private fun ModelCatalogCard(
                             ) {
                                 Icon(Icons.Rounded.CheckCircle, contentDescription = null, modifier = Modifier.size(18.dp))
                                 Spacer(Modifier.width(6.dp))
-                                Text("نشط حالياً")
+                                Text(stringResource(R.string.models_active_button))
                             }
                         } else {
                             Button(
@@ -536,7 +611,7 @@ private fun ModelCatalogCard(
                                     .minimumInteractiveComponentSize()
                                     .testTag("activate_model_${spec.id}")
                             ) {
-                                Text("تفعيل النموذج")
+                                Text(stringResource(R.string.models_activate_button))
                             }
                         }
                         Spacer(Modifier.weight(1f))
@@ -549,7 +624,7 @@ private fun ModelCatalogCard(
                         ) {
                             Icon(
                                 Icons.Rounded.DeleteOutline,
-                                contentDescription = "حذف النموذج",
+                                contentDescription = stringResource(R.string.models_delete_model_cd),
                                 tint = if (entry.isActive) MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.4f)
                                 else MaterialTheme.colorScheme.error
                             )

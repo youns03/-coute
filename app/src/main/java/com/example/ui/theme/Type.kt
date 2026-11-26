@@ -13,11 +13,16 @@ val EditorialDisplayFamily = FontFamily(
 )
 
 val FrenchSerifFamily = FontFamily(
-    Font(R.font.newsreader, FontWeight.Normal)
+    Font(R.font.newsreader, FontWeight.Normal),
+    Font(R.font.newsreader_medium, FontWeight.Medium),
+    Font(R.font.newsreader_semibold, FontWeight.SemiBold)
 )
 
 val UiSansFamily = FontFamily(
-    Font(R.font.readex_pro, FontWeight.Normal)
+    Font(R.font.readex_pro, FontWeight.Normal),
+    Font(R.font.readex_pro_medium, FontWeight.Medium),
+    Font(R.font.readex_pro_semibold, FontWeight.SemiBold),
+    Font(R.font.readex_pro_bold, FontWeight.Bold)
 )
 
 val ArabicSansFamily = UiSansFamily

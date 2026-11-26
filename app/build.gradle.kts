@@ -143,6 +143,10 @@ secrets {
 
 googleServices { missingGoogleServicesStrategy = MissingGoogleServicesStrategy.WARN }
 
+ksp {
+  arg("room.schemaLocation", "$projectDir/schemas")
+}
+
 // Clean-clone self-healing dependency fetch: on fresh GitHub clones where app/libs/sherpa-onnx-2.0.2.aar
 // is absent, Gradle automatically fetches the official v2.0.2 AAR and verifies its SHA-256 before compiling.
 // When app/libs/sherpa-onnx-2.0.2.aar is already present on disk, this task is completely skipped.

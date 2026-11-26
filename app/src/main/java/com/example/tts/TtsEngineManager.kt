@@ -56,6 +56,7 @@ class TtsEngineManager internal constructor(
     )
 
     private val mutex = Mutex()
+    @Volatile
     private var activeEngine: TtsEngine? = null
 
     private val _runtimeState = MutableStateFlow(EngineRuntimeState())
