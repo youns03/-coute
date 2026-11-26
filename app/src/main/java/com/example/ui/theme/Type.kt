@@ -8,6 +8,12 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.sp
 import com.example.R
 
+val EditorialDisplayFamily = FontFamily(
+    Font(R.font.cormorant_garamond, FontWeight.Normal),
+    Font(R.font.cormorant_garamond, FontWeight.SemiBold),
+    Font(R.font.cormorant_garamond, FontWeight.Bold)
+)
+
 val FrenchSerifFamily = FontFamily(
     Font(R.font.newsreader, FontWeight.Normal),
     Font(R.font.newsreader_medium, FontWeight.Medium),
@@ -27,12 +33,24 @@ val UiSansFamily = FontFamily(
 
 val ArabicSansFamily = UiSansFamily
 
+val StudioMonoFamily = FontFamily(
+    Font(R.font.jetbrains_mono, FontWeight.Normal),
+    Font(R.font.jetbrains_mono, FontWeight.Medium)
+)
+
 val Typography = Typography(
     displaySmall = TextStyle(
-        fontFamily = FrenchSerifFamily,
+        fontFamily = EditorialDisplayFamily,
         fontWeight = FontWeight.SemiBold,
-        fontSize = 30.sp,
-        lineHeight = 38.sp
+        fontSize = 32.sp,
+        lineHeight = 38.sp,
+        letterSpacing = (-0.2).sp
+    ),
+    headlineLarge = TextStyle(
+        fontFamily = EditorialDisplayFamily,
+        fontWeight = FontWeight.Bold,
+        fontSize = 28.sp,
+        lineHeight = 34.sp
     ),
     headlineMedium = TextStyle(
         fontFamily = FrenchSerifFamily,
@@ -74,7 +92,7 @@ val Typography = Typography(
         fontFamily = UiSansFamily,
         fontWeight = FontWeight.Normal,
         fontSize = 14.sp,
-        lineHeight = 20.sp
+        lineHeight = 21.sp
     ),
     bodySmall = TextStyle(
         fontFamily = UiSansFamily,

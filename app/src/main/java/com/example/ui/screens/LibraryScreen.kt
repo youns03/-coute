@@ -3,14 +3,17 @@ package com.example.ui.screens
 import android.net.Uri
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -20,6 +23,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.Add
@@ -28,10 +32,8 @@ import androidx.compose.material.icons.rounded.Close
 import androidx.compose.material.icons.rounded.DeleteOutline
 import androidx.compose.material.icons.rounded.Headphones
 import androidx.compose.material.icons.rounded.Search
-import androidx.compose.material3.AssistChip
 import androidx.compose.material3.Button
-import androidx.compose.material3.Card
-import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.Icon
@@ -39,6 +41,7 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.minimumInteractiveComponentSize
@@ -60,7 +63,12 @@ import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
 import com.example.R
 import com.example.data.BookEntity
+import com.example.ui.components.AtelierCard
+import com.example.ui.components.EditorialSectionHeader
+import com.example.ui.components.MonospaceMetricPill
+import com.example.ui.theme.EditorialDisplayFamily
 import com.example.ui.theme.FrenchSerifFamily
+import com.example.ui.theme.LocalEcouteAtelierColors
 import com.example.ui.viewmodel.LibraryUiState
 
 @Composable
@@ -83,7 +91,7 @@ fun LibraryScreen(
     Box(modifier = modifier.fillMaxSize(), contentAlignment = Alignment.TopCenter) {
         LazyColumn(
             modifier = Modifier
-                .widthIn(max = 760.dp)
+                .widthIn(max = 780.dp)
                 .fillMaxSize(),
             contentPadding = PaddingValues(horizontal = 16.dp, vertical = 14.dp),
             verticalArrangement = Arrangement.spacedBy(14.dp)
@@ -104,6 +112,7 @@ fun LibraryScreen(
                 item {
                     Surface(
                         color = MaterialTheme.colorScheme.secondaryContainer,
+                        border = BorderStroke(1.dp, MaterialTheme.colorScheme.secondary.copy(alpha = 0.25f)),
                         shape = MaterialTheme.shapes.medium,
                         modifier = Modifier.fillMaxWidth()
                     ) {
@@ -133,9 +142,21 @@ fun LibraryScreen(
                     value = state.searchQuery,
                     onValueChange = onSearchChange,
                     placeholder = { Text("ابحث في مكتبة الكتب الفرنسية والإنجليزية...") },
-                    leadingIcon = { Icon(Icons.Rounded.Search, contentDescription = null) },
+                    leadingIcon = {
+                        Icon(
+                            Icons.Rounded.Search,
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.secondary
+                        )
+                    },
                     singleLine = true,
-                    shape = MaterialTheme.shapes.medium,
+                    shape = RoundedCornerShape(18.dp),
+                    colors = OutlinedTextFieldDefaults.colors(
+                        focusedContainerColor = MaterialTheme.colorScheme.surface,
+                        unfocusedContainerColor = MaterialTheme.colorScheme.surface.copy(alpha = 0.85f),
+                        focusedBorderColor = MaterialTheme.colorScheme.secondary,
+                        unfocusedBorderColor = LocalEcouteAtelierColors.current.cardBorder
+                    ),
                     modifier = Modifier
                         .fillMaxWidth()
                         .testTag("library_search_input")
@@ -143,30 +164,40 @@ fun LibraryScreen(
             }
 
             item {
-                Text(
-                    text = "كتبك ونصوصك (${state.books.size})",
-                    style = MaterialTheme.typography.titleMedium,
-                    color = MaterialTheme.colorScheme.onBackground
+                EditorialSectionHeader(
+                    titleAr = "كتبك ونصوصك",
+                    folioTag = "Bibliothèque",
+                    countBadge = "${state.books.size}"
                 )
             }
 
             if (state.books.isEmpty()) {
                 item {
-                    Card(
-                        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)),
+                    AtelierCard(
+                        containerColor = MaterialTheme.colorScheme.surface,
                         modifier = Modifier.fillMaxWidth()
                     ) {
                         Column(
-                            modifier = Modifier.padding(24.dp),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(26.dp),
                             horizontalAlignment = Alignment.CenterHorizontally,
                             verticalArrangement = Arrangement.spacedBy(8.dp)
                         ) {
-                            Icon(
-                                Icons.Rounded.AutoStories,
-                                contentDescription = null,
-                                tint = MaterialTheme.colorScheme.primary,
-                                modifier = Modifier.size(36.dp)
-                            )
+                            Box(
+                                modifier = Modifier
+                                    .size(56.dp)
+                                    .clip(CircleShape)
+                                    .background(MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.7f)),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Icon(
+                                    Icons.Rounded.AutoStories,
+                                    contentDescription = null,
+                                    tint = MaterialTheme.colorScheme.primary,
+                                    modifier = Modifier.size(28.dp)
+                                )
+                            }
                             Text(
                                 "لا توجد كتب مطابقة لبحثك",
                                 style = MaterialTheme.typography.titleMedium
@@ -200,12 +231,14 @@ private fun LibraryHeroBanner(
     onImportClick: () -> Unit,
     onModelsClick: () -> Unit
 ) {
-    Card(
-        shape = MaterialTheme.shapes.large,
-        elevation = CardDefaults.cardElevation(defaultElevation = 2.dp),
+    val atelier = LocalEcouteAtelierColors.current
+    AtelierCard(
+        borderColor = atelier.cardBorder,
+        elevation = 3.dp,
+        shape = MaterialTheme.shapes.extraLarge,
         modifier = Modifier.fillMaxWidth()
     ) {
-        Box(modifier = Modifier.height(210.dp)) {
+        Box(modifier = Modifier.height(228.dp)) {
             Image(
                 painter = painterResource(id = R.drawable.img_library_hero),
                 contentDescription = "مكتبة إيكوت لتعلم الفرنسية",
@@ -218,8 +251,9 @@ private fun LibraryHeroBanner(
                     .background(
                         Brush.verticalGradient(
                             colors = listOf(
-                                Color(0xAA0F1724),
-                                Color(0xE614233C)
+                                Color(0x880B1320),
+                                Color(0xCC111F36),
+                                Color(0xF212223C)
                             )
                         )
                     )
@@ -227,16 +261,37 @@ private fun LibraryHeroBanner(
             Column(
                 modifier = Modifier
                     .fillMaxSize()
-                    .padding(18.dp),
+                    .padding(20.dp),
                 verticalArrangement = Arrangement.SpaceBetween
             ) {
-                Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
                     CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Ltr) {
-                        Text(
-                            text = "Écoute • Lire & Écouter",
-                            style = MaterialTheme.typography.labelLarge,
-                            color = Color(0xFFFFD5C2)
-                        )
+                        Surface(
+                            color = Color(0x33FFFFFF),
+                            border = BorderStroke(1.dp, Color(0x40E8B954)),
+                            shape = RoundedCornerShape(20.dp)
+                        ) {
+                            Row(
+                                modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(6.dp)
+                            ) {
+                                Box(
+                                    modifier = Modifier
+                                        .size(6.dp)
+                                        .clip(CircleShape)
+                                        .background(Color(0xFFE8B954))
+                                )
+                                Text(
+                                    text = "Écoute • Atelier Littéraire",
+                                    style = MaterialTheme.typography.labelSmall.copy(
+                                        fontFamily = EditorialDisplayFamily,
+                                        fontWeight = FontWeight.Bold
+                                    ),
+                                    color = Color(0xFFFDF4E3)
+                                )
+                            }
+                        }
                     }
                     Text(
                         text = "اقرأ الفرنسية والإنجليزية واستمع محلياً",
@@ -244,9 +299,9 @@ private fun LibraryHeroBanner(
                         color = Color.White
                     )
                     Text(
-                        text = "مزامنة النطق الفرنسي، ترجمة جمل وفقرات للعربية، وتشغيل دون إنترنت.",
+                        text = "مزامنة النطق الفرنسي كلمة بكلمة، ترجمة جمل وفقرات للعربية، وتشغيل دون إنترنت.",
                         style = MaterialTheme.typography.bodySmall,
-                        color = Color(0xFFE0E6F0)
+                        color = Color(0xFFDCE3EE)
                     )
                 }
 
@@ -257,6 +312,11 @@ private fun LibraryHeroBanner(
                     Button(
                         onClick = onImportClick,
                         enabled = !isImporting,
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = MaterialTheme.colorScheme.secondary,
+                            contentColor = MaterialTheme.colorScheme.onSecondary
+                        ),
+                        shape = RoundedCornerShape(14.dp),
                         modifier = Modifier
                             .minimumInteractiveComponentSize()
                             .testTag("import_book_button")
@@ -265,7 +325,7 @@ private fun LibraryHeroBanner(
                             CircularProgressIndicator(
                                 modifier = Modifier.size(18.dp),
                                 strokeWidth = 2.dp,
-                                color = MaterialTheme.colorScheme.onPrimary
+                                color = MaterialTheme.colorScheme.onSecondary
                             )
                         } else {
                             Icon(Icons.Rounded.Add, contentDescription = null, modifier = Modifier.size(18.dp))
@@ -276,6 +336,7 @@ private fun LibraryHeroBanner(
 
                     FilledTonalButton(
                         onClick = onModelsClick,
+                        shape = RoundedCornerShape(14.dp),
                         modifier = Modifier
                             .minimumInteractiveComponentSize()
                             .testTag("hero_models_button")
@@ -300,23 +361,45 @@ private fun BookCard(
         ((book.currentSentenceIndex + 1).toFloat() / book.totalSentences.toFloat()).coerceIn(0f, 1f)
     } else 0f
 
-    Card(
+    AtelierCard(
         onClick = onOpen,
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-        elevation = CardDefaults.cardElevation(defaultElevation = 1.dp),
-        shape = MaterialTheme.shapes.medium,
+        shape = MaterialTheme.shapes.large,
         modifier = Modifier
             .fillMaxWidth()
             .testTag("book_card_${book.id}")
     ) {
-        Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
             Row(
                 modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(12.dp),
+                horizontalArrangement = Arrangement.spacedBy(14.dp),
                 verticalAlignment = Alignment.Top
             ) {
                 BookCover(book = book)
-                Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        MonospaceMetricPill(
+                            text = "${book.sourceLanguage.uppercase()} • ${book.sourceType}",
+                            containerColor = MaterialTheme.colorScheme.surfaceVariant,
+                            contentColor = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        if (book.sourceType != "STARTER") {
+                            IconButton(
+                                onClick = onDelete,
+                                modifier = Modifier.minimumInteractiveComponentSize()
+                            ) {
+                                Icon(
+                                    Icons.Rounded.DeleteOutline,
+                                    contentDescription = "حذف الكتاب",
+                                    tint = MaterialTheme.colorScheme.error
+                                )
+                            }
+                        }
+                    }
+
                     CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Ltr) {
                         Text(
                             text = book.title,
@@ -331,36 +414,14 @@ private fun BookCard(
                     Text(
                         text = book.author,
                         style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
                     )
-                }
-
-                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                    AssistChip(
-                        onClick = onOpen,
-                        label = {
-                            Text(
-                                "${book.sourceLanguage.uppercase()} • ${book.sourceType}",
-                                style = MaterialTheme.typography.labelSmall
-                            )
-                        }
-                    )
-                    if (book.sourceType != "STARTER") {
-                        IconButton(
-                            onClick = onDelete,
-                            modifier = Modifier.minimumInteractiveComponentSize()
-                        ) {
-                            Icon(
-                                Icons.Rounded.DeleteOutline,
-                                contentDescription = "حذف الكتاب",
-                                tint = MaterialTheme.colorScheme.error
-                            )
-                        }
-                    }
                 }
             }
 
-            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 LinearProgressIndicator(
                     progress = { progress },
                     modifier = Modifier
@@ -375,27 +436,34 @@ private fun BookCard(
                     horizontalArrangement = Arrangement.SpaceBetween,
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                    Row(
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        MonospaceMetricPill(
+                            text = "${(progress * 100).toInt()}%",
+                            containerColor = MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.8f),
+                            contentColor = MaterialTheme.colorScheme.onSecondaryContainer
+                        )
                         Text(
                             text = "${book.totalChapters} فصول • ${book.totalSentences} جملة",
                             style = MaterialTheme.typography.labelSmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
-                        Text(
-                            text = "${(progress * 100).toInt()}%",
-                            style = MaterialTheme.typography.labelSmall,
-                            color = MaterialTheme.colorScheme.primary
-                        )
                     }
                     FilledTonalButton(
                         onClick = onOpen,
-                        contentPadding = PaddingValues(horizontal = 12.dp, vertical = 7.dp),
-                        modifier = Modifier.testTag("continue_reading_${book.id}")
+                        shape = RoundedCornerShape(12.dp),
+                        contentPadding = PaddingValues(horizontal = 14.dp, vertical = 8.dp),
+                        modifier = Modifier
+                            .minimumInteractiveComponentSize()
+                            .testTag("continue_reading_${book.id}")
                     ) {
                         Icon(Icons.Rounded.AutoStories, contentDescription = null, modifier = Modifier.size(16.dp))
                         Spacer(Modifier.width(6.dp))
                         Text(
-                            if (book.currentSentenceIndex > 0) stringResource(R.string.library_continue_reading) else stringResource(R.string.library_start_reading),
+                            if (book.currentSentenceIndex > 0) stringResource(R.string.library_continue_reading)
+                            else stringResource(R.string.library_start_reading),
                             style = MaterialTheme.typography.labelMedium
                         )
                     }
@@ -407,45 +475,57 @@ private fun BookCard(
 
 @Composable
 private fun BookCover(book: BookEntity) {
-    val coverBase = if (book.sourceLanguage.equals("fr", ignoreCase = true)) {
-        MaterialTheme.colorScheme.primaryContainer
+    val isFrench = book.sourceLanguage.equals("fr", ignoreCase = true)
+    val coverTop = if (isFrench) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.tertiary
+    val coverBottom = if (isFrench) {
+        MaterialTheme.colorScheme.primary.copy(alpha = 0.82f)
     } else {
-        MaterialTheme.colorScheme.tertiaryContainer
+        MaterialTheme.colorScheme.tertiary.copy(alpha = 0.82f)
     }
-    val coverInk = if (book.sourceLanguage.equals("fr", ignoreCase = true)) {
-        MaterialTheme.colorScheme.onPrimaryContainer
-    } else {
-        MaterialTheme.colorScheme.onTertiaryContainer
-    }
+    val foilColor = LocalEcouteAtelierColors.current.warmGoldAccent
 
     Box(
         modifier = Modifier
-            .size(width = 76.dp, height = 104.dp)
-            .clip(RoundedCornerShape(12.dp))
-            .background(
-                Brush.linearGradient(
-                    colors = listOf(coverBase, coverBase.copy(alpha = 0.72f))
-                )
+            .size(width = 78.dp, height = 108.dp)
+            .clip(RoundedCornerShape(topEnd = 12.dp, bottomEnd = 12.dp, topStart = 4.dp, bottomStart = 4.dp))
+            .background(Brush.linearGradient(colors = listOf(coverTop, coverBottom)))
+            .border(
+                width = 1.dp,
+                color = foilColor.copy(alpha = 0.45f),
+                shape = RoundedCornerShape(topEnd = 12.dp, bottomEnd = 12.dp, topStart = 4.dp, bottomStart = 4.dp)
             )
-            .padding(8.dp),
-        contentAlignment = Alignment.Center
     ) {
-        Column(
-            horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.spacedBy(4.dp)
+        // Subtle bookbinding spine crease
+        Box(
+            modifier = Modifier
+                .width(7.dp)
+                .fillMaxHeight()
+                .background(Color.Black.copy(alpha = 0.22f))
+                .align(Alignment.CenterStart)
+        )
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(start = 11.dp, end = 6.dp, top = 8.dp, bottom = 8.dp)
+                .border(0.75.dp, foilColor.copy(alpha = 0.4f), RoundedCornerShape(6.dp)),
+            contentAlignment = Alignment.Center
         ) {
-            Text(
-                text = book.title.trim().firstOrNull()?.uppercase() ?: "É",
-                style = MaterialTheme.typography.headlineLarge,
-                color = coverInk,
-                fontFamily = FrenchSerifFamily
-            )
-            Text(
-                text = "ÉCOUTE",
-                style = MaterialTheme.typography.labelSmall,
-                color = coverInk.copy(alpha = 0.78f),
-                maxLines = 1
-            )
+            Column(
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.spacedBy(3.dp)
+            ) {
+                Text(
+                    text = book.title.trim().firstOrNull()?.uppercase() ?: "É",
+                    style = MaterialTheme.typography.headlineLarge.copy(fontFamily = EditorialDisplayFamily),
+                    color = Color.White
+                )
+                Text(
+                    text = book.sourceLanguage.uppercase(),
+                    style = MaterialTheme.typography.labelSmall,
+                    color = foilColor.copy(alpha = 0.92f),
+                    maxLines = 1
+                )
+            }
         }
     }
 }

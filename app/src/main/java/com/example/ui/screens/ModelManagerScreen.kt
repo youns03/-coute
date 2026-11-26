@@ -4,12 +4,17 @@ import android.Manifest
 import android.os.Build
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -19,6 +24,8 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.Cancel
 import androidx.compose.material.icons.rounded.CheckCircle
@@ -33,8 +40,6 @@ import androidx.compose.material.icons.rounded.VerifiedUser
 import androidx.compose.material.icons.rounded.Warning
 import androidx.compose.material3.AssistChip
 import androidx.compose.material3.Button
-import androidx.compose.material3.Card
-import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -47,6 +52,8 @@ import androidx.compose.material3.minimumInteractiveComponentSize
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.unit.dp
 import com.example.domain.ModelCompatibilityStatus
@@ -56,6 +63,11 @@ import com.example.models.ModelUiEntry
 import com.example.translation.TranslationDirection
 import com.example.translation.TranslationManagerUiState
 import com.example.translation.TranslationPackStatus
+import com.example.ui.components.AtelierCard
+import com.example.ui.components.EditorialSectionHeader
+import com.example.ui.components.MonospaceMetricPill
+import com.example.ui.theme.LocalEcouteAtelierColors
+import com.example.ui.theme.StudioMonoFamily
 
 @Composable
 fun ModelManagerScreen(
@@ -88,7 +100,7 @@ fun ModelManagerScreen(
     Box(modifier = modifier.fillMaxSize(), contentAlignment = Alignment.TopCenter) {
         LazyColumn(
             modifier = Modifier
-                .widthIn(max = 760.dp)
+                .widthIn(max = 780.dp)
                 .fillMaxSize(),
             contentPadding = PaddingValues(horizontal = 16.dp, vertical = 14.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp)
@@ -101,6 +113,7 @@ fun ModelManagerScreen(
                 item {
                     Surface(
                         color = MaterialTheme.colorScheme.secondaryContainer,
+                        border = BorderStroke(1.dp, MaterialTheme.colorScheme.secondary.copy(alpha = 0.25f)),
                         shape = MaterialTheme.shapes.medium,
                         modifier = Modifier.fillMaxWidth()
                     ) {
@@ -111,6 +124,7 @@ fun ModelManagerScreen(
                             Text(
                                 text = actionMessage,
                                 style = MaterialTheme.typography.bodyMedium,
+                                color = MaterialTheme.colorScheme.onSecondaryContainer,
                                 modifier = Modifier.weight(1f)
                             )
                             OutlinedButton(onClick = onDismissMessage) { Text("حسناً") }
@@ -120,7 +134,11 @@ fun ModelManagerScreen(
             }
 
             item {
-                Text("كتالوج النماذج الصوتية الفرنسية", style = MaterialTheme.typography.titleMedium)
+                EditorialSectionHeader(
+                    titleAr = "كتالوج النماذج الصوتية",
+                    folioTag = "Modèles TTS",
+                    countBadge = "${models.size}"
+                )
             }
 
             items(models, key = { it.spec.id }) { entry ->
@@ -135,18 +153,16 @@ fun ModelManagerScreen(
             }
 
             item {
-                Text(
-                    "حزم الترجمة المحلية المشتركة (المرحلة 1: القارئ + مترجم الملفات)",
-                    style = MaterialTheme.typography.titleMedium
+                EditorialSectionHeader(
+                    titleAr = "حزم الترجمة المحلية المشتركة",
+                    folioTag = "OPUS / ML Kit",
+                    countBadge = "${TranslationDirection.entries.size}"
                 )
             }
 
             items(TranslationDirection.entries, key = { it.name }) { dir ->
                 val pack = translationState.stateFor(dir)
-                Card(
-                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-                    modifier = Modifier.fillMaxWidth()
-                ) {
+                AtelierCard(modifier = Modifier.fillMaxWidth()) {
                     Column(modifier = Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                         Row(
                             modifier = Modifier.fillMaxWidth(),
@@ -154,28 +170,36 @@ fun ModelManagerScreen(
                             verticalAlignment = Alignment.CenterVertically
                         ) {
                             Row(verticalAlignment = Alignment.CenterVertically) {
-                                Icon(Icons.Rounded.Translate, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
+                                Icon(Icons.Rounded.Translate, contentDescription = null, tint = MaterialTheme.colorScheme.secondary)
                                 Spacer(Modifier.width(8.dp))
                                 Column {
                                     Text(dir.displayNameAr, style = MaterialTheme.typography.titleSmall)
-                                    Text(pack.activeRuntimeLabel, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                    Text(
+                                        pack.activeRuntimeLabel,
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
                                 }
                             }
-                            AssistChip(onClick = {}, label = { Text(dir.shortBadge) })
+                            MonospaceMetricPill(text = dir.shortBadge)
                         }
                         Text(pack.statusMessage, style = MaterialTheme.typography.bodySmall)
                         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                             if (pack.status != TranslationPackStatus.READY) {
                                 Button(
                                     onClick = { onDownloadTranslationPack(dir) },
-                                    enabled = pack.status != TranslationPackStatus.DOWNLOADING
+                                    enabled = pack.status != TranslationPackStatus.DOWNLOADING,
+                                    modifier = Modifier.minimumInteractiveComponentSize()
                                 ) {
                                     Icon(Icons.Rounded.Download, contentDescription = null, modifier = Modifier.size(18.dp))
                                     Spacer(Modifier.width(6.dp))
                                     Text(if (pack.status == TranslationPackStatus.DOWNLOADING) "جاري التنزيل..." else "تنزيل الحزمة")
                                 }
                             } else {
-                                OutlinedButton(onClick = { onDeleteTranslationPack(dir) }) {
+                                OutlinedButton(
+                                    onClick = { onDeleteTranslationPack(dir) },
+                                    modifier = Modifier.minimumInteractiveComponentSize()
+                                ) {
                                     Icon(Icons.Rounded.DeleteOutline, contentDescription = null, modifier = Modifier.size(18.dp))
                                     Spacer(Modifier.width(6.dp))
                                     Text("حذف الحزمة")
@@ -191,40 +215,83 @@ fun ModelManagerScreen(
     }
 }
 
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 private fun StorageSummaryCard(storage: StorageBreakdown, onRefresh: () -> Unit) {
-    Card(
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f)),
+    val modelsB = storage.installedModelsBytes.coerceAtLeast(0L)
+    val tempB = storage.tempDownloadsBytes.coerceAtLeast(0L)
+    val cacheB = storage.audioCacheBytes.coerceAtLeast(0L)
+    val wavB = storage.savedSamplesBytes.coerceAtLeast(0L)
+    val appUsed = (modelsB + tempB + cacheB + wavB).coerceAtLeast(1L)
+
+    AtelierCard(
+        elevation = 2.dp,
+        shape = MaterialTheme.shapes.extraLarge,
         modifier = Modifier.fillMaxWidth()
     ) {
-        Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    Icon(Icons.Rounded.Storage, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
+                    Icon(Icons.Rounded.Storage, contentDescription = null, tint = MaterialTheme.colorScheme.secondary)
                     Spacer(Modifier.width(8.dp))
                     Text("تفصيل التخزين والمساحة الحرة", style = MaterialTheme.typography.titleSmall)
                 }
-                IconButton(onClick = onRefresh) {
-                    Icon(Icons.Rounded.Refresh, contentDescription = "تحديث المساحة")
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    MonospaceMetricPill(
+                        text = "FREE ${formatBytes(storage.freeDeviceBytes)}",
+                        containerColor = MaterialTheme.colorScheme.tertiaryContainer,
+                        contentColor = MaterialTheme.colorScheme.onTertiaryContainer
+                    )
+                    IconButton(
+                        onClick = onRefresh,
+                        modifier = Modifier.minimumInteractiveComponentSize()
+                    ) {
+                        Icon(Icons.Rounded.Refresh, contentDescription = "تحديث المساحة")
+                    }
                 }
             }
-            Text(
-                "المساحة الحرة بالجهاز: ${formatBytes(storage.freeDeviceBytes)}",
-                style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.primary
-            )
-            Text(
-                "النماذج المثبتة (filesDir): ${formatBytes(storage.installedModelsBytes)} • تنزيلات مؤقتة: ${formatBytes(storage.tempDownloadsBytes)}",
-                style = MaterialTheme.typography.bodySmall
-            )
-            Text(
-                "الكاش الصوتي: ${formatBytes(storage.audioCacheBytes)} • عينات WAV المحفوظة: ${formatBytes(storage.savedSamplesBytes)}",
-                style = MaterialTheme.typography.bodySmall
-            )
+
+            // Segmented bar showing relative footprint inside app storage
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(10.dp)
+                    .clip(RoundedCornerShape(5.dp))
+                    .background(MaterialTheme.colorScheme.surfaceVariant),
+                horizontalArrangement = Arrangement.spacedBy(2.dp)
+            ) {
+                val segments = listOf(
+                    modelsB to MaterialTheme.colorScheme.primary,
+                    tempB to MaterialTheme.colorScheme.secondary,
+                    cacheB to MaterialTheme.colorScheme.tertiary,
+                    wavB to LocalEcouteAtelierColors.current.warmGoldAccent
+                )
+                segments.forEach { (bytes, color) ->
+                    if (bytes > 0L) {
+                        Box(
+                            modifier = Modifier
+                                .weight((bytes.toFloat() / appUsed.toFloat()).coerceAtLeast(0.03f))
+                                .fillMaxHeight()
+                                .background(color)
+                        )
+                    }
+                }
+            }
+
+            FlowRow(
+                horizontalArrangement = Arrangement.spacedBy(10.dp),
+                verticalArrangement = Arrangement.spacedBy(6.dp)
+            ) {
+                StorageLegendDot("النماذج: ${formatBytes(modelsB)}", MaterialTheme.colorScheme.primary)
+                StorageLegendDot("مؤقت: ${formatBytes(tempB)}", MaterialTheme.colorScheme.secondary)
+                StorageLegendDot("كاش الصوت: ${formatBytes(cacheB)}", MaterialTheme.colorScheme.tertiary)
+                StorageLegendDot("WAV: ${formatBytes(wavB)}", LocalEcouteAtelierColors.current.warmGoldAccent)
+            }
+
             Text(
                 "حجم APK: ${formatBytes(storage.apkBytes)} • مكتبات التشغيل الأصلية (.so): ${formatBytes(storage.nativeLibsEstimateBytes)}",
                 style = MaterialTheme.typography.labelSmall,
@@ -234,6 +301,24 @@ private fun StorageSummaryCard(storage: StorageBreakdown, onRefresh: () -> Unit)
     }
 }
 
+@Composable
+private fun StorageLegendDot(label: String, color: Color) {
+    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(5.dp)) {
+        Box(
+            modifier = Modifier
+                .size(8.dp)
+                .clip(CircleShape)
+                .background(color)
+        )
+        Text(
+            text = label,
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+    }
+}
+
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 private fun ModelCatalogCard(
     entry: ModelUiEntry,
@@ -245,14 +330,16 @@ private fun ModelCatalogCard(
 ) {
     val spec = entry.spec
     val compat = entry.compatibility
-    Card(
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-        elevation = CardDefaults.cardElevation(defaultElevation = if (entry.isActive) 3.dp else 1.dp),
+    val atelier = LocalEcouteAtelierColors.current
+
+    AtelierCard(
+        borderColor = if (entry.isActive) MaterialTheme.colorScheme.secondary.copy(alpha = 0.7f) else atelier.cardBorder,
+        elevation = if (entry.isActive) 3.dp else 1.dp,
         modifier = Modifier
             .fillMaxWidth()
             .testTag("model_card_${spec.id}")
     ) {
-        Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween,
@@ -271,19 +358,29 @@ private fun ModelCatalogCard(
                 }
             }
 
-            // Capability & device compatibility summary row
-            val langsLabel = if (spec.supportedLanguageCodes.size > 1) "FR • EN" else "FR فقط"
-            val capabilityLabel = buildString {
-                append(langsLabel)
-                if (!spec.supportsGpuDelegate) append(" • CPU فقط")
-                if (spec.singleSpeakerOnly) append(" • متحدث واحد (sid=0)")
-                if (spec.supportsWordTimestamps) append(" • توقيت كلمات")
+            FlowRow(
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                verticalArrangement = Arrangement.spacedBy(6.dp)
+            ) {
+                MonospaceMetricPill(
+                    text = if (spec.supportedLanguageCodes.size > 1) "FR • EN" else "FR",
+                    containerColor = MaterialTheme.colorScheme.secondaryContainer,
+                    contentColor = MaterialTheme.colorScheme.secondary
+                )
+                MonospaceMetricPill(text = formatBytes(spec.expectedSizeBytes))
+                MonospaceMetricPill(text = spec.format)
+                MonospaceMetricPill(text = "SHA ${spec.sha256.take(8)}")
+                if (!spec.supportsGpuDelegate) {
+                    MonospaceMetricPill(text = "CPU ONLY")
+                }
+                if (spec.supportsWordTimestamps) {
+                    MonospaceMetricPill(
+                        text = "WORD SYNC",
+                        containerColor = MaterialTheme.colorScheme.tertiaryContainer,
+                        contentColor = MaterialTheme.colorScheme.onTertiaryContainer
+                    )
+                }
             }
-            Text(
-                text = capabilityLabel,
-                style = MaterialTheme.typography.labelSmall,
-                color = MaterialTheme.colorScheme.secondary
-            )
 
             Surface(
                 color = when (compat.status) {
@@ -318,12 +415,7 @@ private fun ModelCatalogCard(
             Text(spec.voiceDescriptionAr, style = MaterialTheme.typography.bodySmall)
 
             Text(
-                "الحجم: ${formatBytes(spec.expectedSizeBytes)} • الصيغة: ${spec.format} • الإصدار: ${spec.version}",
-                style = MaterialTheme.typography.labelSmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
-            )
-            Text(
-                "الترخيص: ${spec.licenseName} • SHA-256: ${spec.sha256.take(14)}...",
+                "الإصدار: ${spec.version} • الترخيص: ${spec.licenseName}",
                 style = MaterialTheme.typography.labelSmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
@@ -331,7 +423,12 @@ private fun ModelCatalogCard(
             if (entry.status == ModelInstallStatus.DOWNLOADING || entry.status == ModelInstallStatus.PAUSED || entry.status == ModelInstallStatus.VERIFYING) {
                 LinearProgressIndicator(
                     progress = { entry.progressFraction },
-                    modifier = Modifier.fillMaxWidth()
+                    color = MaterialTheme.colorScheme.secondary,
+                    trackColor = MaterialTheme.colorScheme.surfaceVariant,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(6.dp)
+                        .clip(RoundedCornerShape(3.dp))
                 )
                 Text(
                     text = when (entry.status) {
@@ -339,7 +436,7 @@ private fun ModelCatalogCard(
                         ModelInstallStatus.PAUSED -> "متوقف مؤقتاً: ${formatBytes(entry.downloadedBytes)} / ${formatBytes(entry.totalBytes)} (${(entry.progressFraction * 100).toInt()}%)"
                         else -> "جاري التنزيل: ${formatBytes(entry.downloadedBytes)} / ${formatBytes(entry.totalBytes)} (${(entry.progressFraction * 100).toInt()}%)"
                     },
-                    style = MaterialTheme.typography.labelSmall
+                    style = MaterialTheme.typography.labelSmall.copy(fontFamily = StudioMonoFamily)
                 )
             }
 
@@ -355,7 +452,7 @@ private fun ModelCatalogCard(
                 Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                     Icon(Icons.Rounded.VerifiedUser, contentDescription = null, tint = MaterialTheme.colorScheme.tertiary, modifier = Modifier.size(16.dp))
                     Text(
-                        "مثبّت في الذاكرة الدائمة • SHA-256: ${if (entry.verifiedSha256) "✓" else "✗"} • اختبار التحميل: ${if (entry.verifiedLoadTest) "✓" else "✗"}",
+                        "مثبّت • SHA-256: ${if (entry.verifiedSha256) "✓" else "✗"} • اختبار التحميل: ${if (entry.verifiedLoadTest) "✓" else "✗"}",
                         style = MaterialTheme.typography.labelSmall,
                         color = MaterialTheme.colorScheme.tertiary
                     )
@@ -392,24 +489,28 @@ private fun ModelCatalogCard(
                         }
                     }
                     ModelInstallStatus.DOWNLOADING -> {
-                        FilledTonalButton(onClick = onPause) {
+                        FilledTonalButton(onClick = onPause, modifier = Modifier.minimumInteractiveComponentSize()) {
                             Icon(Icons.Rounded.Pause, contentDescription = null, modifier = Modifier.size(18.dp))
                             Spacer(Modifier.width(6.dp))
                             Text("إيقاف مؤقت")
                         }
-                        OutlinedButton(onClick = onCancel) {
+                        OutlinedButton(onClick = onCancel, modifier = Modifier.minimumInteractiveComponentSize()) {
                             Icon(Icons.Rounded.Cancel, contentDescription = null, modifier = Modifier.size(18.dp))
                             Spacer(Modifier.width(6.dp))
                             Text("إلغاء")
                         }
                     }
                     ModelInstallStatus.PAUSED -> {
-                        Button(onClick = onDownloadOrResume, enabled = compat.isSupported) {
+                        Button(
+                            onClick = onDownloadOrResume,
+                            enabled = compat.isSupported,
+                            modifier = Modifier.minimumInteractiveComponentSize()
+                        ) {
                             Icon(Icons.Rounded.PlayArrow, contentDescription = null, modifier = Modifier.size(18.dp))
                             Spacer(Modifier.width(6.dp))
                             Text("استكمال")
                         }
-                        OutlinedButton(onClick = onCancel) {
+                        OutlinedButton(onClick = onCancel, modifier = Modifier.minimumInteractiveComponentSize()) {
                             Text("إلغاء")
                         }
                     }
@@ -418,7 +519,11 @@ private fun ModelCatalogCard(
                     }
                     ModelInstallStatus.INSTALLED -> {
                         if (entry.isActive) {
-                            FilledTonalButton(onClick = onActivate, enabled = compat.isSupported) {
+                            FilledTonalButton(
+                                onClick = onActivate,
+                                enabled = compat.isSupported,
+                                modifier = Modifier.minimumInteractiveComponentSize()
+                            ) {
                                 Icon(Icons.Rounded.CheckCircle, contentDescription = null, modifier = Modifier.size(18.dp))
                                 Spacer(Modifier.width(6.dp))
                                 Text("نشط حالياً")
@@ -427,7 +532,9 @@ private fun ModelCatalogCard(
                             Button(
                                 onClick = onActivate,
                                 enabled = compat.isSupported,
-                                modifier = Modifier.testTag("activate_model_${spec.id}")
+                                modifier = Modifier
+                                    .minimumInteractiveComponentSize()
+                                    .testTag("activate_model_${spec.id}")
                             ) {
                                 Text("تفعيل النموذج")
                             }

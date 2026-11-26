@@ -5,6 +5,8 @@ import android.net.Uri
 import android.os.Build
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -20,9 +22,10 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.rounded.CheckCircle
+import androidx.compose.material.icons.automirrored.rounded.ArrowForward
 import androidx.compose.material.icons.rounded.Close
 import androidx.compose.material.icons.rounded.CloudDone
 import androidx.compose.material.icons.rounded.DeleteOutline
@@ -37,8 +40,7 @@ import androidx.compose.material.icons.rounded.Visibility
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.AssistChip
 import androidx.compose.material3.Button
-import androidx.compose.material3.Card
-import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilledTonalButton
@@ -76,8 +78,14 @@ import com.example.translation.SourceLanguage
 import com.example.translation.TranslationDirection
 import com.example.translation.TranslationManagerUiState
 import com.example.translation.TranslationPackStatus
+import com.example.ui.components.AtelierCard
+import com.example.ui.components.EditorialSectionHeader
+import com.example.ui.components.MonospaceMetricPill
 import com.example.ui.theme.ArabicSansFamily
+import com.example.ui.theme.EditorialDisplayFamily
 import com.example.ui.theme.FrenchSerifFamily
+import com.example.ui.theme.LocalEcouteAtelierColors
+import com.example.ui.theme.StudioMonoFamily
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -103,6 +111,7 @@ fun FileTranslatorScreen(
     onDismissBanner: () -> Unit,
     modifier: Modifier = Modifier
 ) {
+    val atelier = LocalEcouteAtelierColors.current
     var pendingExportRequest by remember { mutableStateOf<Pair<TranslationJobEntity, ExportMode>?>(null) }
     var exportChoiceJob by remember { mutableStateOf<TranslationJobEntity?>(null) }
     var languageResetConfirm by remember { mutableStateOf<Pair<TranslationJobEntity, SourceLanguage>?>(null) }
@@ -133,36 +142,56 @@ fun FileTranslatorScreen(
     Box(modifier = modifier.fillMaxSize(), contentAlignment = Alignment.TopCenter) {
         LazyColumn(
             modifier = Modifier
-                .widthIn(max = 760.dp)
+                .widthIn(max = 780.dp)
                 .fillMaxSize(),
             contentPadding = PaddingValues(horizontal = 16.dp, vertical = 14.dp),
             verticalArrangement = Arrangement.spacedBy(14.dp)
         ) {
             // Workspace Header & Controls
             item {
-                Card(
-                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-                    elevation = CardDefaults.cardElevation(defaultElevation = 2.dp),
-                    shape = MaterialTheme.shapes.large,
+                AtelierCard(
+                    elevation = 2.dp,
+                    shape = MaterialTheme.shapes.extraLarge,
                     modifier = Modifier.fillMaxWidth()
                 ) {
                     Column(
                         modifier = Modifier.padding(18.dp),
-                        verticalArrangement = Arrangement.spacedBy(12.dp)
+                        verticalArrangement = Arrangement.spacedBy(14.dp)
                     ) {
                         Row(
                             modifier = Modifier.fillMaxWidth(),
                             horizontalArrangement = Arrangement.SpaceBetween,
-                            verticalAlignment = Alignment.CenterVertically
+                            verticalAlignment = Alignment.Top
                         ) {
-                            Row(verticalAlignment = Alignment.CenterVertically) {
-                                Icon(
-                                    Icons.Rounded.Translate,
-                                    contentDescription = null,
-                                    tint = MaterialTheme.colorScheme.primary
-                                )
-                                Spacer(Modifier.width(8.dp))
-                                Column {
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                modifier = Modifier.weight(1f)
+                            ) {
+                                Box(
+                                    modifier = Modifier
+                                        .size(44.dp)
+                                        .clip(RoundedCornerShape(14.dp))
+                                        .background(MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.75f)),
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    Icon(
+                                        Icons.Rounded.Translate,
+                                        contentDescription = null,
+                                        tint = MaterialTheme.colorScheme.primary
+                                    )
+                                }
+                                Spacer(Modifier.width(12.dp))
+                                Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                                    CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Ltr) {
+                                        Text(
+                                            "Atelier Traduction",
+                                            style = MaterialTheme.typography.labelSmall.copy(
+                                                fontFamily = EditorialDisplayFamily,
+                                                fontWeight = FontWeight.Bold
+                                            ),
+                                            color = MaterialTheme.colorScheme.secondary
+                                        )
+                                    }
                                     Text("مترجم الملفات المحلي", style = MaterialTheme.typography.titleLarge)
                                     Text(
                                         "ترجمة المستندات الطويلة على دفعات • تستمر في الخلفية دون إنترنت",
@@ -171,31 +200,58 @@ fun FileTranslatorScreen(
                                     )
                                 }
                             }
-                            AssistChip(
-                                onClick = {},
-                                label = { Text("دون إنترنت") }
+                            MonospaceMetricPill(
+                                text = "OFFLINE",
+                                containerColor = MaterialTheme.colorScheme.tertiaryContainer.copy(alpha = 0.8f),
+                                contentColor = MaterialTheme.colorScheme.onTertiaryContainer
                             )
                         }
 
-                        // Source & Target Language Bar (Phase 1: FR or EN -> AR)
-                        Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                            Text("لغة المصدر ← اللغة الهدف (العربية):", style = MaterialTheme.typography.labelMedium)
-                            Row(
-                                modifier = Modifier.fillMaxWidth(),
-                                horizontalArrangement = Arrangement.spacedBy(8.dp),
-                                verticalAlignment = Alignment.CenterVertically
+                        // Source -> Target Arabic directional selector
+                        Surface(
+                            color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.42f),
+                            border = BorderStroke(1.dp, atelier.cardBorder),
+                            shape = MaterialTheme.shapes.medium,
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Column(
+                                modifier = Modifier.padding(12.dp),
+                                verticalArrangement = Arrangement.spacedBy(8.dp)
                             ) {
-                                SourceLanguage.entries.forEach { lang ->
-                                    val dir = TranslationDirection.forSource(lang)
-                                    val packReady = translationManagerState.stateFor(dir).status == TranslationPackStatus.READY
-                                    FilterChip(
-                                        selected = selectedSourceLanguage == lang,
-                                        onClick = { onSelectSourceLanguage(lang) },
-                                        label = {
-                                            Text("${lang.labelAr} (${dir.shortBadge})" + if (packReady) " ✓" else "")
-                                        },
-                                        modifier = Modifier.testTag("translator_lang_${lang.code}")
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                                ) {
+                                    Text("لغة المصدر", style = MaterialTheme.typography.labelMedium)
+                                    Icon(
+                                        Icons.AutoMirrored.Rounded.ArrowForward,
+                                        contentDescription = null,
+                                        tint = MaterialTheme.colorScheme.secondary,
+                                        modifier = Modifier.size(15.dp)
                                     )
+                                    Text(
+                                        "اللغة الهدف (العربية)",
+                                        style = MaterialTheme.typography.labelMedium,
+                                        color = MaterialTheme.colorScheme.primary
+                                    )
+                                }
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    SourceLanguage.entries.forEach { lang ->
+                                        val dir = TranslationDirection.forSource(lang)
+                                        val packReady = translationManagerState.stateFor(dir).status == TranslationPackStatus.READY
+                                        FilterChip(
+                                            selected = selectedSourceLanguage == lang,
+                                            onClick = { onSelectSourceLanguage(lang) },
+                                            label = {
+                                                Text("${lang.labelAr} (${dir.shortBadge})" + if (packReady) " ✓" else "")
+                                            },
+                                            modifier = Modifier.testTag("translator_lang_${lang.code}")
+                                        )
+                                    }
                                 }
                             }
                         }
@@ -205,8 +261,16 @@ fun FileTranslatorScreen(
                             color = if (activePack.status == TranslationPackStatus.READY) {
                                 MaterialTheme.colorScheme.tertiaryContainer.copy(alpha = 0.45f)
                             } else {
-                                MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.6f)
+                                MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.65f)
                             },
+                            border = BorderStroke(
+                                1.dp,
+                                if (activePack.status == TranslationPackStatus.READY) {
+                                    MaterialTheme.colorScheme.tertiary.copy(alpha = 0.3f)
+                                } else {
+                                    MaterialTheme.colorScheme.secondary.copy(alpha = 0.3f)
+                                }
+                            ),
                             shape = MaterialTheme.shapes.medium,
                             modifier = Modifier.fillMaxWidth()
                         ) {
@@ -215,7 +279,7 @@ fun FileTranslatorScreen(
                                 verticalAlignment = Alignment.CenterVertically,
                                 horizontalArrangement = Arrangement.SpaceBetween
                             ) {
-                                Column(modifier = Modifier.weight(1f)) {
+                                Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
                                     Text(
                                         text = "المحرك المشترك: ${activeDirection.displayNameAr}",
                                         style = MaterialTheme.typography.labelMedium
@@ -251,7 +315,7 @@ fun FileTranslatorScreen(
                             }
                         }
 
-                        // Import File Button (TXT / EPUB, noting PDF future support)
+                        // Import File Button (TXT / EPUB)
                         Button(
                             onClick = {
                                 openDocumentLauncher.launch(
@@ -259,6 +323,11 @@ fun FileTranslatorScreen(
                                 )
                             },
                             enabled = !isImporting,
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = MaterialTheme.colorScheme.secondary,
+                                contentColor = MaterialTheme.colorScheme.onSecondary
+                            ),
+                            shape = RoundedCornerShape(14.dp),
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .minimumInteractiveComponentSize()
@@ -268,7 +337,7 @@ fun FileTranslatorScreen(
                                 CircularProgressIndicator(
                                     modifier = Modifier.size(18.dp),
                                     strokeWidth = 2.dp,
-                                    color = MaterialTheme.colorScheme.onPrimary
+                                    color = MaterialTheme.colorScheme.onSecondary
                                 )
                             } else {
                                 Icon(Icons.Rounded.UploadFile, contentDescription = null)
@@ -290,6 +359,7 @@ fun FileTranslatorScreen(
                 item {
                     Surface(
                         color = MaterialTheme.colorScheme.secondaryContainer,
+                        border = BorderStroke(1.dp, MaterialTheme.colorScheme.secondary.copy(alpha = 0.25f)),
                         shape = MaterialTheme.shapes.medium,
                         modifier = Modifier.fillMaxWidth()
                     ) {
@@ -300,6 +370,7 @@ fun FileTranslatorScreen(
                             Text(
                                 text = statusBanner,
                                 style = MaterialTheme.typography.bodyMedium,
+                                color = MaterialTheme.colorScheme.onSecondaryContainer,
                                 modifier = Modifier.weight(1f)
                             )
                             IconButton(
@@ -314,31 +385,40 @@ fun FileTranslatorScreen(
             }
 
             item {
-                Text(
-                    text = "مهام الترجمة (${jobs.size})",
-                    style = MaterialTheme.typography.titleMedium
+                EditorialSectionHeader(
+                    titleAr = "مهام الترجمة",
+                    folioTag = "Tâches",
+                    countBadge = "${jobs.size}"
                 )
             }
 
             if (jobs.isEmpty()) {
                 item {
-                    Card(
-                        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f)),
+                    AtelierCard(
+                        containerColor = MaterialTheme.colorScheme.surface,
                         modifier = Modifier.fillMaxWidth()
                     ) {
                         Column(
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .padding(24.dp),
+                                .padding(26.dp),
                             horizontalAlignment = Alignment.CenterHorizontally,
                             verticalArrangement = Arrangement.spacedBy(8.dp)
                         ) {
-                            Icon(
-                                Icons.Rounded.Description,
-                                contentDescription = null,
-                                tint = MaterialTheme.colorScheme.primary,
-                                modifier = Modifier.size(36.dp)
-                            )
+                            Box(
+                                modifier = Modifier
+                                    .size(52.dp)
+                                    .clip(CircleShape)
+                                    .background(MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.7f)),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Icon(
+                                    Icons.Rounded.Description,
+                                    contentDescription = null,
+                                    tint = MaterialTheme.colorScheme.primary,
+                                    modifier = Modifier.size(26.dp)
+                                )
+                            }
                             Text("لا توجد ملفات قيد الترجمة بعد", style = MaterialTheme.typography.titleMedium)
                             Text(
                                 "استورد ملف TXT أو EPUB بالفرنسية أو الإنجليزية؛ سيُقسَّم تلقائياً إلى دفعات وتستمر ترجمته في الخلفية مع حفظ كل جزء منجز.",
@@ -394,10 +474,10 @@ fun FileTranslatorScreen(
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis
                 )
-                Text(
-                    text = "منجز ${activeJob?.completedChunks ?: 0} من ${activeJob?.totalChunks ?: previewChunks.size} جزء (يحفظ كل جزء فوراً دون تغيير الأصل)",
-                    style = MaterialTheme.typography.labelMedium,
-                    color = MaterialTheme.colorScheme.primary
+                MonospaceMetricPill(
+                    text = "منجز ${activeJob?.completedChunks ?: 0} / ${activeJob?.totalChunks ?: previewChunks.size}",
+                    containerColor = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.7f),
+                    contentColor = MaterialTheme.colorScheme.primary
                 )
                 LazyColumn(
                     modifier = Modifier
@@ -406,18 +486,16 @@ fun FileTranslatorScreen(
                     verticalArrangement = Arrangement.spacedBy(10.dp)
                 ) {
                     items(previewChunks, key = { it.id }) { chunk ->
-                        Card(
-                            colors = CardDefaults.cardColors(
-                                containerColor = if (chunk.isHeading) {
-                                    MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.45f)
-                                } else {
-                                    MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f)
-                                }
-                            ),
+                        AtelierCard(
+                            containerColor = if (chunk.isHeading) {
+                                MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.35f)
+                            } else {
+                                MaterialTheme.colorScheme.surface
+                            },
                             modifier = Modifier.fillMaxWidth()
                         ) {
                             Column(
-                                modifier = Modifier.padding(12.dp),
+                                modifier = Modifier.padding(13.dp),
                                 verticalArrangement = Arrangement.spacedBy(6.dp)
                             ) {
                                 Text(
@@ -434,7 +512,7 @@ fun FileTranslatorScreen(
                                         )
                                     )
                                 }
-                                HorizontalDivider()
+                                HorizontalDivider(color = atelier.cardBorder)
                                 if (chunk.isCompleted && !chunk.translatedText.isNullOrBlank()) {
                                     CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Rtl) {
                                         Text(
@@ -490,7 +568,10 @@ fun FileTranslatorScreen(
                             exportChoiceJob = null
                             createDocumentLauncher.launch("$safeName${mode.fileSuffix}")
                         },
-                        modifier = Modifier.fillMaxWidth()
+                        shape = RoundedCornerShape(14.dp),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .minimumInteractiveComponentSize()
                     ) {
                         Icon(Icons.Rounded.FileDownload, contentDescription = null)
                         Spacer(Modifier.width(8.dp))
@@ -559,9 +640,12 @@ private fun TranslationJobCard(
         else -> "جاهز للبدء"
     }
 
-    Card(
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-        elevation = CardDefaults.cardElevation(defaultElevation = 1.dp),
+    AtelierCard(
+        borderColor = if (job.status == "RUNNING") {
+            MaterialTheme.colorScheme.secondary.copy(alpha = 0.5f)
+        } else {
+            LocalEcouteAtelierColors.current.cardBorder
+        },
         modifier = Modifier
             .fillMaxWidth()
             .testTag("translation_job_card_${job.id}")
@@ -572,7 +656,7 @@ private fun TranslationJobCard(
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.Top
             ) {
-                Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                     CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Ltr) {
                         Text(
                             text = job.title,
@@ -584,19 +668,30 @@ private fun TranslationJobCard(
                     Text(
                         text = "${job.sourceType} • $statusLabel",
                         style = MaterialTheme.typography.labelSmall,
-                        color = if (job.status == "FAILED") MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary
+                        color = when (job.status) {
+                            "FAILED" -> MaterialTheme.colorScheme.error
+                            "COMPLETED" -> MaterialTheme.colorScheme.tertiary
+                            else -> MaterialTheme.colorScheme.secondary
+                        }
                     )
                 }
 
                 AssistChip(
                     onClick = onToggleLanguage,
                     enabled = job.status != "RUNNING",
-                    label = { Text(direction.shortBadge) }
+                    label = {
+                        Text(
+                            direction.shortBadge,
+                            style = MaterialTheme.typography.labelSmall.copy(fontFamily = StudioMonoFamily)
+                        )
+                    }
                 )
             }
 
             LinearProgressIndicator(
                 progress = { progress },
+                color = if (job.status == "COMPLETED") MaterialTheme.colorScheme.tertiary else MaterialTheme.colorScheme.secondary,
+                trackColor = MaterialTheme.colorScheme.surfaceVariant,
                 modifier = Modifier
                     .fillMaxWidth()
                     .height(6.dp)
@@ -605,17 +700,18 @@ private fun TranslationJobCard(
 
             Row(
                 modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
             ) {
                 Text(
                     text = "المنجز: $done / $total جزء • المتبقي: $remaining",
                     style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
-                Text(
+                MonospaceMetricPill(
                     text = "${(progress * 100).toInt()}%",
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.primary
+                    containerColor = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.65f),
+                    contentColor = MaterialTheme.colorScheme.primary
                 )
             }
 
@@ -634,21 +730,30 @@ private fun TranslationJobCard(
             ) {
                 when (job.status) {
                     "RUNNING" -> {
-                        FilledTonalButton(onClick = onPause) {
+                        FilledTonalButton(
+                            onClick = onPause,
+                            modifier = Modifier.minimumInteractiveComponentSize()
+                        ) {
                             Icon(Icons.Rounded.Pause, contentDescription = null, modifier = Modifier.size(18.dp))
                             Spacer(Modifier.width(6.dp))
                             Text("إيقاف مؤقت")
                         }
                     }
                     "COMPLETED" -> {
-                        FilledTonalButton(onClick = onExport) {
+                        FilledTonalButton(
+                            onClick = onExport,
+                            modifier = Modifier.minimumInteractiveComponentSize()
+                        ) {
                             Icon(Icons.Rounded.FileDownload, contentDescription = null, modifier = Modifier.size(18.dp))
                             Spacer(Modifier.width(6.dp))
                             Text("تصدير")
                         }
                     }
                     else -> {
-                        Button(onClick = onStartOrResume) {
+                        Button(
+                            onClick = onStartOrResume,
+                            modifier = Modifier.minimumInteractiveComponentSize()
+                        ) {
                             Icon(Icons.Rounded.PlayArrow, contentDescription = null, modifier = Modifier.size(18.dp))
                             Spacer(Modifier.width(6.dp))
                             Text(if (done > 0) "استئناف" else "بدء الترجمة")
@@ -656,7 +761,10 @@ private fun TranslationJobCard(
                     }
                 }
 
-                OutlinedButton(onClick = onPreview) {
+                OutlinedButton(
+                    onClick = onPreview,
+                    modifier = Modifier.minimumInteractiveComponentSize()
+                ) {
                     Icon(Icons.Rounded.Visibility, contentDescription = null, modifier = Modifier.size(18.dp))
                     Spacer(Modifier.width(4.dp))
                     Text("معاينة")

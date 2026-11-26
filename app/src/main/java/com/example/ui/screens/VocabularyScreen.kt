@@ -1,5 +1,6 @@
 package com.example.ui.screens
 
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -11,20 +12,22 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.rounded.VolumeUp
 import androidx.compose.material.icons.rounded.DeleteOutline
 import androidx.compose.material.icons.rounded.Search
-import androidx.compose.material.icons.rounded.VolumeUp
-import androidx.compose.material3.Card
-import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.IconButtonDefaults
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.OutlinedTextFieldDefaults
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.minimumInteractiveComponentSize
 import androidx.compose.runtime.Composable
@@ -41,8 +44,11 @@ import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
 import com.example.R
 import com.example.data.VocabularyEntity
+import com.example.ui.components.AtelierCard
+import com.example.ui.components.EditorialSectionHeader
 import com.example.ui.theme.ArabicSansFamily
 import com.example.ui.theme.FrenchSerifFamily
+import com.example.ui.theme.LocalEcouteAtelierColors
 
 @Composable
 fun VocabularyScreen(
@@ -53,10 +59,12 @@ fun VocabularyScreen(
     onDelete: (Long) -> Unit,
     modifier: Modifier = Modifier
 ) {
+    val atelier = LocalEcouteAtelierColors.current
+
     Box(modifier = modifier.fillMaxSize(), contentAlignment = Alignment.TopCenter) {
         LazyColumn(
             modifier = Modifier
-                .widthIn(max = 760.dp)
+                .widthIn(max = 780.dp)
                 .fillMaxSize(),
             contentPadding = PaddingValues(horizontal = 16.dp, vertical = 14.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp)
@@ -66,9 +74,21 @@ fun VocabularyScreen(
                     value = query,
                     onValueChange = onQueryChange,
                     placeholder = { Text("ابحث بالفرنسية أو العربية...") },
-                    leadingIcon = { Icon(Icons.Rounded.Search, contentDescription = null) },
+                    leadingIcon = {
+                        Icon(
+                            Icons.Rounded.Search,
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.secondary
+                        )
+                    },
                     singleLine = true,
-                    shape = MaterialTheme.shapes.medium,
+                    shape = RoundedCornerShape(18.dp),
+                    colors = OutlinedTextFieldDefaults.colors(
+                        focusedContainerColor = MaterialTheme.colorScheme.surface,
+                        unfocusedContainerColor = MaterialTheme.colorScheme.surface.copy(alpha = 0.85f),
+                        focusedBorderColor = MaterialTheme.colorScheme.secondary,
+                        unfocusedBorderColor = atelier.cardBorder
+                    ),
                     modifier = Modifier
                         .fillMaxWidth()
                         .testTag("vocab_search_input")
@@ -77,24 +97,30 @@ fun VocabularyScreen(
 
             if (entries.isEmpty()) {
                 item {
-                    Card(
-                        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+                    AtelierCard(
+                        elevation = 1.dp,
+                        shape = MaterialTheme.shapes.extraLarge,
                         modifier = Modifier.fillMaxWidth()
                     ) {
                         Column(
-                            modifier = Modifier.padding(22.dp),
+                            modifier = Modifier.padding(20.dp),
                             horizontalAlignment = Alignment.CenterHorizontally,
-                            verticalArrangement = Arrangement.spacedBy(10.dp)
+                            verticalArrangement = Arrangement.spacedBy(12.dp)
                         ) {
-                            Image(
-                                painter = painterResource(id = R.drawable.img_empty_vocab),
-                                contentDescription = "قاموس المفردات فارغ",
-                                contentScale = ContentScale.Crop,
+                            Surface(
+                                shape = MaterialTheme.shapes.large,
+                                border = BorderStroke(1.dp, atelier.cardBorder),
                                 modifier = Modifier
                                     .fillMaxWidth()
-                                    .height(170.dp)
-                                    .clip(MaterialTheme.shapes.medium)
-                            )
+                                    .height(180.dp)
+                            ) {
+                                Image(
+                                    painter = painterResource(id = R.drawable.img_empty_vocab),
+                                    contentDescription = "قاموس المفردات فارغ",
+                                    contentScale = ContentScale.Crop,
+                                    modifier = Modifier.fillMaxSize()
+                                )
+                            }
                             Text("قاموسك الشخصي فارغ حالياً", style = MaterialTheme.typography.titleMedium)
                             Text(
                                 "أثناء قراءة أي نص فرنسي، اضغط على أي كلمة لعرض ترجمتها العربية وحفظها هنا للمراجعة والاستماع.",
@@ -105,13 +131,17 @@ fun VocabularyScreen(
                     }
                 }
             } else {
+                item {
+                    EditorialSectionHeader(
+                        titleAr = "بطاقات المفردات المحفوظة",
+                        folioTag = "Vocabulaire",
+                        countBadge = "${entries.size}"
+                    )
+                }
+
                 items(entries, key = { it.id }) { item ->
-                    Card(
-                        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-                        elevation = CardDefaults.cardElevation(defaultElevation = 1.dp),
-                        modifier = Modifier.fillMaxWidth()
-                    ) {
-                        Column(modifier = Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                    AtelierCard(modifier = Modifier.fillMaxWidth()) {
+                        Column(modifier = Modifier.padding(15.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                             Row(
                                 modifier = Modifier.fillMaxWidth(),
                                 horizontalArrangement = Arrangement.SpaceBetween,
@@ -128,14 +158,18 @@ fun VocabularyScreen(
                                         modifier = Modifier.weight(1f)
                                     )
                                 }
-                                Row {
+                                Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
                                     IconButton(
                                         onClick = { onPronounce(item.frenchTerm) },
+                                        colors = IconButtonDefaults.filledTonalIconButtonColors(
+                                            containerColor = MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.7f),
+                                            contentColor = MaterialTheme.colorScheme.secondary
+                                        ),
                                         modifier = Modifier
                                             .minimumInteractiveComponentSize()
                                             .testTag("vocab_pronounce_${item.id}")
                                     ) {
-                                        Icon(Icons.Rounded.VolumeUp, contentDescription = "نطق المفردة")
+                                        Icon(Icons.AutoMirrored.Rounded.VolumeUp, contentDescription = "نطق المفردة")
                                     }
                                     IconButton(
                                         onClick = { onDelete(item.id) },
@@ -150,6 +184,8 @@ fun VocabularyScreen(
                                 }
                             }
 
+                            HorizontalDivider(color = atelier.cardBorder.copy(alpha = 0.7f))
+
                             CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Rtl) {
                                 Text(
                                     text = item.arabicTranslation,
@@ -158,12 +194,19 @@ fun VocabularyScreen(
                             }
 
                             if (item.contextSentence.isNotBlank() && item.contextSentence != item.frenchTerm) {
-                                CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Ltr) {
-                                    Text(
-                                        text = item.contextSentence,
-                                        style = MaterialTheme.typography.bodySmall.copy(fontFamily = FrenchSerifFamily),
-                                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                                    )
+                                Surface(
+                                    color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.35f),
+                                    shape = MaterialTheme.shapes.small,
+                                    modifier = Modifier.fillMaxWidth()
+                                ) {
+                                    CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Ltr) {
+                                        Text(
+                                            text = item.contextSentence,
+                                            style = MaterialTheme.typography.bodySmall.copy(fontFamily = FrenchSerifFamily),
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                            modifier = Modifier.padding(horizontal = 10.dp, vertical = 7.dp)
+                                        )
+                                    }
                                 }
                             }
 
