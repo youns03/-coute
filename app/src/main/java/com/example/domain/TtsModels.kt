@@ -1,8 +1,14 @@
 package com.example.domain
 
+enum class ModelRole {
+    TTS,
+    ASR
+}
+
 enum class EngineType(val displayName: String) {
     KOKORO_LITERT("Kokoro-82M (LiteRT / MediaPipe)"),
-    PIPER_SHERPA_ONNX("Piper VITS (Sherpa-ONNX)")
+    PIPER_SHERPA_ONNX("Piper VITS (Sherpa-ONNX)"),
+    SHERPA_ASR("Sherpa-ONNX Speech Recognition")
 }
 
 enum class AcceleratorMode(val labelAr: String, val labelEn: String) {
@@ -60,6 +66,7 @@ data class ModelSpec(
     val sourceUrl: String,
     val commercialAllowed: Boolean,
     val attributionNotes: String,
+    val role: ModelRole = ModelRole.TTS,
     val isPrimaryCandidate: Boolean = false,
     val supportedLanguageCodes: List<String> = listOf("fr"),
     val localesByLanguage: Map<String, String> = mapOf("fr" to "fr-FR"),
@@ -88,6 +95,7 @@ data class ModelSpec(
 
 enum class ArchiveType {
     SINGLE_LITERTLM,
+    SINGLE_ONNX,
     TAR_BZ2,
     ZIP
 }

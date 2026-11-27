@@ -171,8 +171,19 @@ object FrenchTextPreprocessor {
         return results
     }
 
+    private val chapterRomanRegex = Regex(
+        """\b(Chapitre|Acte|Scène|Partie|Tome|Livre)\s+([IVX]{1,5})\b"""
+    )
+
+    private val romanToWordFr = mapOf(
+        "I" to "un", "II" to "deux", "III" to "trois", "IV" to "quatre", "V" to "cinq",
+        "VI" to "six", "VII" to "sept", "VIII" to "huit", "IX" to "neuf", "X" to "dix",
+        "XI" to "onze", "XII" to "douze", "XIII" to "treize", "XIV" to "quatorze", "XV" to "quinze"
+    )
+
     /**
-     * Produces a clean French TTS string without altering the original displayed sentence.
+     * Produces a clean French TTS string with natural breathing pauses and prosody cues
+     * without altering the original displayed sentence.
      */
     fun prepareForSpeech(original: String): String {
         var text = Normalizer.normalize(original, Normalizer.Form.NFC)
@@ -184,12 +195,22 @@ object FrenchTextPreprocessor {
             .replace("»", "")
             .replace("“", "")
             .replace("”", "")
+            .replace("...", "… ")
+            .replace("…", ", ")
             .replace("—", ", ")
             .replace("–", ", ")
+            .replace("(", ", ")
+            .replace(")", ", ")
 
         // Expand abbreviations first
         for ((pattern, replacement) in abbreviationExpansions) {
             text = pattern.replace(text, replacement)
+        }
+
+        // Expand Roman numerals in structural headings (e.g., "Chapitre IV" -> "Chapitre quatre")
+        text = chapterRomanRegex.replace(text) { m ->
+            val word = romanToWordFr[m.groupValues[2]]
+            if (word != null) "${m.groupValues[1]} $word" else m.value
         }
 
         // Dates: dd/mm/yyyy
@@ -244,9 +265,13 @@ object FrenchTextPreprocessor {
             formatDecimalOrInt(intStr, decStr)
         }
 
-        // Clean French spacing around punctuation (? ! ; :) without dropping question/exclamation marks
+        // Shape pauses smoothly: semicolons/colons produce deliberate breathing pauses without clipping intonation
         text = text
+            .replace(Regex("""\s*;\s*"""), "; ")
+            .replace(Regex("""\s*:\s*"""), ": ")
+            .replace(Regex("""\s*,\s*(?=,|$)"""), "")
             .replace(Regex("""\s+([?!;:,])"""), "$1")
+            .replace(Regex("""([?!;:,])([^\s?!;:,."'])"""), "$1 $2")
             .replace(Regex("""\s{2,}"""), " ")
             .trim()
 

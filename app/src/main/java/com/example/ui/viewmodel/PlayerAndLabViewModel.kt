@@ -14,8 +14,10 @@ import com.example.domain.BenchmarkCorpus
 import com.example.domain.BenchmarkItem
 import com.example.models.ModelCatalog
 import com.example.models.ModelUiEntry
+import com.example.data.BookEntity
 import com.example.tts.EngineRuntimeState
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.currentCoroutineContext
@@ -23,6 +25,9 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.flatMapLatest
+import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.isActive
@@ -52,6 +57,16 @@ class PlayerAndLabViewModel(application: Application) : AndroidViewModel(applica
     val settings: StateFlow<UserSettings> = settingsRepo.settingsFlow
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), UserSettings())
 
+    @OptIn(ExperimentalCoroutinesApi::class)
+    val activeBook: StateFlow<BookEntity?> = playbackState
+        .map { it.bookId }
+        .distinctUntilChanged()
+        .flatMapLatest { id ->
+            if (id.isNullOrBlank() || id == "_standalone_") flowOf(null)
+            else app.libraryRepository.observeBook(id)
+        }
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), null)
+
     val installedModels: StateFlow<List<ModelUiEntry>> = app.modelRepository
         .observeModels(settingsRepo.settingsFlow.map { it.activeModelId })
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
@@ -68,9 +83,16 @@ class PlayerAndLabViewModel(application: Application) : AndroidViewModel(applica
     fun stop() = playbackController.stop()
     fun nextSentence() = playbackController.nextSentence()
     fun previousSentence() = playbackController.previousSentence()
+    fun nextParagraph() = playbackController.nextParagraph()
+    fun previousParagraph() = playbackController.previousParagraph()
+    fun seekRelativeSeconds(deltaSeconds: Int) = playbackController.seekRelativeSeconds(deltaSeconds)
     fun replaySentence() = playbackController.replayCurrentSentence()
     fun toggleRepeatSentence() = playbackController.toggleRepeatCurrentSentence()
     fun setPlaybackSpeed(speed: Float) = playbackController.setPlaybackSpeed(speed)
+    fun setActiveVoice(voiceId: String) = playbackController.setActiveVoice(voiceId)
+    fun startSleepTimerMinutes(minutes: Int) = playbackController.startSleepTimerMinutes(minutes)
+    fun startEndOfChapterSleepTimer() = playbackController.startEndOfChapterSleepTimer()
+    fun cancelSleepTimer() = playbackController.cancelSleepTimer()
 
     fun runSingleBenchmark(modelId: String, item: BenchmarkItem, speed: Float = 1.0f) {
         if (_labState.value.isRunning) return

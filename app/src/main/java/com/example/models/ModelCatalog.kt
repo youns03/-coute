@@ -3,6 +3,7 @@ package com.example.models
 import com.example.domain.ArchiveType
 import com.example.domain.EngineType
 import com.example.domain.LicenseRecord
+import com.example.domain.ModelRole
 import com.example.domain.ModelSpec
 
 object ModelCatalog {
@@ -158,7 +159,77 @@ object ModelCatalog {
         )
     )
 
-    fun findById(id: String): ModelSpec? = ttsModels.firstOrNull { it.id == id }
+    val asrModels: List<ModelSpec> = listOf(
+        ModelSpec(
+            id = "sherpa-asr-nemo-fast-conformer-fr-en",
+            displayName = "التعرف السريع على الكلام (فرنسي / إنجليزي)",
+            language = "fr-FR / en-US",
+            voiceId = "fast-conformer-ctc",
+            voiceDescriptionAr = "نموذج تفريغ صوتي محلي سريع (98 MB) يدعم الفرنسية والإنجليزية بدقة عالية دون إنترنت",
+            format = "NeMo FastConformer INT8 (.tar.bz2)",
+            engineType = EngineType.SHERPA_ASR,
+            version = "14288-int8",
+            downloadUrl = "https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/sherpa-onnx-nemo-fast-conformer-ctc-en-de-es-fr-14288-int8.tar.bz2",
+            expectedSizeBytes = 102_875_642L,
+            sha256 = "ea7434ecff117272a70b8a60b70cfc2f04b9b07553aa0ecb91065b69c7b91ec5",
+            archiveType = ArchiveType.TAR_BZ2,
+            requiresEspeakData = false,
+            licenseName = "CC-BY-4.0 / Apache-2.0 (Sherpa-ONNX)",
+            ownerName = "NVIDIA NeMo / k2-fsa Sherpa-ONNX",
+            sourceUrl = "https://github.com/k2-fsa/sherpa-onnx/releases/tag/asr-models",
+            commercialAllowed = true,
+            attributionNotes = "NVIDIA NeMo FastConformer hybrid CTC quantized INT8 bundle for offline FR/EN transcription.",
+            role = ModelRole.ASR,
+            isPrimaryCandidate = true,
+            supportedLanguageCodes = listOf("fr", "en"),
+            localesByLanguage = mapOf("fr" to "fr-FR", "en" to "en-US"),
+            voicesByLanguage = mapOf("fr" to listOf("fast-conformer-ctc"), "en" to listOf("fast-conformer-ctc")),
+            minSdkRequired = 24,
+            minTotalRamMb = 1024L,
+            recommendedRamMb = 2048L,
+            requires64BitAbi = false,
+            singleSpeakerOnly = false,
+            supportsGpuDelegate = false,
+            supportsWordTimestamps = true
+        ),
+        ModelSpec(
+            id = "sherpa-asr-nemo-canary-fr-en",
+            displayName = "التعرف الدقيق على الكلام + علامات الترقيم",
+            language = "fr-FR / en-US",
+            voiceId = "canary-180m-flash",
+            voiceDescriptionAr = "نموذج تفريغ صوتي متقدم (147 MB) مع استعادة تلقائية للنقاط والفواصل للكتب والملفات الطويلة",
+            format = "NeMo Canary 180M INT8 (.tar.bz2)",
+            engineType = EngineType.SHERPA_ASR,
+            version = "180m-flash-int8",
+            downloadUrl = "https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/sherpa-onnx-nemo-canary-180m-flash-en-es-de-fr-int8.tar.bz2",
+            expectedSizeBytes = 153_692_328L,
+            sha256 = "7a38ed8b13f014ad632b09ff8d22e0c6f1359dd046af9235d281dfae841b9ab9",
+            archiveType = ArchiveType.TAR_BZ2,
+            requiresEspeakData = false,
+            licenseName = "CC-BY-4.0 / Apache-2.0 (Sherpa-ONNX)",
+            ownerName = "NVIDIA NeMo Canary / k2-fsa Sherpa-ONNX",
+            sourceUrl = "https://github.com/k2-fsa/sherpa-onnx/releases/tag/asr-models",
+            commercialAllowed = true,
+            attributionNotes = "NVIDIA NeMo Canary 180M Flash quantized INT8 with built-in punctuation and capitalization.",
+            role = ModelRole.ASR,
+            isPrimaryCandidate = false,
+            supportedLanguageCodes = listOf("fr", "en"),
+            localesByLanguage = mapOf("fr" to "fr-FR", "en" to "en-US"),
+            voicesByLanguage = mapOf("fr" to listOf("canary-180m-flash"), "en" to listOf("canary-180m-flash")),
+            minSdkRequired = 24,
+            minTotalRamMb = 1536L,
+            recommendedRamMb = 2560L,
+            requires64BitAbi = false,
+            singleSpeakerOnly = false,
+            supportsGpuDelegate = false,
+            supportsWordTimestamps = false
+        )
+    )
+
+    val allModels: List<ModelSpec>
+        get() = ttsModels + asrModels
+
+    fun findById(id: String): ModelSpec? = allModels.firstOrNull { it.id == id }
 
     val licenseLedger: List<LicenseRecord> = listOf(
         LicenseRecord(

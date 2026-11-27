@@ -94,6 +94,24 @@ interface BookDao {
     @Query("UPDATE books SET sourceLanguage = :sourceLanguage WHERE id = :bookId")
     suspend fun updateBookSourceLanguage(bookId: String, sourceLanguage: String)
 
+    @Query("UPDATE books SET title = :title WHERE id = :bookId")
+    suspend fun renameBook(bookId: String, title: String)
+
+    @Query("UPDATE books SET coverStyleId = :coverStyleId, coverImagePath = :coverImagePath WHERE id = :bookId")
+    suspend fun updateBookCover(bookId: String, coverStyleId: String, coverImagePath: String?)
+
+    @Query("SELECT * FROM books WHERE sourceContentHash = :hash LIMIT 1")
+    suspend fun findByContentHash(hash: String): BookEntity?
+
+    @Query("UPDATE books SET isCompleted = :completed, lastReadAt = :timestamp WHERE id = :bookId")
+    suspend fun setBookCompleted(bookId: String, completed: Boolean, timestamp: Long = System.currentTimeMillis())
+
+    @Query("UPDATE books SET lastPositionMs = :positionMs, lastReadAt = :timestamp WHERE id = :bookId")
+    suspend fun updateAudioPosition(bookId: String, positionMs: Long, timestamp: Long = System.currentTimeMillis())
+
+    @Query("SELECT DISTINCT bookId FROM paragraph_translations")
+    fun observeBookIdsWithParagraphTranslations(): Flow<List<String>>
+
     @Query("DELETE FROM books WHERE id = :bookId")
     suspend fun deleteBook(bookId: String)
 }
@@ -269,4 +287,23 @@ interface TranslationJobDao {
     @Query("DELETE FROM translation_jobs WHERE id = :jobId")
     suspend fun deleteJob(jobId: String)
 }
+
+@Dao
+interface RecentActivityDao {
+    @Query("SELECT * FROM recent_activities ORDER BY timestamp DESC LIMIT 25")
+    fun observeRecent(): Flow<List<RecentActivityEntity>>
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun upsert(entry: RecentActivityEntity)
+
+    @Query("DELETE FROM recent_activities WHERE id = :id")
+    suspend fun deleteById(id: String)
+
+    @Query("DELETE FROM recent_activities WHERE targetId = :targetId")
+    suspend fun deleteByTargetId(targetId: String)
+
+    @Query("DELETE FROM recent_activities")
+    suspend fun clearAll()
+}
+
 

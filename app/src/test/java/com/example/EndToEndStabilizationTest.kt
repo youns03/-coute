@@ -140,6 +140,10 @@ class EndToEndStabilizationTest {
                     File(dir, "tokens.txt").writeText("a 1\n")
                 }
             }
+            EngineType.SHERPA_ASR -> {
+                File(dir, "model.int8.onnx").writeBytes(ByteArray(1_024) { 4 })
+                File(dir, "tokens.txt").writeText("a 0\n")
+            }
         }
     }
 

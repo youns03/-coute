@@ -187,6 +187,7 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
 
     fun toggleBookSourceLanguage() {
         val book = readerState.value.book ?: return
+        if (book.sourceLanguage.lowercase().startsWith("ar")) return
         val current = SourceLanguage.fromCode(book.sourceLanguage)
         val next = if (current == SourceLanguage.FRENCH) SourceLanguage.ENGLISH else SourceLanguage.FRENCH
         readerSessionGeneration++
@@ -245,6 +246,10 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
             } else {
                 val snap = readerState.value
                 val book = snap.book ?: return@launch
+                if (book.sourceLanguage.lowercase().startsWith("ar")) {
+                    settingsRepo.setShowInlineTranslations(false)
+                    return@launch
+                }
                 val chapterIndex = snap.activeChapterIndex
                 val sourceLang = SourceLanguage.fromCode(book.sourceLanguage)
                 val existingParagraphs = snap.paragraphTranslations
@@ -303,7 +308,9 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
             return
         }
 
-        val sourceLang = SourceLanguage.fromCode(readerState.value.book?.sourceLanguage)
+        val rawSourceLang = readerState.value.book?.sourceLanguage
+        if (rawSourceLang.orEmpty().lowercase().startsWith("ar")) return
+        val sourceLang = SourceLanguage.fromCode(rawSourceLang)
         viewModelScope.launch {
             translateSentenceInternal(sentence, sourceLang)
         }
@@ -330,6 +337,7 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
         if (paragraphSentences.isEmpty()) return
         val snap = readerState.value
         val book = snap.book ?: return
+        if (book.sourceLanguage.lowercase().startsWith("ar")) return
         val chapterIndex = snap.activeChapterIndex
         val globalShown = settings.value.showInlineTranslations
         val sentenceIds = paragraphSentences.map { it.id }.toSet()
@@ -385,9 +393,11 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
     }
 
     fun onWordTapped(rawWord: String, sentence: SentenceEntity) {
+        val rawLang = readerState.value.book?.sourceLanguage.orEmpty().lowercase()
+        if (rawLang.startsWith("ar")) return
         val clean = rawWord.trim { !it.isLetterOrDigit() && it != '\'' && it != '’' && it != '-' }
         if (clean.isEmpty()) return
-        val sourceLang = SourceLanguage.fromCode(readerState.value.book?.sourceLanguage)
+        val sourceLang = SourceLanguage.fromCode(rawLang)
         _wordLookupSheet.value = WordLookupSheetState(
             selectedWord = clean,
             contextSentence = sentence,

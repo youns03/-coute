@@ -4,6 +4,8 @@ import android.content.Context
 import android.net.Uri
 import com.example.data.ParsedSourceDocument
 import com.example.data.TranslationChunkEntity
+import com.example.domain.ArabicTextPreprocessor
+import com.example.domain.EnglishTextPreprocessor
 import com.example.domain.FrenchTextPreprocessor
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -65,7 +67,11 @@ object DocumentChunker {
                         )
                     )
                 } else {
-                    val sentences = FrenchTextPreprocessor.splitIntoSentences(para)
+                    val sentences = when (doc.detectedLanguageCode.lowercase()) {
+                        "en" -> EnglishTextPreprocessor.splitIntoSentences(para)
+                        "ar" -> ArabicTextPreprocessor.splitIntoSentences(para)
+                        else -> FrenchTextPreprocessor.splitIntoSentences(para)
+                    }
                     val expandedSegments = sentences.flatMap { splitOversizedText(it, effectiveLimit) }
                     val batch = StringBuilder()
                     for (segment in expandedSegments) {

@@ -2,18 +2,19 @@ package com.example.ui.screens
 
 import android.net.Uri
 import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -23,20 +24,28 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.rounded.Sort
+import androidx.compose.material.icons.automirrored.rounded.ViewList
 import androidx.compose.material.icons.rounded.Add
 import androidx.compose.material.icons.rounded.AutoStories
 import androidx.compose.material.icons.rounded.Close
 import androidx.compose.material.icons.rounded.DeleteOutline
+import androidx.compose.material.icons.rounded.DriveFileRenameOutline
+import androidx.compose.material.icons.rounded.GridView
 import androidx.compose.material.icons.rounded.Headphones
+import androidx.compose.material.icons.rounded.Image
+import androidx.compose.material.icons.rounded.Info
+import androidx.compose.material.icons.rounded.MoreVert
 import androidx.compose.material.icons.rounded.Search
-import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
-import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.FilledTonalButton
+import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
@@ -45,7 +54,6 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.material3.minimumInteractiveComponentSize
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
@@ -56,8 +64,6 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.Brush
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.platform.testTag
@@ -70,25 +76,43 @@ import androidx.compose.ui.unit.dp
 import com.example.R
 import com.example.data.BookEntity
 import com.example.ui.components.AtelierCard
+import com.example.ui.components.BookCoverArtwork
+import com.example.ui.components.BookCoverSheet
+import com.example.ui.components.BookInfoDialog
+import com.example.ui.components.BookRenameDialog
+import com.example.ui.components.DeleteBookConfirmDialog
 import com.example.ui.components.EditorialSectionHeader
 import com.example.ui.components.MonospaceMetricPill
-import com.example.ui.theme.EditorialDisplayFamily
 import com.example.ui.theme.FrenchSerifFamily
 import com.example.ui.theme.LocalEcouteAtelierColors
+import com.example.ui.viewmodel.LibraryFilter
+import com.example.ui.viewmodel.LibrarySortOrder
 import com.example.ui.viewmodel.LibraryUiState
+import com.example.ui.viewmodel.LibraryViewMode
 
 @Composable
 fun LibraryScreen(
     state: LibraryUiState,
     onSearchChange: (String) -> Unit,
+    onFilterSelected: (LibraryFilter) -> Unit,
+    onSortSelected: (LibrarySortOrder) -> Unit,
+    onToggleViewMode: () -> Unit,
     onImportUri: (Uri) -> Unit,
     onOpenBook: (String) -> Unit,
+    onRenameBook: (String, String) -> Unit,
+    onUpdateCoverTemplate: (String, String) -> Unit,
+    onUpdateCoverFromUri: (String, Uri) -> Unit,
     onDeleteBook: (String) -> Unit,
     onDismissBanner: () -> Unit,
     onOpenModels: () -> Unit,
     modifier: Modifier = Modifier
 ) {
     var pendingDeleteBook by remember { mutableStateOf<BookEntity?>(null) }
+    var pendingRenameBook by remember { mutableStateOf<BookEntity?>(null) }
+    var pendingCoverBook by remember { mutableStateOf<BookEntity?>(null) }
+    var pendingInfoBook by remember { mutableStateOf<BookEntity?>(null) }
+    var photoTargetBookId by remember { mutableStateOf<String?>(null) }
+    var sortMenuExpanded by remember { mutableStateOf(false) }
 
     val filePickerLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.OpenDocument()
@@ -96,24 +120,153 @@ fun LibraryScreen(
         if (uri != null) onImportUri(uri)
     }
 
-    Box(modifier = modifier.fillMaxSize(), contentAlignment = Alignment.TopCenter) {
+    val coverPhotoPickerLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.PickVisualMedia()
+    ) { uri: Uri? ->
+        val bookId = photoTargetBookId
+        photoTargetBookId = null
+        if (uri != null && bookId != null) {
+            onUpdateCoverFromUri(bookId, uri)
+        }
+    }
+
+    BoxWithConstraints(
+        modifier = modifier.fillMaxSize(),
+        contentAlignment = Alignment.TopCenter
+    ) {
+        val gridColumns = if (maxWidth >= 640.dp) 3 else 2
+
         LazyColumn(
             modifier = Modifier
-                .widthIn(max = 780.dp)
+                .widthIn(max = 860.dp)
                 .fillMaxSize(),
             contentPadding = PaddingValues(horizontal = 16.dp, vertical = 14.dp),
-            verticalArrangement = Arrangement.spacedBy(14.dp)
+            verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
             item {
-                LibraryHeroBanner(
-                    isImporting = state.isImporting,
-                    onImportClick = {
-                        filePickerLauncher.launch(
-                            arrayOf("text/plain", "application/epub+zip", "application/octet-stream")
-                        )
-                    },
-                    onModelsClick = onOpenModels
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    OutlinedTextField(
+                        value = state.searchQuery,
+                        onValueChange = onSearchChange,
+                        placeholder = { Text(stringResource(R.string.library_search_placeholder)) },
+                        leadingIcon = {
+                            Icon(
+                                Icons.Rounded.Search,
+                                contentDescription = null,
+                                tint = MaterialTheme.colorScheme.secondary
+                            )
+                        },
+                        singleLine = true,
+                        shape = RoundedCornerShape(18.dp),
+                        colors = OutlinedTextFieldDefaults.colors(
+                            focusedContainerColor = MaterialTheme.colorScheme.surface,
+                            unfocusedContainerColor = MaterialTheme.colorScheme.surface.copy(alpha = 0.88f),
+                            focusedBorderColor = MaterialTheme.colorScheme.secondary,
+                            unfocusedBorderColor = LocalEcouteAtelierColors.current.cardBorder
+                        ),
+                        modifier = Modifier
+                            .weight(1f)
+                            .testTag("library_search_input")
+                    )
+
+                    Box {
+                        Surface(
+                            color = MaterialTheme.colorScheme.surface,
+                            border = BorderStroke(1.dp, LocalEcouteAtelierColors.current.cardBorder),
+                            shape = RoundedCornerShape(14.dp)
+                        ) {
+                            IconButton(
+                                onClick = { sortMenuExpanded = true },
+                                modifier = Modifier
+                                    .minimumInteractiveComponentSize()
+                                    .testTag("library_sort_button")
+                            ) {
+                                Icon(
+                                    Icons.AutoMirrored.Rounded.Sort,
+                                    contentDescription = stringResource(R.string.library_sort_recent)
+                                )
+                            }
+                        }
+                        DropdownMenu(
+                            expanded = sortMenuExpanded,
+                            onDismissRequest = { sortMenuExpanded = false }
+                        ) {
+                            DropdownMenuItem(
+                                text = { Text(stringResource(R.string.library_sort_recent)) },
+                                onClick = {
+                                    sortMenuExpanded = false
+                                    onSortSelected(LibrarySortOrder.RECENT)
+                                }
+                            )
+                            DropdownMenuItem(
+                                text = { Text(stringResource(R.string.library_sort_added)) },
+                                onClick = {
+                                    sortMenuExpanded = false
+                                    onSortSelected(LibrarySortOrder.ADDED)
+                                }
+                            )
+                            DropdownMenuItem(
+                                text = { Text(stringResource(R.string.library_sort_name)) },
+                                onClick = {
+                                    sortMenuExpanded = false
+                                    onSortSelected(LibrarySortOrder.NAME)
+                                }
+                            )
+                        }
+                    }
+
+                    Surface(
+                        color = MaterialTheme.colorScheme.surface,
+                        border = BorderStroke(1.dp, LocalEcouteAtelierColors.current.cardBorder),
+                        shape = RoundedCornerShape(14.dp)
+                    ) {
+                        IconButton(
+                            onClick = onToggleViewMode,
+                            modifier = Modifier
+                                .minimumInteractiveComponentSize()
+                                .testTag("library_view_toggle")
+                        ) {
+                            Icon(
+                                if (state.viewMode == LibraryViewMode.GRID) Icons.AutoMirrored.Rounded.ViewList
+                                else Icons.Rounded.GridView,
+                                contentDescription = stringResource(
+                                    if (state.viewMode == LibraryViewMode.GRID) R.string.library_view_list_cd
+                                    else R.string.library_view_grid_cd
+                                )
+                            )
+                        }
+                    }
+                }
+            }
+
+            item {
+                val filters = listOf(
+                    LibraryFilter.ALL to stringResource(R.string.library_filter_all),
+                    LibraryFilter.BOOKS to stringResource(R.string.library_filter_books),
+                    LibraryFilter.AUDIO to stringResource(R.string.library_filter_audio),
+                    LibraryFilter.TRANSLATED to stringResource(R.string.library_filter_translated),
+                    LibraryFilter.IN_PROGRESS to stringResource(R.string.library_filter_in_progress),
+                    LibraryFilter.COMPLETED to stringResource(R.string.library_filter_completed)
                 )
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .horizontalScroll(rememberScrollState()),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    filters.forEach { (filter, label) ->
+                        FilterChip(
+                            selected = state.filter == filter,
+                            onClick = { onFilterSelected(filter) },
+                            label = { Text(label) },
+                            modifier = Modifier.testTag("library_filter_${filter.name.lowercase()}")
+                        )
+                    }
+                }
             }
 
             if (state.statusBanner != null) {
@@ -146,37 +299,54 @@ fun LibraryScreen(
             }
 
             item {
-                OutlinedTextField(
-                    value = state.searchQuery,
-                    onValueChange = onSearchChange,
-                    placeholder = { Text(stringResource(R.string.library_search_placeholder)) },
-                    leadingIcon = {
-                        Icon(
-                            Icons.Rounded.Search,
-                            contentDescription = null,
-                            tint = MaterialTheme.colorScheme.secondary
-                        )
-                    },
-                    singleLine = true,
-                    shape = RoundedCornerShape(18.dp),
-                    colors = OutlinedTextFieldDefaults.colors(
-                        focusedContainerColor = MaterialTheme.colorScheme.surface,
-                        unfocusedContainerColor = MaterialTheme.colorScheme.surface.copy(alpha = 0.85f),
-                        focusedBorderColor = MaterialTheme.colorScheme.secondary,
-                        unfocusedBorderColor = LocalEcouteAtelierColors.current.cardBorder
-                    ),
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .testTag("library_search_input")
-                )
-            }
-
-            item {
-                EditorialSectionHeader(
-                    titleAr = stringResource(R.string.library_section_title),
-                    folioTag = "Bibliothèque",
-                    countBadge = "${state.books.size}"
-                )
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    EditorialSectionHeader(
+                        titleAr = stringResource(R.string.library_section_title),
+                        folioTag = "Bibliothèque",
+                        countBadge = "${state.books.size}",
+                        modifier = Modifier.weight(1f)
+                    )
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        FilledTonalButton(
+                            onClick = onOpenModels,
+                            shape = RoundedCornerShape(12.dp),
+                            contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp),
+                            modifier = Modifier
+                                .minimumInteractiveComponentSize()
+                                .testTag("hero_models_button")
+                        ) {
+                            Icon(Icons.Rounded.Headphones, contentDescription = null, modifier = Modifier.size(16.dp))
+                            Spacer(Modifier.width(4.dp))
+                            Text(stringResource(R.string.nav_models), style = MaterialTheme.typography.labelMedium)
+                        }
+                        Button(
+                            onClick = {
+                                filePickerLauncher.launch(
+                                    arrayOf(
+                                        "text/plain",
+                                        "application/epub+zip",
+                                        "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                                        "application/octet-stream"
+                                    )
+                                )
+                            },
+                            enabled = !state.isImporting,
+                            shape = RoundedCornerShape(12.dp),
+                            contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp),
+                            modifier = Modifier
+                                .minimumInteractiveComponentSize()
+                                .testTag("import_book_button")
+                        ) {
+                            Icon(Icons.Rounded.Add, contentDescription = null, modifier = Modifier.size(16.dp))
+                            Spacer(Modifier.width(4.dp))
+                            Text(stringResource(R.string.library_import_button), style = MaterialTheme.typography.labelMedium)
+                        }
+                    }
+                }
             }
 
             if (state.books.isEmpty()) {
@@ -188,217 +358,240 @@ fun LibraryScreen(
                         Column(
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .padding(26.dp),
+                                .padding(24.dp),
                             horizontalAlignment = Alignment.CenterHorizontally,
-                            verticalArrangement = Arrangement.spacedBy(8.dp)
+                            verticalArrangement = Arrangement.spacedBy(10.dp)
                         ) {
-                            Box(
+                            Image(
+                                painter = painterResource(id = R.drawable.img_empty_library),
+                                contentDescription = stringResource(R.string.library_empty_title),
+                                contentScale = ContentScale.Crop,
                                 modifier = Modifier
-                                    .size(56.dp)
-                                    .clip(CircleShape)
-                                    .background(MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.7f)),
-                                contentAlignment = Alignment.Center
-                            ) {
-                                Icon(
-                                    Icons.Rounded.AutoStories,
-                                    contentDescription = null,
-                                    tint = MaterialTheme.colorScheme.primary,
-                                    modifier = Modifier.size(28.dp)
-                                )
-                            }
+                                    .size(width = 180.dp, height = 120.dp)
+                                    .clip(MaterialTheme.shapes.medium)
+                            )
                             Text(
                                 stringResource(R.string.library_empty_title),
                                 style = MaterialTheme.typography.titleMedium
                             )
                             Text(
                                 stringResource(R.string.library_empty_subtitle),
-                                style = MaterialTheme.typography.bodyMedium,
+                                style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
                         }
                     }
                 }
+            } else if (state.viewMode == LibraryViewMode.GRID) {
+                val rows = state.books.chunked(gridColumns)
+                items(rows, key = { row -> row.joinToString("_") { it.id } }) { rowBooks ->
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(12.dp)
+                    ) {
+                        rowBooks.forEach { book ->
+                            val progress = state.bookProgress[book.id] ?: 0f
+                            val isTranslated = book.id in state.translatedBookIds
+                            LibraryGridCard(
+                                book = book,
+                                progress = progress,
+                                isTranslated = isTranslated,
+                                onOpen = { onOpenBook(book.id) },
+                                onRename = { pendingRenameBook = book },
+                                onEditCover = { pendingCoverBook = book },
+                                onInfo = { pendingInfoBook = book },
+                                onDelete = { pendingDeleteBook = book },
+                                modifier = Modifier.weight(1f)
+                            )
+                        }
+                        repeat(gridColumns - rowBooks.size) {
+                            Spacer(modifier = Modifier.weight(1f))
+                        }
+                    }
+                }
             } else {
                 items(state.books, key = { it.id }) { book ->
-                    val bookProgress = state.bookProgress[book.id] ?: if (book.totalSentences > 0) {
-                        ((book.currentSentenceIndex + 1).toFloat() / book.totalSentences.toFloat()).coerceIn(0f, 1f)
-                    } else 0f
-                    BookCard(
+                    val progress = state.bookProgress[book.id] ?: 0f
+                    val isTranslated = book.id in state.translatedBookIds
+                    LibraryListCard(
                         book = book,
-                        progress = bookProgress,
+                        progress = progress,
+                        isTranslated = isTranslated,
                         onOpen = { onOpenBook(book.id) },
+                        onRename = { pendingRenameBook = book },
+                        onEditCover = { pendingCoverBook = book },
+                        onInfo = { pendingInfoBook = book },
                         onDelete = { pendingDeleteBook = book }
                     )
                 }
             }
 
-            item { Spacer(modifier = Modifier.height(72.dp)) }
+            item { Spacer(Modifier.height(84.dp)) }
         }
     }
 
-    pendingDeleteBook?.let { target ->
-        AlertDialog(
-            onDismissRequest = { pendingDeleteBook = null },
-            title = { Text(stringResource(R.string.confirm_delete_book_title)) },
-            text = { Text(stringResource(R.string.confirm_delete_book_message, target.title)) },
-            confirmButton = {
-                Button(
-                    onClick = {
-                        pendingDeleteBook = null
-                        onDeleteBook(target.id)
-                    },
-                    colors = ButtonDefaults.buttonColors(
-                        containerColor = MaterialTheme.colorScheme.error,
-                        contentColor = MaterialTheme.colorScheme.onError
-                    )
-                ) {
-                    Text(stringResource(R.string.common_delete))
-                }
+    pendingRenameBook?.let { target ->
+        BookRenameDialog(
+            book = target,
+            onConfirm = { newTitle ->
+                pendingRenameBook = null
+                onRenameBook(target.id, newTitle)
             },
-            dismissButton = {
-                TextButton(onClick = { pendingDeleteBook = null }) {
-                    Text(stringResource(R.string.common_cancel))
-                }
-            }
+            onDismiss = { pendingRenameBook = null }
+        )
+    }
+
+    pendingCoverBook?.let { target ->
+        BookCoverSheet(
+            book = target,
+            onSelectTemplate = { styleId -> onUpdateCoverTemplate(target.id, styleId) },
+            onPickPhoto = {
+                photoTargetBookId = target.id
+                coverPhotoPickerLauncher.launch(
+                    PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)
+                )
+            },
+            onDismiss = { pendingCoverBook = null }
+        )
+    }
+
+    pendingInfoBook?.let { target ->
+        BookInfoDialog(
+            book = target,
+            progress = state.bookProgress[target.id] ?: 0f,
+            isTranslated = target.id in state.translatedBookIds,
+            onDismiss = { pendingInfoBook = null }
+        )
+    }
+
+    pendingDeleteBook?.let { target ->
+        DeleteBookConfirmDialog(
+            book = target,
+            onConfirm = {
+                pendingDeleteBook = null
+                onDeleteBook(target.id)
+            },
+            onDismiss = { pendingDeleteBook = null }
         )
     }
 }
 
 @Composable
-private fun LibraryHeroBanner(
-    isImporting: Boolean,
-    onImportClick: () -> Unit,
-    onModelsClick: () -> Unit
+private fun LibraryGridCard(
+    book: BookEntity,
+    progress: Float,
+    isTranslated: Boolean,
+    onOpen: () -> Unit,
+    onRename: () -> Unit,
+    onEditCover: () -> Unit,
+    onInfo: () -> Unit,
+    onDelete: () -> Unit,
+    modifier: Modifier = Modifier
 ) {
-    val atelier = LocalEcouteAtelierColors.current
+    val clamped = progress.coerceIn(0f, 1f)
     AtelierCard(
-        borderColor = atelier.cardBorder,
-        elevation = 3.dp,
-        shape = MaterialTheme.shapes.extraLarge,
-        modifier = Modifier.fillMaxWidth()
+        onClick = onOpen,
+        shape = MaterialTheme.shapes.large,
+        modifier = modifier.testTag("book_card_${book.id}")
     ) {
-        Box(modifier = Modifier.height(228.dp)) {
-            Image(
-                painter = painterResource(id = R.drawable.img_library_hero),
-                contentDescription = stringResource(R.string.library_hero_content_description),
-                contentScale = ContentScale.Crop,
-                modifier = Modifier.fillMaxSize()
-            )
-            Box(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .background(
-                        Brush.verticalGradient(
-                            colors = listOf(
-                                Color(0x880B1320),
-                                Color(0xCC111F36),
-                                Color(0xF212223C)
-                            )
-                        )
+        Column(modifier = Modifier.padding(11.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Box(modifier = Modifier.fillMaxWidth()) {
+                BookCoverArtwork(
+                    book = book,
+                    compact = true,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(146.dp)
+                )
+                Box(modifier = Modifier.align(Alignment.TopStart)) {
+                    BookOverflowMenuButton(
+                        book = book,
+                        onOpen = onOpen,
+                        onRename = onRename,
+                        onEditCover = onEditCover,
+                        onInfo = onInfo,
+                        onDelete = onDelete
                     )
-            )
-            Column(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .padding(20.dp),
-                verticalArrangement = Arrangement.SpaceBetween
+                }
+            }
+
+            CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Ltr) {
+                Text(
+                    text = book.title,
+                    style = MaterialTheme.typography.titleSmall.copy(
+                        fontFamily = FrenchSerifFamily,
+                        fontWeight = FontWeight.SemiBold
+                    ),
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.height(40.dp)
+                )
+            }
+
+            Row(
+                horizontalArrangement = Arrangement.spacedBy(4.dp),
+                verticalAlignment = Alignment.CenterVertically
             ) {
-                Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                    CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Ltr) {
-                        Surface(
-                            color = Color(0x33FFFFFF),
-                            border = BorderStroke(1.dp, Color(0x40E8B954)),
-                            shape = RoundedCornerShape(20.dp)
-                        ) {
-                            Row(
-                                modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp),
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.spacedBy(6.dp)
-                            ) {
-                                Box(
-                                    modifier = Modifier
-                                        .size(6.dp)
-                                        .clip(CircleShape)
-                                        .background(Color(0xFFE8B954))
-                                )
-                                Text(
-                                    text = "Écoute • Atelier Littéraire",
-                                    style = MaterialTheme.typography.labelSmall.copy(
-                                        fontFamily = EditorialDisplayFamily,
-                                        fontWeight = FontWeight.Bold
-                                    ),
-                                    color = Color(0xFFFDF4E3)
-                                )
-                            }
-                        }
-                    }
-                    Text(
-                        text = stringResource(R.string.library_hero_headline),
-                        style = MaterialTheme.typography.headlineSmall,
-                        color = Color.White
+                MonospaceMetricPill(
+                    text = if (book.mediaKind == "AUDIO") "AUDIO" else book.sourceType
+                )
+                if (isTranslated) {
+                    MonospaceMetricPill(
+                        text = stringResource(R.string.library_badge_translated),
+                        containerColor = MaterialTheme.colorScheme.tertiaryContainer,
+                        contentColor = MaterialTheme.colorScheme.onTertiaryContainer
                     )
-                    Text(
-                        text = stringResource(R.string.library_hero_subheadline),
-                        style = MaterialTheme.typography.bodySmall,
-                        color = Color(0xFFDCE3EE)
+                } else if (book.isCompleted) {
+                    MonospaceMetricPill(
+                        text = stringResource(R.string.library_badge_completed),
+                        containerColor = MaterialTheme.colorScheme.secondaryContainer,
+                        contentColor = MaterialTheme.colorScheme.onSecondaryContainer
                     )
                 }
+            }
 
-                Row(
-                    horizontalArrangement = Arrangement.spacedBy(10.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Button(
-                        onClick = onImportClick,
-                        enabled = !isImporting,
-                        colors = ButtonDefaults.buttonColors(
-                            containerColor = MaterialTheme.colorScheme.secondary,
-                            contentColor = MaterialTheme.colorScheme.onSecondary
-                        ),
-                        shape = RoundedCornerShape(14.dp),
-                        modifier = Modifier
-                            .minimumInteractiveComponentSize()
-                            .testTag("import_book_button")
-                    ) {
-                        if (isImporting) {
-                            CircularProgressIndicator(
-                                modifier = Modifier.size(18.dp),
-                                strokeWidth = 2.dp,
-                                color = MaterialTheme.colorScheme.onSecondary
-                            )
-                        } else {
-                            Icon(Icons.Rounded.Add, contentDescription = null, modifier = Modifier.size(18.dp))
-                        }
-                        Spacer(Modifier.width(6.dp))
-                        Text(stringResource(R.string.library_import_button))
-                    }
+            LinearProgressIndicator(
+                progress = { clamped },
+                color = MaterialTheme.colorScheme.secondary,
+                trackColor = MaterialTheme.colorScheme.surfaceVariant,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(5.dp)
+                    .clip(RoundedCornerShape(3.dp))
+            )
 
-                    FilledTonalButton(
-                        onClick = onModelsClick,
-                        shape = RoundedCornerShape(14.dp),
-                        modifier = Modifier
-                            .minimumInteractiveComponentSize()
-                            .testTag("hero_models_button")
-                    ) {
-                        Icon(Icons.Rounded.Headphones, contentDescription = null, modifier = Modifier.size(18.dp))
-                        Spacer(Modifier.width(6.dp))
-                        Text(stringResource(R.string.library_models_button))
-                    }
-                }
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    text = "${(clamped * 100).toInt()}%",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                Text(
+                    text = "${book.totalChapters} ف • ${book.totalSentences} ج",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
             }
         }
     }
 }
 
 @Composable
-private fun BookCard(
+private fun LibraryListCard(
     book: BookEntity,
     progress: Float,
+    isTranslated: Boolean,
     onOpen: () -> Unit,
+    onRename: () -> Unit,
+    onEditCover: () -> Unit,
+    onInfo: () -> Unit,
     onDelete: () -> Unit
 ) {
-    val clampedProgress = progress.coerceIn(0f, 1f)
-
+    val clamped = progress.coerceIn(0f, 1f)
     AtelierCard(
         onClick = onOpen,
         shape = MaterialTheme.shapes.large,
@@ -406,42 +599,45 @@ private fun BookCard(
             .fillMaxWidth()
             .testTag("book_card_${book.id}")
     ) {
-        Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        Column(modifier = Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
             Row(
                 modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(14.dp),
+                horizontalArrangement = Arrangement.spacedBy(12.dp),
                 verticalAlignment = Alignment.Top
             ) {
-                BookCover(book = book)
-                Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                BookCoverArtwork(
+                    book = book,
+                    modifier = Modifier.size(width = 74.dp, height = 104.dp)
+                )
+                Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(5.dp)) {
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.SpaceBetween,
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        MonospaceMetricPill(
-                            text = "${book.sourceLanguage.uppercase()} • ${book.sourceType}",
-                            containerColor = MaterialTheme.colorScheme.surfaceVariant,
-                            contentColor = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                        if (book.sourceType != "STARTER") {
-                            IconButton(
-                                onClick = onDelete,
-                                modifier = Modifier.minimumInteractiveComponentSize()
-                            ) {
-                                Icon(
-                                    Icons.Rounded.DeleteOutline,
-                                    contentDescription = stringResource(R.string.library_delete_book_cd),
-                                    tint = MaterialTheme.colorScheme.error
+                        Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                            MonospaceMetricPill(text = "${book.sourceLanguage.uppercase()} • ${book.sourceType}")
+                            if (isTranslated) {
+                                MonospaceMetricPill(
+                                    text = stringResource(R.string.library_badge_translated),
+                                    containerColor = MaterialTheme.colorScheme.tertiaryContainer,
+                                    contentColor = MaterialTheme.colorScheme.onTertiaryContainer
                                 )
                             }
                         }
+                        BookOverflowMenuButton(
+                            book = book,
+                            onOpen = onOpen,
+                            onRename = onRename,
+                            onEditCover = onEditCover,
+                            onInfo = onInfo,
+                            onDelete = onDelete
+                        )
                     }
-
                     CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Ltr) {
                         Text(
                             text = book.title,
-                            style = MaterialTheme.typography.titleLarge.copy(
+                            style = MaterialTheme.typography.titleMedium.copy(
                                 fontFamily = FrenchSerifFamily,
                                 fontWeight = FontWeight.SemiBold
                             ),
@@ -450,7 +646,13 @@ private fun BookCard(
                         )
                     }
                     Text(
-                        text = book.author,
+                        text = buildString {
+                            append(book.author)
+                            if (book.fileSizeBytes > 0L) {
+                                append(" • ")
+                                append(formatBytes(book.fileSizeBytes))
+                            }
+                        },
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         maxLines = 1,
@@ -459,55 +661,42 @@ private fun BookCard(
                 }
             }
 
-            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                LinearProgressIndicator(
-                    progress = { clampedProgress },
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .height(6.dp)
-                        .clip(RoundedCornerShape(3.dp)),
-                    color = MaterialTheme.colorScheme.secondary,
-                    trackColor = MaterialTheme.colorScheme.surfaceVariant
+            LinearProgressIndicator(
+                progress = { clamped },
+                color = MaterialTheme.colorScheme.secondary,
+                trackColor = MaterialTheme.colorScheme.surfaceVariant,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(5.dp)
+                    .clip(RoundedCornerShape(3.dp))
+            )
+
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    text = "${(clamped * 100).toInt()}% • " +
+                        stringResource(R.string.library_book_stats, book.totalChapters, book.totalSentences),
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
+                FilledTonalButton(
+                    onClick = onOpen,
+                    shape = RoundedCornerShape(12.dp),
+                    contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp),
+                    modifier = Modifier
+                        .minimumInteractiveComponentSize()
+                        .testTag("continue_reading_${book.id}")
                 ) {
-                    Row(
-                        horizontalArrangement = Arrangement.spacedBy(8.dp),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        MonospaceMetricPill(
-                            text = "${(clampedProgress * 100).toInt()}%",
-                            containerColor = MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.8f),
-                            contentColor = MaterialTheme.colorScheme.onSecondaryContainer
-                        )
-                        Text(
-                            text = stringResource(R.string.library_book_stats, book.totalChapters, book.totalSentences),
-                            style = MaterialTheme.typography.labelSmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                    }
-                    FilledTonalButton(
-                        onClick = onOpen,
-                        shape = RoundedCornerShape(12.dp),
-                        contentPadding = PaddingValues(horizontal = 14.dp, vertical = 8.dp),
-                        modifier = Modifier
-                            .minimumInteractiveComponentSize()
-                            .testTag("continue_reading_${book.id}")
-                    ) {
-                        Icon(Icons.Rounded.AutoStories, contentDescription = null, modifier = Modifier.size(16.dp))
-                        Spacer(Modifier.width(6.dp))
-                        Text(
-                            if (book.currentChapterIndex > 0 || book.currentSentenceIndex > 0) {
-                                stringResource(R.string.library_continue_reading)
-                            } else {
-                                stringResource(R.string.library_start_reading)
-                            },
-                            style = MaterialTheme.typography.labelMedium
-                        )
-                    }
+                    Icon(Icons.Rounded.AutoStories, contentDescription = null, modifier = Modifier.size(16.dp))
+                    Spacer(Modifier.width(6.dp))
+                    Text(
+                        if (clamped > 0f) stringResource(R.string.library_continue_reading)
+                        else stringResource(R.string.library_start_reading),
+                        style = MaterialTheme.typography.labelMedium
+                    )
                 }
             }
         }
@@ -515,56 +704,82 @@ private fun BookCard(
 }
 
 @Composable
-private fun BookCover(book: BookEntity) {
-    val isFrench = book.sourceLanguage.equals("fr", ignoreCase = true)
-    val coverTop = if (isFrench) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.tertiary
-    val coverBottom = if (isFrench) {
-        MaterialTheme.colorScheme.primary.copy(alpha = 0.82f)
-    } else {
-        MaterialTheme.colorScheme.tertiary.copy(alpha = 0.82f)
-    }
-    val foilColor = LocalEcouteAtelierColors.current.warmGoldAccent
-
-    Box(
-        modifier = Modifier
-            .size(width = 78.dp, height = 108.dp)
-            .clip(RoundedCornerShape(topEnd = 12.dp, bottomEnd = 12.dp, topStart = 4.dp, bottomStart = 4.dp))
-            .background(Brush.linearGradient(colors = listOf(coverTop, coverBottom)))
-            .border(
-                width = 1.dp,
-                color = foilColor.copy(alpha = 0.45f),
-                shape = RoundedCornerShape(topEnd = 12.dp, bottomEnd = 12.dp, topStart = 4.dp, bottomStart = 4.dp)
-            )
-    ) {
-        // Subtle bookbinding spine crease
-        Box(
+private fun BookOverflowMenuButton(
+    book: BookEntity,
+    onOpen: () -> Unit,
+    onRename: () -> Unit,
+    onEditCover: () -> Unit,
+    onInfo: () -> Unit,
+    onDelete: () -> Unit
+) {
+    var expanded by remember { mutableStateOf(false) }
+    Box {
+        IconButton(
+            onClick = { expanded = true },
             modifier = Modifier
-                .width(7.dp)
-                .fillMaxHeight()
-                .background(Color.Black.copy(alpha = 0.22f))
-                .align(Alignment.CenterStart)
-        )
-        Box(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(start = 11.dp, end = 6.dp, top = 8.dp, bottom = 8.dp)
-                .border(0.75.dp, foilColor.copy(alpha = 0.4f), RoundedCornerShape(6.dp)),
-            contentAlignment = Alignment.Center
+                .minimumInteractiveComponentSize()
+                .testTag("book_menu_${book.id}")
         ) {
-            Column(
-                horizontalAlignment = Alignment.CenterHorizontally,
-                verticalArrangement = Arrangement.spacedBy(3.dp)
-            ) {
-                Text(
-                    text = book.title.trim().firstOrNull()?.uppercase() ?: "É",
-                    style = MaterialTheme.typography.headlineLarge.copy(fontFamily = EditorialDisplayFamily),
-                    color = Color.White
-                )
-                Text(
-                    text = book.sourceLanguage.uppercase(),
-                    style = MaterialTheme.typography.labelSmall,
-                    color = foilColor.copy(alpha = 0.92f),
-                    maxLines = 1
+            Icon(
+                Icons.Rounded.MoreVert,
+                contentDescription = stringResource(R.string.library_more_options_cd)
+            )
+        }
+        DropdownMenu(
+            expanded = expanded,
+            onDismissRequest = { expanded = false }
+        ) {
+            DropdownMenuItem(
+                leadingIcon = { Icon(Icons.Rounded.AutoStories, contentDescription = null) },
+                text = { Text(stringResource(R.string.library_menu_continue)) },
+                onClick = {
+                    expanded = false
+                    onOpen()
+                }
+            )
+            DropdownMenuItem(
+                leadingIcon = { Icon(Icons.Rounded.DriveFileRenameOutline, contentDescription = null) },
+                text = { Text(stringResource(R.string.library_menu_rename)) },
+                onClick = {
+                    expanded = false
+                    onRename()
+                }
+            )
+            DropdownMenuItem(
+                leadingIcon = { Icon(Icons.Rounded.Image, contentDescription = null) },
+                text = { Text(stringResource(R.string.library_menu_cover)) },
+                onClick = {
+                    expanded = false
+                    onEditCover()
+                }
+            )
+            DropdownMenuItem(
+                leadingIcon = { Icon(Icons.Rounded.Info, contentDescription = null) },
+                text = { Text(stringResource(R.string.library_menu_info)) },
+                onClick = {
+                    expanded = false
+                    onInfo()
+                }
+            )
+            if (book.sourceType != "STARTER") {
+                DropdownMenuItem(
+                    leadingIcon = {
+                        Icon(
+                            Icons.Rounded.DeleteOutline,
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.error
+                        )
+                    },
+                    text = {
+                        Text(
+                            stringResource(R.string.library_menu_delete),
+                            color = MaterialTheme.colorScheme.error
+                        )
+                    },
+                    onClick = {
+                        expanded = false
+                        onDelete()
+                    }
                 )
             }
         }

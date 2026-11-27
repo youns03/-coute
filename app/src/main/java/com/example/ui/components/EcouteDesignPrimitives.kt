@@ -83,15 +83,16 @@ fun EcouteAtelierBackdrop(
                         radius = size.maxDimension * 0.60f
                     )
                 )
-                // Delicate acoustic resonance arcs in upper margin
-                val arcCenter = Offset(size.width * 0.94f, size.height * 0.04f)
-                for (i in 1..3) {
-                    drawCircle(
-                        color = ringColor,
-                        radius = size.minDimension * (0.18f * i),
-                        center = arcCenter,
-                        style = Stroke(width = 1.dp.toPx())
-                    )
+                if (!atelier.isDark) {
+                    val arcCenter = Offset(size.width * 0.94f, size.height * 0.04f)
+                    for (i in 1..3) {
+                        drawCircle(
+                            color = ringColor,
+                            radius = size.minDimension * (0.18f * i),
+                            center = arcCenter,
+                            style = Stroke(width = 1.dp.toPx())
+                        )
+                    }
                 }
             },
         content = content

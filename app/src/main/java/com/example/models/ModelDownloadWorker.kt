@@ -230,6 +230,12 @@ class ModelDownloadWorker(
                                             totalBytes = totalBytes
                                         )
                                     )
+                                    app.taskCoordinator.updateTaskStatus(
+                                        id = "dl_${spec.id}",
+                                        status = com.example.runtime.LocalTaskStatus.RUNNING,
+                                        progress = (pct / 100f),
+                                        subtitle = "جاري التنزيل ($pct%)"
+                                    )
                                     setForeground(createForegroundInfo(spec.displayName, pct))
                                 }
                             }
@@ -248,6 +254,12 @@ class ModelDownloadWorker(
                     totalBytes = spec.expectedSizeBytes
                 )
             )
+            app.taskCoordinator.updateTaskStatus(
+                id = "dl_${spec.id}",
+                status = com.example.runtime.LocalTaskStatus.RUNNING,
+                progress = 0.98f,
+                subtitle = "التحقق من السلامة والتحميل..."
+            )
             setForeground(createForegroundInfo("${spec.displayName} (التحقق...)", 100))
         }
 
@@ -258,13 +270,22 @@ class ModelDownloadWorker(
         ).getOrThrow()
 
         if (isDependency) {
-            // eSpeak data has a structural + cryptographic contract; it is not a TTS model.
+            // eSpeak data has a structural + cryptographic contract; it is not a TTS/ASR model.
             storage.confirmInstalledPackage(spec).getOrThrow()
         } else {
             // Keep the previous installation recoverable until the native engine accepts the new files.
             try {
-                app.ttsEngineManager.verifyModelLoadable(spec, finalDir).getOrThrow()
+                if (spec.engineType == com.example.domain.EngineType.SHERPA_ASR) {
+                    app.speechTranscriptionManager.verifyModelLoadable(spec, finalDir).getOrThrow()
+                } else {
+                    app.ttsEngineManager.verifyModelLoadable(spec, finalDir).getOrThrow()
+                }
             } catch (t: Throwable) {
+                app.taskCoordinator.updateTaskStatus(
+                    id = "dl_${spec.id}",
+                    status = com.example.runtime.LocalTaskStatus.FAILED,
+                    errorMessage = t.message
+                )
                 if (!storage.rollbackInstalledPackage(spec.id)) {
                     t.addSuppressed(
                         IllegalStateException(
@@ -286,6 +307,12 @@ class ModelDownloadWorker(
                     verifiedLoadTest = true,
                     lastError = null
                 )
+            )
+            app.taskCoordinator.updateTaskStatus(
+                id = "dl_${spec.id}",
+                status = com.example.runtime.LocalTaskStatus.COMPLETED,
+                progress = 1f,
+                subtitle = "مثبّت وموثّق"
             )
         }
     }

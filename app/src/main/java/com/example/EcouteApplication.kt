@@ -3,12 +3,17 @@ package com.example
 import android.app.Application
 import com.example.audio.AudioChunkCache
 import com.example.audio.AudioPlaybackController
+import com.example.audio.PlaybackStatus
 import com.example.data.AppDatabase
 import com.example.data.BookImporter
 import com.example.data.LibraryRepository
 import com.example.data.SettingsRepository
+import com.example.data.importengine.PdfDocumentParser
 import com.example.models.ModelRepository
 import com.example.models.ModelStorageManager
+import com.example.runtime.LocalTaskCoordinator
+import com.example.runtime.RuntimeMemoryGovernor
+import com.example.transcription.SpeechTranscriptionManager
 import com.example.translation.FileTranslationRepository
 import com.example.translation.TranslationEngineManager
 import com.example.tts.TtsEngineManager
@@ -27,7 +32,13 @@ class EcouteApplication : Application() {
         private set
     lateinit var storageManager: ModelStorageManager
         private set
+    lateinit var taskCoordinator: LocalTaskCoordinator
+        private set
     lateinit var ttsEngineManager: TtsEngineManager
+        private set
+    lateinit var speechTranscriptionManager: SpeechTranscriptionManager
+        private set
+    lateinit var memoryGovernor: RuntimeMemoryGovernor
         private set
     lateinit var modelRepository: ModelRepository
         private set
@@ -45,18 +56,34 @@ class EcouteApplication : Application() {
         database = AppDatabase.getInstance(this)
         settingsRepository = SettingsRepository(this)
         storageManager = ModelStorageManager(this)
+        taskCoordinator = LocalTaskCoordinator(appScope)
+        PdfDocumentParser.ensurePdfBoxInitialized(this)
         val bookImporter = BookImporter(this)
         ttsEngineManager = TtsEngineManager(this, storageManager)
+
+        speechTranscriptionManager = SpeechTranscriptionManager(
+            context = this,
+            storageManager = storageManager,
+            bookDao = database.bookDao(),
+            recentActivityDao = database.recentActivityDao(),
+            taskCoordinator = taskCoordinator,
+            settingsRepository = settingsRepository
+        )
+
         modelRepository = ModelRepository(
             context = this,
             modelRecordDao = database.modelRecordDao(),
             storageManager = storageManager,
-            ttsEngineManager = ttsEngineManager
+            ttsEngineManager = ttsEngineManager,
+            speechTranscriptionManager = speechTranscriptionManager,
+            taskCoordinator = taskCoordinator
         )
         libraryRepository = LibraryRepository(
             bookDao = database.bookDao(),
             vocabularyDao = database.vocabularyDao(),
-            bookImporter = bookImporter
+            bookImporter = bookImporter,
+            context = this,
+            recentActivityDao = database.recentActivityDao()
         )
         translationEngineManager = TranslationEngineManager(
             bookDao = database.bookDao(),
@@ -65,15 +92,36 @@ class EcouteApplication : Application() {
         fileTranslationRepository = FileTranslationRepository(
             context = this,
             jobDao = database.translationJobDao(),
-            bookImporter = bookImporter
+            bookImporter = bookImporter,
+            recentActivityDao = database.recentActivityDao(),
+            taskCoordinator = taskCoordinator
         )
         playbackController = AudioPlaybackController(
             context = this,
             bookDao = database.bookDao(),
             settingsRepository = settingsRepository,
             storageManager = storageManager,
-            ttsEngineManager = ttsEngineManager
+            ttsEngineManager = ttsEngineManager,
+            recentActivityDao = database.recentActivityDao(),
+            taskCoordinator = taskCoordinator
         )
+
+        memoryGovernor = RuntimeMemoryGovernor(
+            context = this,
+            scope = appScope,
+            isTtsBusyProvider = {
+                val st = playbackController.state.value.status
+                st == PlaybackStatus.PLAYING || st == PlaybackStatus.BUFFERING || ttsEngineManager.runtimeState.value.isLoading
+            },
+            isTtsLoadedProvider = { ttsEngineManager.isEngineLoaded },
+            releaseTtsEngine = { ttsEngineManager.releaseActiveEngine() },
+            isAsrBusyProvider = { speechTranscriptionManager.isTranscribing },
+            isAsrLoadedProvider = { speechTranscriptionManager.isAsrLoaded },
+            releaseAsrEngine = { speechTranscriptionManager.releaseActiveEngine() }
+        )
+        ttsEngineManager.setOnActivityCallback { memoryGovernor.markTtsActivity() }
+        speechTranscriptionManager.setOnActivityCallback { memoryGovernor.markAsrActivity() }
+        memoryGovernor.startMonitoring()
 
         appScope.launch {
             AudioChunkCache.pruneIfOversized(storageManager.audioCacheRoot)
@@ -83,4 +131,14 @@ class EcouteApplication : Application() {
             translationEngineManager.refreshAllStatuses()
         }
     }
+
+    override fun onTrimMemory(level: Int) {
+        super.onTrimMemory(level)
+        if (::memoryGovernor.isInitialized) {
+            appScope.launch {
+                memoryGovernor.onTrimMemory(level)
+            }
+        }
+    }
 }
+

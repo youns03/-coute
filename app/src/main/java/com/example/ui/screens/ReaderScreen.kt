@@ -81,6 +81,7 @@ import com.example.audio.PlaybackStatus
 import com.example.audio.PlaybackUiState
 import com.example.data.SentenceEntity
 import com.example.data.UserSettings
+import com.example.data.importengine.LanguageDetector
 import com.example.translation.SourceLanguage
 import com.example.translation.TranslationDirection
 import com.example.translation.TranslationManagerUiState
@@ -154,6 +155,7 @@ fun ReaderScreen(
         }
     }
 
+    val isArabicSource = state.book?.sourceLanguage?.lowercase()?.startsWith("ar") == true
     val bookSourceLang = SourceLanguage.fromCode(state.book?.sourceLanguage)
     val bookDirection = TranslationDirection.forSource(bookSourceLang)
     val activePackState = translationManagerState.stateFor(bookDirection)
@@ -214,7 +216,8 @@ fun ReaderScreen(
                 bookTitle = state.book?.title,
                 chapterTitle = state.chapters.getOrNull(state.activeChapterIndex)?.title.orEmpty(),
                 hasBook = state.book != null,
-                languageBadge = bookDirection.shortBadge,
+                isArabicSource = isArabicSource,
+                languageBadge = if (isArabicSource) "AR" else bookDirection.shortBadge,
                 isSearchOpen = state.isSearchOpen,
                 showInlineTranslations = settings.showInlineTranslations,
                 isImmersive = isImmersive,
@@ -381,48 +384,57 @@ fun ReaderScreen(
                                         )
                                     }
 
-                                    TextButton(
-                                        onClick = { onTranslateOrToggleParagraph(paragraphIndex, paragraphSentences) },
-                                        enabled = !isParagraphTranslating &&
-                                            !(settings.showInlineTranslations && !cachedParagraphTranslation.isNullOrBlank()),
-                                        modifier = Modifier.testTag("translate_paragraph_$paragraphIndex")
-                                    ) {
-                                        if (isParagraphTranslating) {
-                                            CircularProgressIndicator(modifier = Modifier.size(15.dp), strokeWidth = 2.dp)
-                                            Spacer(Modifier.width(7.dp))
-                                            Text(
-                                                stringResource(R.string.reader_paragraph_translating),
-                                                style = MaterialTheme.typography.labelMedium
-                                            )
-                                        } else {
-                                            Icon(
-                                                when {
-                                                    cachedParagraphTranslation.isNullOrBlank() -> Icons.Rounded.Translate
-                                                    settings.showInlineTranslations -> Icons.Rounded.Translate
-                                                    allParagraphRevealed -> Icons.Rounded.VisibilityOff
-                                                    else -> Icons.Rounded.Translate
-                                                },
-                                                contentDescription = null,
-                                                modifier = Modifier.size(17.dp)
-                                            )
-                                            Spacer(Modifier.width(5.dp))
-                                            Text(
-                                                when {
-                                                    !cachedParagraphTranslation.isNullOrBlank() && settings.showInlineTranslations ->
-                                                        stringResource(R.string.reader_translation_complete)
-                                                    !cachedParagraphTranslation.isNullOrBlank() && allParagraphRevealed ->
-                                                        stringResource(R.string.reader_hide_translation)
-                                                    !cachedParagraphTranslation.isNullOrBlank() ->
-                                                        stringResource(R.string.reader_show_translation)
-                                                    else -> stringResource(R.string.reader_translate_paragraph)
-                                                },
-                                                style = MaterialTheme.typography.labelMedium
-                                            )
+                                    if (!isArabicSource) {
+                                        TextButton(
+                                            onClick = { onTranslateOrToggleParagraph(paragraphIndex, paragraphSentences) },
+                                            enabled = !isParagraphTranslating &&
+                                                !(settings.showInlineTranslations && !cachedParagraphTranslation.isNullOrBlank()),
+                                            modifier = Modifier.testTag("translate_paragraph_$paragraphIndex")
+                                        ) {
+                                            if (isParagraphTranslating) {
+                                                CircularProgressIndicator(modifier = Modifier.size(15.dp), strokeWidth = 2.dp)
+                                                Spacer(Modifier.width(7.dp))
+                                                Text(
+                                                    stringResource(R.string.reader_paragraph_translating),
+                                                    style = MaterialTheme.typography.labelMedium
+                                                )
+                                            } else {
+                                                Icon(
+                                                    when {
+                                                        cachedParagraphTranslation.isNullOrBlank() -> Icons.Rounded.Translate
+                                                        settings.showInlineTranslations -> Icons.Rounded.Translate
+                                                        allParagraphRevealed -> Icons.Rounded.VisibilityOff
+                                                        else -> Icons.Rounded.Translate
+                                                    },
+                                                    contentDescription = null,
+                                                    modifier = Modifier.size(17.dp)
+                                                )
+                                                Spacer(Modifier.width(5.dp))
+                                                Text(
+                                                    when {
+                                                        !cachedParagraphTranslation.isNullOrBlank() && settings.showInlineTranslations ->
+                                                            stringResource(R.string.reader_translation_complete)
+                                                        !cachedParagraphTranslation.isNullOrBlank() && allParagraphRevealed ->
+                                                            stringResource(R.string.reader_hide_translation)
+                                                        !cachedParagraphTranslation.isNullOrBlank() ->
+                                                            stringResource(R.string.reader_show_translation)
+                                                        else -> stringResource(R.string.reader_translate_paragraph)
+                                                    },
+                                                    style = MaterialTheme.typography.labelMedium
+                                                )
+                                            }
                                         }
                                     }
                                 }
 
-                                CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Ltr) {
+                                val isArabicParagraph = remember(isArabicSource, paragraphSentences) {
+                                    isArabicSource || LanguageDetector.isArabicText(
+                                        paragraphSentences.joinToString(" ") { it.originalText }
+                                    )
+                                }
+                                CompositionLocalProvider(
+                                    LocalLayoutDirection provides if (isArabicParagraph) LayoutDirection.Rtl else LayoutDirection.Ltr
+                                ) {
                                     val wordHighlightColor = MaterialTheme.colorScheme.secondary
                                     val wordHighlightBg = atelier.wordHighlightBg
                                     val annotated = remember(
@@ -476,7 +488,7 @@ fun ReaderScreen(
                                         text = annotated,
                                         onTextLayout = { paragraphTextLayout = it },
                                         style = TextStyle(
-                                            fontFamily = FrenchSerifFamily,
+                                            fontFamily = if (isArabicParagraph) ArabicSansFamily else FrenchSerifFamily,
                                             fontSize = settings.readerFontSizeSp.sp,
                                             lineHeight = (settings.readerFontSizeSp * settings.readerLineHeightMultiplier).sp,
                                             color = MaterialTheme.colorScheme.onSurface
@@ -484,7 +496,7 @@ fun ReaderScreen(
                                         modifier = Modifier
                                             .bringIntoViewRequester(paragraphBringIntoViewRequester)
                                             .fillMaxWidth()
-                                            .pointerInput(annotated, paragraphSentences, currentSentence) {
+                                            .pointerInput(annotated, paragraphSentences, currentSentence, isArabicParagraph) {
                                                 detectTapGestures { pos ->
                                                     val layout = paragraphTextLayout ?: return@detectTapGestures
                                                     val offset = layout.getOffsetForPosition(pos)
@@ -494,7 +506,7 @@ fun ReaderScreen(
                                                         it.id.toString() == sentenceTag?.item
                                                     }
                                                     if (sentence != null) {
-                                                        if (word != null) onWordTapped(word.item, sentence)
+                                                        if (word != null && !isArabicParagraph) onWordTapped(word.item, sentence)
                                                         else {
                                                             requestNotificationIfNeeded()
                                                             onPlayFromSentence(sentence)
@@ -509,7 +521,7 @@ fun ReaderScreen(
                                     )
                                 }
 
-                                if (showParagraphTranslation) {
+                                if (showParagraphTranslation && !isArabicSource) {
                                     Surface(
                                         color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f),
                                         border = BorderStroke(1.dp, atelier.cardBorder),
@@ -640,6 +652,7 @@ fun ReaderScreen(
             ReaderAudioBar(
                 playbackState = playbackState,
                 bookSourceLanguage = bookSourceLang,
+                isArabicSource = isArabicSource,
                 isPlayingThisChapter = isPlayingThisChapter,
                 currentSpeed = settings.playbackSpeed,
                 onTogglePlay = {
@@ -666,7 +679,8 @@ fun ReaderScreen(
     if (showAppearanceSheet) {
         ReaderAppearanceBottomSheet(
             bookSourceLang = bookSourceLang,
-            languageBadge = bookDirection.shortBadge,
+            isArabicSource = isArabicSource,
+            languageBadge = if (isArabicSource) "AR" else bookDirection.shortBadge,
             settings = settings,
             onToggleBookLanguage = onToggleBookLanguage,
             onNightModeChange = onNightModeChange,

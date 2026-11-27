@@ -1,5 +1,6 @@
 package com.example.data
 
+import androidx.room.ColumnInfo
 import androidx.room.Entity
 import androidx.room.ForeignKey
 import androidx.room.Index
@@ -10,7 +11,7 @@ data class BookEntity(
     @PrimaryKey val id: String,
     val title: String,
     val author: String,
-    val sourceType: String, // "STARTER", "TXT", "EPUB"
+    val sourceType: String, // "STARTER", "TXT", "EPUB", "DOCX", "TEXT", "AUDIO"
     val sourceLanguage: String = "fr", // "fr" or "en"
     val levelTag: String = "",
     val totalChapters: Int,
@@ -18,7 +19,22 @@ data class BookEntity(
     val currentChapterIndex: Int = 0,
     val currentSentenceIndex: Int = 0,
     val addedAt: Long = System.currentTimeMillis(),
-    val lastReadAt: Long = System.currentTimeMillis()
+    val lastReadAt: Long = System.currentTimeMillis(),
+    @ColumnInfo(defaultValue = "BOOK")
+    val mediaKind: String = "BOOK", // "BOOK", "AUDIO"
+    @ColumnInfo(defaultValue = "auto")
+    val coverStyleId: String = "auto", // "auto", "atelier_classic", "audio_waves", "botanical_parchment", "custom_image"
+    val coverImagePath: String? = null,
+    val sourceContentHash: String? = null,
+    @ColumnInfo(defaultValue = "0")
+    val fileSizeBytes: Long = 0L,
+    val audioFilePath: String? = null,
+    @ColumnInfo(defaultValue = "0")
+    val audioDurationMs: Long = 0L,
+    @ColumnInfo(defaultValue = "0")
+    val isCompleted: Boolean = false,
+    @ColumnInfo(defaultValue = "0")
+    val lastPositionMs: Long = 0L
 )
 
 @Entity(
@@ -182,4 +198,17 @@ data class TranslationChunkEntity(
     val translatedText: String? = null,
     val isCompleted: Boolean = false
 )
+
+@Entity(tableName = "recent_activities")
+data class RecentActivityEntity(
+    @PrimaryKey val id: String,
+    val kind: String, // "READ", "TRANSLATION", "TRANSCRIPTION", "MODEL"
+    val title: String,
+    val subtitle: String,
+    val targetRoute: String, // "reader", "translator", "player", "models"
+    val targetId: String,
+    val progress: Float = 0f,
+    val timestamp: Long = System.currentTimeMillis()
+)
+
 

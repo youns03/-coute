@@ -11,6 +11,8 @@ import android.media.PlaybackParams
 import android.os.Build
 import androidx.core.content.ContextCompat
 import com.example.data.BookDao
+import com.example.data.RecentActivityDao
+import com.example.data.RecentActivityEntity
 import com.example.data.SentenceEntity
 import com.example.data.SettingsRepository
 import com.example.data.UserSettings
@@ -20,6 +22,12 @@ import com.example.domain.SpeechTimestampAligner
 import com.example.domain.SpeedControlMode
 import com.example.domain.WordTimestampRange
 import com.example.models.ModelStorageManager
+import com.example.runtime.LocalTaskCoordinator
+import com.example.runtime.LocalTaskEntry
+import com.example.runtime.LocalTaskPriority
+import com.example.runtime.LocalTaskStatus
+import com.example.runtime.LocalTaskType
+import com.example.runtime.TaskControls
 import androidx.media3.common.util.UnstableApi
 import com.example.tts.TtsEngineManager
 import kotlinx.coroutines.CancellationException
@@ -56,6 +64,7 @@ data class PlaybackUiState(
     val chapterIndex: Int = 0,
     val chapterTitle: String = "",
     val sentenceIndex: Int = 0,
+    val paragraphIndex: Int = 0,
     val totalSentencesInChapter: Int = 0,
     val currentSentenceText: String = "",
     val activeWordStartChar: Int = -1,
@@ -64,7 +73,10 @@ data class PlaybackUiState(
     val repeatCurrentSentence: Boolean = false,
     val bufferedAheadCount: Int = 0,
     val activeModelName: String = "",
+    val activeVoiceId: String = "",
     val activeLanguageCode: String = "fr",
+    val sleepTimerRemainingSec: Int = 0,
+    val sleepTimerEndOfChapter: Boolean = false,
     val errorMessage: String? = null
 )
 
@@ -198,7 +210,9 @@ class AudioPlaybackController internal constructor(
     private val storageManager: ModelStorageManager,
     private val ttsEngineManager: TtsEngineManager,
     private val trackFactory: AudioTrackHandleFactory,
-    private val playbackDispatcher: CoroutineDispatcher = Dispatchers.Default
+    private val playbackDispatcher: CoroutineDispatcher = Dispatchers.Default,
+    private val recentActivityDao: RecentActivityDao? = null,
+    private val taskCoordinator: LocalTaskCoordinator? = null
 ) {
     constructor(
         context: Context,
@@ -206,7 +220,9 @@ class AudioPlaybackController internal constructor(
         settingsRepository: SettingsRepository,
         storageManager: ModelStorageManager,
         ttsEngineManager: TtsEngineManager,
-        playbackDispatcher: CoroutineDispatcher = Dispatchers.Default
+        playbackDispatcher: CoroutineDispatcher = Dispatchers.Default,
+        recentActivityDao: RecentActivityDao? = null,
+        taskCoordinator: LocalTaskCoordinator? = null
     ) : this(
         context = context,
         bookDao = bookDao,
@@ -214,7 +230,9 @@ class AudioPlaybackController internal constructor(
         storageManager = storageManager,
         ttsEngineManager = ttsEngineManager,
         trackFactory = DefaultAudioTrackHandleFactory,
-        playbackDispatcher = playbackDispatcher
+        playbackDispatcher = playbackDispatcher,
+        recentActivityDao = recentActivityDao,
+        taskCoordinator = taskCoordinator
     )
 
     private val scope = CoroutineScope(SupervisorJob() + playbackDispatcher)
@@ -231,6 +249,7 @@ class AudioPlaybackController internal constructor(
 
     private var prepareJob: Job? = null
     private var playbackJob: Job? = null
+    private var sleepTimerJob: Job? = null
 
     private var currentTrackHandle: AudioTrackHandle? = null
     private var activeTrackSessionId: Long = 0L
@@ -260,6 +279,12 @@ class AudioPlaybackController internal constructor(
 
     @Volatile
     private var currentLanguageCode: String = "fr"
+
+    @Volatile
+    private var sleepTimerRemainingSec: Int = 0
+
+    @Volatile
+    private var sleepTimerEndOfChapter: Boolean = false
 
     internal fun currentSessionIdForTest(): Long = activeSessionId
 
@@ -461,6 +486,7 @@ class AudioPlaybackController internal constructor(
                     return@launch
                 }
                 val resolvedSpec = modelResolution.getOrThrow()
+                val preferredVoice = resolvePreferredVoice(resolvedSpec, normLang, settings.activeVoiceId)
 
                 updateStateIfSessionValid(sessionId) {
                     PlaybackUiState(
@@ -470,12 +496,48 @@ class AudioPlaybackController internal constructor(
                         chapterIndex = chapterIndex,
                         chapterTitle = chapterTitle,
                         sentenceIndex = sentences[safeStart].sentenceIndex,
+                        paragraphIndex = sentences[safeStart].paragraphIndex,
                         totalSentencesInChapter = sentences.size,
                         currentSentenceText = sentences[safeStart].originalText,
                         playbackSpeed = currentSpeed,
                         repeatCurrentSentence = repeatSingle,
                         activeModelName = resolvedSpec.displayName,
-                        activeLanguageCode = normLang
+                        activeVoiceId = preferredVoice,
+                        activeLanguageCode = normLang,
+                        sleepTimerRemainingSec = sleepTimerRemainingSec,
+                        sleepTimerEndOfChapter = sleepTimerEndOfChapter
+                    )
+                }
+
+                if (bookId != "_standalone_") {
+                    recentActivityDao?.upsert(
+                        RecentActivityEntity(
+                            id = "act_book_$bookId",
+                            kind = "READ",
+                            title = bookTitle,
+                            subtitle = chapterTitle,
+                            targetRoute = "reader",
+                            targetId = bookId,
+                            progress = (safeStart + 1).toFloat() / sentences.size.coerceAtLeast(1).toFloat()
+                        )
+                    )
+                    taskCoordinator?.upsertExternalTask(
+                        entry = LocalTaskEntry(
+                            id = "tts_playback",
+                            type = LocalTaskType.TTS_PLAYBACK,
+                            title = bookTitle,
+                            subtitle = chapterTitle,
+                            progress = (safeStart + 1).toFloat() / sentences.size.coerceAtLeast(1).toFloat(),
+                            status = LocalTaskStatus.RUNNING,
+                            priority = LocalTaskPriority.INTERACTIVE,
+                            canPause = true,
+                            canCancel = true
+                        ),
+                        controls = TaskControls(
+                            onPause = { pause() },
+                            onResume = { resume() },
+                            onCancel = { stop() }
+                        )
                     )
                 }
 
@@ -505,12 +567,20 @@ class AudioPlaybackController internal constructor(
                         it.copy(
                             status = if (isPausedFlag) PlaybackStatus.PAUSED else PlaybackStatus.BUFFERING,
                             sentenceIndex = currentSentence.sentenceIndex,
+                            paragraphIndex = currentSentence.paragraphIndex,
                             currentSentenceText = currentSentence.originalText,
                             activeWordStartChar = -1,
                             activeWordEndChar = -1,
                             errorMessage = null
                         )
                     }
+
+                    taskCoordinator?.updateTaskStatus(
+                        id = "tts_playback",
+                        status = if (isPausedFlag) LocalTaskStatus.PAUSED else LocalTaskStatus.RUNNING,
+                        progress = (idx + 1).toFloat() / activeQueue.size.coerceAtLeast(1).toFloat(),
+                        subtitle = "${chapterTitle} • جملة ${idx + 1}/${activeQueue.size}"
+                    )
 
                     while (isActive && isSessionValid(sessionId) && isPausedFlag) {
                         updateStateIfSessionValid(sessionId) { it.copy(status = PlaybackStatus.PAUSED) }
@@ -520,7 +590,11 @@ class AudioPlaybackController internal constructor(
 
                     val nextIdx = if (repeatSingle) idx else idx + 1
                     val spokenText = SpeechTextProcessor.prepareForSpeech(currentSentence.originalText, normLang)
-                    val voiceId = resolvedSpec.defaultVoiceFor(normLang)
+                    val voiceId = resolvePreferredVoice(
+                        resolvedSpec,
+                        normLang,
+                        settingsRepository.settingsFlow.first().activeVoiceId
+                    )
                     val synthSpeed = if (settings.speedControlMode == SpeedControlMode.MODEL_SYNTHESIS_RATE) {
                         currentSpeed
                     } else {
@@ -605,12 +679,28 @@ class AudioPlaybackController internal constructor(
                 }
 
                 if (isActive && isSessionValid(sessionId) && _state.value.status != PlaybackStatus.ERROR) {
+                    if (bookId != "_standalone_") {
+                        val book = bookDao.getBook(bookId)
+                        if (book != null && chapterIndex >= book.totalChapters - 1) {
+                            bookDao.setBookCompleted(bookId, true)
+                        }
+                    }
+                    if (sleepTimerEndOfChapter) {
+                        sleepTimerEndOfChapter = false
+                    }
+                    taskCoordinator?.updateTaskStatus(
+                        id = "tts_playback",
+                        status = LocalTaskStatus.COMPLETED,
+                        progress = 1f,
+                        subtitle = "اكتمل الفصل"
+                    )
                     updateStateIfSessionValid(sessionId) {
                         it.copy(
                             status = PlaybackStatus.IDLE,
                             activeWordStartChar = -1,
                             activeWordEndChar = -1,
-                            bufferedAheadCount = 0
+                            bufferedAheadCount = 0,
+                            sleepTimerEndOfChapter = false
                         )
                     }
                 }
@@ -1103,17 +1193,7 @@ class AudioPlaybackController internal constructor(
         val bId = st.bookId ?: return
         if (bId == "_standalone_" || queueSentences.isEmpty()) return
         val nextPos = (currentQueuePosition + 1).coerceAtMost(queueSentences.lastIndex)
-        val sessionId = claimNewSession(stoppingOnly = false)
-        startQueuePlaybackForSession(
-            sessionId = sessionId,
-            bookId = bId,
-            bookTitle = st.bookTitle,
-            chapterIndex = st.chapterIndex,
-            chapterTitle = st.chapterTitle,
-            sentences = queueSentences,
-            startIndex = nextPos,
-            languageCode = currentLanguageCode
-        )
+        jumpToQueuePosition(nextPos)
     }
 
     fun previousSentence() {
@@ -1121,6 +1201,60 @@ class AudioPlaybackController internal constructor(
         val bId = st.bookId ?: return
         if (bId == "_standalone_" || queueSentences.isEmpty()) return
         val prevPos = (currentQueuePosition - 1).coerceAtLeast(0)
+        jumpToQueuePosition(prevPos)
+    }
+
+    fun nextParagraph() {
+        val st = _state.value
+        val bId = st.bookId ?: return
+        if (bId == "_standalone_" || queueSentences.isEmpty()) return
+        val curPos = currentQueuePosition.coerceIn(0, queueSentences.lastIndex)
+        val curPara = queueSentences[curPos].paragraphIndex
+        val nextParaIdx = queueSentences.indexOfFirst { it.paragraphIndex > curPara }
+        val target = if (nextParaIdx >= 0) nextParaIdx else queueSentences.lastIndex
+        jumpToQueuePosition(target)
+    }
+
+    fun previousParagraph() {
+        val st = _state.value
+        val bId = st.bookId ?: return
+        if (bId == "_standalone_" || queueSentences.isEmpty()) return
+        val curPos = currentQueuePosition.coerceIn(0, queueSentences.lastIndex)
+        val curPara = queueSentences[curPos].paragraphIndex
+        val currentParaStart = queueSentences.indexOfFirst { it.paragraphIndex == curPara }.coerceAtLeast(0)
+        val target = if (curPos > currentParaStart) {
+            currentParaStart
+        } else {
+            val prevParaSentences = queueSentences.indexOfLast { it.paragraphIndex < curPara }
+            if (prevParaSentences < 0) 0 else {
+                val targetPara = queueSentences[prevParaSentences].paragraphIndex
+                queueSentences.indexOfFirst { it.paragraphIndex == targetPara }.coerceAtLeast(0)
+            }
+        }
+        jumpToQueuePosition(target)
+    }
+
+    /**
+     * Relative seek across sentences (~5 seconds estimated per spoken sentence).
+     */
+    fun seekRelativeSeconds(deltaSeconds: Int) {
+        val st = _state.value
+        val bId = st.bookId ?: return
+        if (bId == "_standalone_" || queueSentences.isEmpty()) return
+        val stepSentences = (kotlin.math.abs(deltaSeconds) / 5).coerceAtLeast(1)
+        val target = if (deltaSeconds < 0) {
+            (currentQueuePosition - stepSentences).coerceAtLeast(0)
+        } else {
+            (currentQueuePosition + stepSentences).coerceAtMost(queueSentences.lastIndex)
+        }
+        jumpToQueuePosition(target)
+    }
+
+    private fun jumpToQueuePosition(targetPos: Int) {
+        val st = _state.value
+        val bId = st.bookId ?: return
+        if (bId == "_standalone_" || queueSentences.isEmpty()) return
+        val safeTarget = targetPos.coerceIn(0, queueSentences.lastIndex)
         val sessionId = claimNewSession(stoppingOnly = false)
         startQueuePlaybackForSession(
             sessionId = sessionId,
@@ -1129,7 +1263,7 @@ class AudioPlaybackController internal constructor(
             chapterIndex = st.chapterIndex,
             chapterTitle = st.chapterTitle,
             sentences = queueSentences,
-            startIndex = prevPos,
+            startIndex = safeTarget,
             languageCode = currentLanguageCode
         )
     }
@@ -1152,9 +1286,10 @@ class AudioPlaybackController internal constructor(
     }
 
     fun setPlaybackSpeed(speed: Float) {
-        currentSpeed = speed
-        scope.launch { settingsRepository.setPlaybackSpeed(speed) }
-        _state.value = _state.value.copy(playbackSpeed = speed)
+        val bounded = speed.coerceIn(0.65f, 2.0f)
+        currentSpeed = bounded
+        scope.launch { settingsRepository.setPlaybackSpeed(bounded) }
+        _state.value = _state.value.copy(playbackSpeed = bounded)
         val trackSnapshot = synchronized(trackLock) { currentTrackHandle to activeTrackSessionId }
         val track = trackSnapshot.first ?: return
         val ownerSession = trackSnapshot.second
@@ -1173,6 +1308,64 @@ class AudioPlaybackController internal constructor(
         }
     }
 
+    fun setActiveVoice(voiceId: String) {
+        scope.launch { settingsRepository.setActiveVoiceId(voiceId) }
+        _state.value = _state.value.copy(activeVoiceId = voiceId)
+    }
+
+    fun startSleepTimerMinutes(minutes: Int) {
+        val totalSec = (minutes.coerceIn(1, 240)) * 60
+        sleepTimerJob?.cancel()
+        sleepTimerEndOfChapter = false
+        sleepTimerRemainingSec = totalSec
+        _state.value = _state.value.copy(
+            sleepTimerRemainingSec = totalSec,
+            sleepTimerEndOfChapter = false
+        )
+        sleepTimerJob = scope.launch {
+            while (isActive && sleepTimerRemainingSec > 0) {
+                delay(1000L)
+                val next = (sleepTimerRemainingSec - 1).coerceAtLeast(0)
+                sleepTimerRemainingSec = next
+                _state.value = _state.value.copy(sleepTimerRemainingSec = next)
+                if (next == 0) {
+                    pause()
+                    break
+                }
+            }
+        }
+    }
+
+    fun startEndOfChapterSleepTimer() {
+        sleepTimerJob?.cancel()
+        sleepTimerRemainingSec = 0
+        sleepTimerEndOfChapter = true
+        _state.value = _state.value.copy(
+            sleepTimerRemainingSec = 0,
+            sleepTimerEndOfChapter = true
+        )
+    }
+
+    fun cancelSleepTimer() {
+        sleepTimerJob?.cancel()
+        sleepTimerJob = null
+        sleepTimerRemainingSec = 0
+        sleepTimerEndOfChapter = false
+        _state.value = _state.value.copy(
+            sleepTimerRemainingSec = 0,
+            sleepTimerEndOfChapter = false
+        )
+    }
+
+    private fun resolvePreferredVoice(spec: ModelSpec, languageCode: String, savedVoiceId: String): String {
+        val available = spec.voicesByLanguage[SpeechTextProcessor.normalizeLangCode(languageCode)].orEmpty()
+        return if (savedVoiceId.isNotBlank() && savedVoiceId in available) {
+            savedVoiceId
+        } else {
+            spec.defaultVoiceFor(languageCode)
+        }
+    }
+
     fun toggleRepeatCurrentSentence() {
         repeatSingle = !repeatSingle
         _state.value = _state.value.copy(repeatCurrentSentence = repeatSingle)
@@ -1180,6 +1373,7 @@ class AudioPlaybackController internal constructor(
 
     private fun stopPlaybackInternal(resetPositionState: Boolean) {
         claimNewSession(stoppingOnly = true)
+        taskCoordinator?.updateTaskStatus("tts_playback", LocalTaskStatus.CANCELLED, subtitle = "توقف التشغيل")
         if (resetPositionState) {
             synchronized(sessionLock) {
                 _state.value = _state.value.copy(

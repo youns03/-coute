@@ -4,8 +4,10 @@ import android.Manifest
 import android.os.Build
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -31,8 +33,13 @@ import androidx.compose.material.icons.rounded.Cancel
 import androidx.compose.material.icons.rounded.CheckCircle
 import androidx.compose.material.icons.rounded.DeleteOutline
 import androidx.compose.material.icons.rounded.Download
+import androidx.compose.material.icons.rounded.ExpandLess
+import androidx.compose.material.icons.rounded.ExpandMore
+import androidx.compose.material.icons.rounded.GraphicEq
+import androidx.compose.material.icons.rounded.Memory
 import androidx.compose.material.icons.rounded.Pause
 import androidx.compose.material.icons.rounded.PlayArrow
+import androidx.compose.material.icons.rounded.RecordVoiceOver
 import androidx.compose.material.icons.rounded.Refresh
 import androidx.compose.material.icons.rounded.Storage
 import androidx.compose.material.icons.rounded.Translate
@@ -42,17 +49,22 @@ import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.FilledTonalButton
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.SegmentedButton
+import androidx.compose.material3.SegmentedButtonDefaults
+import androidx.compose.material3.SingleChoiceSegmentedButtonRow
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.minimumInteractiveComponentSize
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -66,8 +78,10 @@ import androidx.compose.ui.unit.dp
 import com.example.R
 import com.example.domain.ModelCompatibilityStatus
 import com.example.domain.ModelInstallStatus
+import com.example.domain.ModelRole
 import com.example.domain.StorageBreakdown
 import com.example.models.ModelUiEntry
+import com.example.runtime.MemoryGovernorSnapshot
 import com.example.translation.TranslationDirection
 import com.example.translation.TranslationManagerUiState
 import com.example.translation.TranslationPackStatus
@@ -81,6 +95,7 @@ import com.example.ui.theme.StudioMonoFamily
 fun ModelManagerScreen(
     models: List<ModelUiEntry>,
     storage: StorageBreakdown,
+    memorySnapshot: MemoryGovernorSnapshot,
     translationState: TranslationManagerUiState,
     actionMessage: String?,
     onStartOrResume: (String) -> Unit,
@@ -90,12 +105,15 @@ fun ModelManagerScreen(
     onDelete: (String) -> Unit,
     onDownloadTranslationPack: (TranslationDirection) -> Unit,
     onDeleteTranslationPack: (TranslationDirection) -> Unit,
+    onReleaseIdleEngines: () -> Unit,
     onDismissMessage: () -> Unit,
     onRefreshStorage: () -> Unit,
     modifier: Modifier = Modifier
 ) {
+    var selectedSection by remember { mutableIntStateOf(0) }
     var pendingDeleteModel by remember { mutableStateOf<ModelUiEntry?>(null) }
     var pendingDeletePack by remember { mutableStateOf<TranslationDirection?>(null) }
+    var showTechDetails by remember { mutableStateOf(false) }
 
     val notifLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.RequestPermission()
@@ -107,6 +125,9 @@ fun ModelManagerScreen(
         }
         onStartOrResume(modelId)
     }
+
+    val ttsModels = models.filter { it.spec.role == ModelRole.TTS }
+    val asrModels = models.filter { it.spec.role == ModelRole.ASR }
 
     Box(modifier = modifier.fillMaxSize(), contentAlignment = Alignment.TopCenter) {
         LazyColumn(
@@ -145,81 +166,135 @@ fun ModelManagerScreen(
             }
 
             item {
-                EditorialSectionHeader(
-                    titleAr = stringResource(R.string.models_catalog_title),
-                    folioTag = "Modèles TTS",
-                    countBadge = "${models.size}"
-                )
+                SingleChoiceSegmentedButtonRow(modifier = Modifier.fillMaxWidth()) {
+                    SegmentedButton(
+                        selected = selectedSection == 0,
+                        onClick = { selectedSection = 0 },
+                        shape = SegmentedButtonDefaults.itemShape(index = 0, count = 3),
+                        icon = { Icon(Icons.Rounded.RecordVoiceOver, contentDescription = null) }
+                    ) {
+                        Text(stringResource(R.string.models_tab_tts), maxLines = 1)
+                    }
+                    SegmentedButton(
+                        selected = selectedSection == 1,
+                        onClick = { selectedSection = 1 },
+                        shape = SegmentedButtonDefaults.itemShape(index = 1, count = 3),
+                        icon = { Icon(Icons.Rounded.GraphicEq, contentDescription = null) },
+                        modifier = Modifier.testTag("models_tab_asr")
+                    ) {
+                        Text(stringResource(R.string.models_tab_asr), maxLines = 1)
+                    }
+                    SegmentedButton(
+                        selected = selectedSection == 2,
+                        onClick = { selectedSection = 2 },
+                        shape = SegmentedButtonDefaults.itemShape(index = 2, count = 3),
+                        icon = { Icon(Icons.Rounded.Translate, contentDescription = null) }
+                    ) {
+                        Text(stringResource(R.string.models_tab_translation), maxLines = 1)
+                    }
+                }
             }
 
-            items(models, key = { it.spec.id }) { entry ->
-                ModelCatalogCard(
-                    entry = entry,
-                    onDownloadOrResume = { startDownloadWithPermissionCheck(entry.spec.id) },
-                    onPause = { onPause(entry.spec.id) },
-                    onCancel = { onCancel(entry.spec.id) },
-                    onActivate = { onActivate(entry) },
-                    onDelete = { pendingDeleteModel = entry }
-                )
-            }
-
-            item {
-                EditorialSectionHeader(
-                    titleAr = stringResource(R.string.models_translation_packs_title),
-                    folioTag = "OPUS / ML Kit",
-                    countBadge = "${TranslationDirection.entries.size}"
-                )
-            }
-
-            items(TranslationDirection.entries, key = { it.name }) { dir ->
-                val pack = translationState.stateFor(dir)
-                AtelierCard(modifier = Modifier.fillMaxWidth()) {
-                    Column(modifier = Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.SpaceBetween,
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Row(verticalAlignment = Alignment.CenterVertically) {
-                                Icon(Icons.Rounded.Translate, contentDescription = null, tint = MaterialTheme.colorScheme.secondary)
-                                Spacer(Modifier.width(8.dp))
-                                Column {
-                                    Text(dir.displayNameAr, style = MaterialTheme.typography.titleSmall)
-                                    Text(
-                                        pack.activeRuntimeLabel,
-                                        style = MaterialTheme.typography.labelSmall,
-                                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                                    )
-                                }
-                            }
-                            MonospaceMetricPill(text = dir.shortBadge)
-                        }
-                        Text(pack.statusMessage, style = MaterialTheme.typography.bodySmall)
-                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                            if (pack.status != TranslationPackStatus.READY) {
-                                Button(
-                                    onClick = { onDownloadTranslationPack(dir) },
-                                    enabled = pack.status != TranslationPackStatus.DOWNLOADING,
-                                    modifier = Modifier.minimumInteractiveComponentSize()
+            when (selectedSection) {
+                0 -> {
+                    item {
+                        EditorialSectionHeader(
+                            titleAr = stringResource(R.string.models_catalog_title),
+                            folioTag = "Lecture vocale",
+                            countBadge = "${ttsModels.size}"
+                        )
+                    }
+                    items(ttsModels, key = { it.spec.id }) { entry ->
+                        ModelCatalogCard(
+                            entry = entry,
+                            showTechDetails = showTechDetails,
+                            onDownloadOrResume = { startDownloadWithPermissionCheck(entry.spec.id) },
+                            onPause = { onPause(entry.spec.id) },
+                            onCancel = { onCancel(entry.spec.id) },
+                            onActivate = { onActivate(entry) },
+                            onDelete = { pendingDeleteModel = entry }
+                        )
+                    }
+                }
+                1 -> {
+                    item {
+                        EditorialSectionHeader(
+                            titleAr = stringResource(R.string.models_tab_asr),
+                            folioTag = "Transcription offline",
+                            countBadge = "${asrModels.size}"
+                        )
+                    }
+                    items(asrModels, key = { it.spec.id }) { entry ->
+                        ModelCatalogCard(
+                            entry = entry,
+                            showTechDetails = showTechDetails,
+                            onDownloadOrResume = { startDownloadWithPermissionCheck(entry.spec.id) },
+                            onPause = { onPause(entry.spec.id) },
+                            onCancel = { onCancel(entry.spec.id) },
+                            onActivate = { onActivate(entry) },
+                            onDelete = { pendingDeleteModel = entry }
+                        )
+                    }
+                }
+                else -> {
+                    item {
+                        EditorialSectionHeader(
+                            titleAr = stringResource(R.string.models_translation_packs_title),
+                            folioTag = "OPUS / ML Kit",
+                            countBadge = "${TranslationDirection.entries.size}"
+                        )
+                    }
+                    items(TranslationDirection.entries, key = { it.name }) { dir ->
+                        val pack = translationState.stateFor(dir)
+                        AtelierCard(modifier = Modifier.fillMaxWidth()) {
+                            Column(modifier = Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically
                                 ) {
-                                    Icon(Icons.Rounded.Download, contentDescription = null, modifier = Modifier.size(18.dp))
-                                    Spacer(Modifier.width(6.dp))
-                                    Text(
-                                        if (pack.status == TranslationPackStatus.DOWNLOADING) {
-                                            stringResource(R.string.reader_download_in_progress)
-                                        } else {
-                                            stringResource(R.string.models_download_pack)
+                                    Row(verticalAlignment = Alignment.CenterVertically) {
+                                        Icon(Icons.Rounded.Translate, contentDescription = null, tint = MaterialTheme.colorScheme.secondary)
+                                        Spacer(Modifier.width(8.dp))
+                                        Column {
+                                            Text(dir.displayNameAr, style = MaterialTheme.typography.titleSmall)
+                                            Text(
+                                                pack.activeRuntimeLabel,
+                                                style = MaterialTheme.typography.labelSmall,
+                                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                                            )
                                         }
-                                    )
+                                    }
+                                    MonospaceMetricPill(text = dir.shortBadge)
                                 }
-                            } else {
-                                OutlinedButton(
-                                    onClick = { pendingDeletePack = dir },
-                                    modifier = Modifier.minimumInteractiveComponentSize()
-                                ) {
-                                    Icon(Icons.Rounded.DeleteOutline, contentDescription = null, modifier = Modifier.size(18.dp))
-                                    Spacer(Modifier.width(6.dp))
-                                    Text(stringResource(R.string.models_delete_pack))
+                                Text(pack.statusMessage, style = MaterialTheme.typography.bodySmall)
+                                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                    if (pack.status != TranslationPackStatus.READY) {
+                                        Button(
+                                            onClick = { onDownloadTranslationPack(dir) },
+                                            enabled = pack.status != TranslationPackStatus.DOWNLOADING,
+                                            modifier = Modifier.minimumInteractiveComponentSize()
+                                        ) {
+                                            Icon(Icons.Rounded.Download, contentDescription = null, modifier = Modifier.size(18.dp))
+                                            Spacer(Modifier.width(6.dp))
+                                            Text(
+                                                if (pack.status == TranslationPackStatus.DOWNLOADING) {
+                                                    stringResource(R.string.reader_download_in_progress)
+                                                } else {
+                                                    stringResource(R.string.models_download_pack)
+                                                }
+                                            )
+                                        }
+                                    } else {
+                                        OutlinedButton(
+                                            onClick = { pendingDeletePack = dir },
+                                            modifier = Modifier.minimumInteractiveComponentSize()
+                                        ) {
+                                            Icon(Icons.Rounded.DeleteOutline, contentDescription = null, modifier = Modifier.size(18.dp))
+                                            Spacer(Modifier.width(6.dp))
+                                            Text(stringResource(R.string.models_delete_pack))
+                                        }
+                                    }
                                 }
                             }
                         }
@@ -227,7 +302,65 @@ fun ModelManagerScreen(
                 }
             }
 
-            item { Spacer(Modifier.height(72.dp)) }
+            // Collapsible Runtime Memory & Technical Details Drawer
+            item {
+                AtelierCard(modifier = Modifier.fillMaxWidth()) {
+                    Column(modifier = Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clickable { showTechDetails = !showTechDetails }
+                                .padding(vertical = 4.dp),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                Icon(Icons.Rounded.Memory, contentDescription = null, tint = MaterialTheme.colorScheme.secondary)
+                                Text(stringResource(R.string.models_tech_details_toggle), style = MaterialTheme.typography.titleSmall)
+                            }
+                            Icon(
+                                if (showTechDetails) Icons.Rounded.ExpandLess else Icons.Rounded.ExpandMore,
+                                contentDescription = null
+                            )
+                        }
+
+                        AnimatedVisibility(visible = showTechDetails) {
+                            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                                HorizontalDivider(color = LocalEcouteAtelierColors.current.cardBorder)
+                                Text(
+                                    text = "ذاكرة التطبيق (PSS): ${"%.1f".format(memorySnapshot.processPssMb)} MB • المتاح بالنظام: ${memorySnapshot.availableRamMb} MB",
+                                    style = MaterialTheme.typography.bodySmall
+                                )
+                                Text(
+                                    text = "محرك القراءة محمل: ${if (memorySnapshot.isTtsEngineLoaded) "نعم" else "لا"} • محرك التفريغ محمل: ${if (memorySnapshot.isAsrEngineLoaded) "نعم" else "لا"}",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                                if (!memorySnapshot.lastCleanupReason.isNullOrBlank()) {
+                                    Text(
+                                        text = memorySnapshot.lastCleanupReason,
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = MaterialTheme.colorScheme.secondary
+                                    )
+                                }
+                                Text(
+                                    text = "حجم APK: ${formatBytes(storage.apkBytes)} • المكتبات الأصلية: ${formatBytes(storage.nativeLibsEstimateBytes)}",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                                OutlinedButton(
+                                    onClick = onReleaseIdleEngines,
+                                    modifier = Modifier.fillMaxWidth()
+                                ) {
+                                    Text(stringResource(R.string.models_unload_idle_ram))
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            item { Spacer(Modifier.height(84.dp)) }
         }
     }
 
@@ -317,20 +450,16 @@ private fun StorageSummaryCard(storage: StorageBreakdown, onRefresh: () -> Unit)
                         containerColor = MaterialTheme.colorScheme.tertiaryContainer,
                         contentColor = MaterialTheme.colorScheme.onTertiaryContainer
                     )
-                    IconButton(
-                        onClick = onRefresh,
-                        modifier = Modifier.minimumInteractiveComponentSize()
-                    ) {
+                    IconButton(onClick = onRefresh, modifier = Modifier.minimumInteractiveComponentSize()) {
                         Icon(Icons.Rounded.Refresh, contentDescription = stringResource(R.string.models_refresh_storage_cd))
                     }
                 }
             }
 
-            // Segmented bar showing relative footprint inside app storage
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .height(10.dp)
+                    .height(9.dp)
                     .clip(RoundedCornerShape(5.dp))
                     .background(MaterialTheme.colorScheme.surfaceVariant),
                 horizontalArrangement = Arrangement.spacedBy(2.dp)
@@ -362,12 +491,6 @@ private fun StorageSummaryCard(storage: StorageBreakdown, onRefresh: () -> Unit)
                 StorageLegendDot("كاش الصوت: ${formatBytes(cacheB)}", MaterialTheme.colorScheme.tertiary)
                 StorageLegendDot("WAV: ${formatBytes(wavB)}", LocalEcouteAtelierColors.current.warmGoldAccent)
             }
-
-            Text(
-                "حجم APK: ${formatBytes(storage.apkBytes)} • مكتبات التشغيل الأصلية (.so): ${formatBytes(storage.nativeLibsEstimateBytes)}",
-                style = MaterialTheme.typography.labelSmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
-            )
         }
     }
 }
@@ -375,17 +498,8 @@ private fun StorageSummaryCard(storage: StorageBreakdown, onRefresh: () -> Unit)
 @Composable
 private fun StorageLegendDot(label: String, color: Color) {
     Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(5.dp)) {
-        Box(
-            modifier = Modifier
-                .size(8.dp)
-                .clip(CircleShape)
-                .background(color)
-        )
-        Text(
-            text = label,
-            style = MaterialTheme.typography.labelSmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant
-        )
+        Box(modifier = Modifier.size(8.dp).clip(CircleShape).background(color))
+        Text(text = label, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
     }
 }
 
@@ -393,6 +507,7 @@ private fun StorageLegendDot(label: String, color: Color) {
 @Composable
 private fun ModelCatalogCard(
     entry: ModelUiEntry,
+    showTechDetails: Boolean,
     onDownloadOrResume: () -> Unit,
     onPause: () -> Unit,
     onCancel: () -> Unit,
@@ -419,69 +534,23 @@ private fun ModelCatalogCard(
                 Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
                     Text(spec.displayName, style = MaterialTheme.typography.titleMedium)
                     Text(
-                        "${spec.engineType.displayName} • الصوت: ${spec.voiceId} (${spec.language})",
+                        text = "${spec.language} • ${formatBytes(spec.expectedSizeBytes)}",
                         style = MaterialTheme.typography.labelSmall,
                         color = MaterialTheme.colorScheme.primary
                     )
                 }
-                if (spec.isPrimaryCandidate) {
-                    MonospaceMetricPill(
-                        text = stringResource(R.string.models_primary_candidate),
-                        containerColor = MaterialTheme.colorScheme.secondaryContainer,
-                        contentColor = MaterialTheme.colorScheme.secondary
-                    )
-                }
-            }
-
-            FlowRow(
-                horizontalArrangement = Arrangement.spacedBy(6.dp),
-                verticalArrangement = Arrangement.spacedBy(6.dp)
-            ) {
-                MonospaceMetricPill(
-                    text = if (spec.supportedLanguageCodes.size > 1) "FR • EN" else "FR",
-                    containerColor = MaterialTheme.colorScheme.secondaryContainer,
-                    contentColor = MaterialTheme.colorScheme.secondary
-                )
-                MonospaceMetricPill(text = formatBytes(spec.expectedSizeBytes))
-                MonospaceMetricPill(text = spec.format)
-                MonospaceMetricPill(text = "SHA ${spec.sha256.take(8)}")
-                if (!spec.supportsGpuDelegate) {
-                    MonospaceMetricPill(text = "CPU ONLY")
-                }
-                if (spec.supportsWordTimestamps) {
-                    MonospaceMetricPill(
-                        text = "WORD SYNC",
-                        containerColor = MaterialTheme.colorScheme.tertiaryContainer,
-                        contentColor = MaterialTheme.colorScheme.onTertiaryContainer
-                    )
-                }
-            }
-
-            Surface(
-                color = when (compat.status) {
-                    ModelCompatibilityStatus.COMPATIBLE -> MaterialTheme.colorScheme.tertiaryContainer.copy(alpha = 0.55f)
-                    ModelCompatibilityStatus.WARNING_LOW_RAM -> MaterialTheme.colorScheme.secondaryContainer
-                    else -> MaterialTheme.colorScheme.errorContainer
-                },
-                shape = MaterialTheme.shapes.small,
-                modifier = Modifier.fillMaxWidth()
-            ) {
-                Column(modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp)) {
-                    Text(
-                        text = compat.summaryAr,
-                        style = MaterialTheme.typography.labelSmall,
-                        color = when (compat.status) {
-                            ModelCompatibilityStatus.COMPATIBLE -> MaterialTheme.colorScheme.onTertiaryContainer
-                            ModelCompatibilityStatus.WARNING_LOW_RAM -> MaterialTheme.colorScheme.onSecondaryContainer
-                            else -> MaterialTheme.colorScheme.onErrorContainer
-                        }
-                    )
-                    if (!compat.detailsAr.isNullOrBlank()) {
-                        Text(
-                            text = compat.detailsAr,
-                            style = MaterialTheme.typography.bodySmall,
-                            color = if (compat.isSupported) MaterialTheme.colorScheme.onSecondaryContainer
-                            else MaterialTheme.colorScheme.onErrorContainer
+                Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    if (entry.isActive) {
+                        MonospaceMetricPill(
+                            text = stringResource(R.string.models_active_button),
+                            containerColor = MaterialTheme.colorScheme.secondaryContainer,
+                            contentColor = MaterialTheme.colorScheme.secondary
+                        )
+                    } else if (spec.isPrimaryCandidate) {
+                        MonospaceMetricPill(
+                            text = stringResource(R.string.models_primary_candidate),
+                            containerColor = MaterialTheme.colorScheme.primaryContainer,
+                            contentColor = MaterialTheme.colorScheme.primary
                         )
                     }
                 }
@@ -489,11 +558,36 @@ private fun ModelCatalogCard(
 
             Text(spec.voiceDescriptionAr, style = MaterialTheme.typography.bodySmall)
 
-            Text(
-                "الإصدار: ${spec.version} • الترخيص: ${spec.licenseName}",
-                style = MaterialTheme.typography.labelSmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
-            )
+            if (!compat.isSupported || compat.status == ModelCompatibilityStatus.WARNING_LOW_RAM) {
+                Surface(
+                    color = if (compat.isSupported) MaterialTheme.colorScheme.secondaryContainer else MaterialTheme.colorScheme.errorContainer,
+                    shape = MaterialTheme.shapes.small,
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Text(
+                        text = compat.detailsAr ?: compat.summaryAr,
+                        style = MaterialTheme.typography.labelSmall,
+                        color = if (compat.isSupported) MaterialTheme.colorScheme.onSecondaryContainer else MaterialTheme.colorScheme.onErrorContainer,
+                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp)
+                    )
+                }
+            }
+
+            if (showTechDetails) {
+                FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                    MonospaceMetricPill(text = spec.format)
+                    MonospaceMetricPill(text = "SHA ${spec.sha256.take(8)}")
+                    MonospaceMetricPill(text = if (spec.supportsGpuDelegate) "GPU / CPU" else "CPU")
+                    if (spec.supportsWordTimestamps) {
+                        MonospaceMetricPill(text = "WORD SYNC")
+                    }
+                }
+                Text(
+                    "المحرك: ${spec.engineType.displayName} • الإصدار: ${spec.version} • الترخيص: ${spec.licenseName}",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
 
             if (entry.status == ModelInstallStatus.DOWNLOADING || entry.status == ModelInstallStatus.PAUSED || entry.status == ModelInstallStatus.VERIFYING) {
                 LinearProgressIndicator(
@@ -505,11 +599,14 @@ private fun ModelCatalogCard(
                         .height(6.dp)
                         .clip(RoundedCornerShape(3.dp))
                 )
+                val remainingStr = formatBytes(entry.remainingBytes)
                 Text(
                     text = when (entry.status) {
-                        ModelInstallStatus.VERIFYING -> "جاري التحقق من SHA-256 واختبار التحميل الفعلي..."
-                        ModelInstallStatus.PAUSED -> "متوقف مؤقتاً: ${formatBytes(entry.downloadedBytes)} / ${formatBytes(entry.totalBytes)} (${(entry.progressFraction * 100).toInt()}%)"
-                        else -> "جاري التنزيل: ${formatBytes(entry.downloadedBytes)} / ${formatBytes(entry.totalBytes)} (${(entry.progressFraction * 100).toInt()}%)"
+                        ModelInstallStatus.VERIFYING -> "جاري التحقق من سلامة الملفات محلياً..."
+                        ModelInstallStatus.PAUSED -> "متوقف مؤقتاً: ${formatBytes(entry.downloadedBytes)} / ${formatBytes(entry.totalBytes)} • " +
+                            stringResource(R.string.models_remaining_bytes, remainingStr)
+                        else -> "جاري التنزيل: ${(entry.progressFraction * 100).toInt()}% • " +
+                            stringResource(R.string.models_remaining_bytes, remainingStr)
                     },
                     style = MaterialTheme.typography.labelSmall.copy(fontFamily = StudioMonoFamily)
                 )
@@ -523,11 +620,11 @@ private fun ModelCatalogCard(
                 }
             }
 
-            if (entry.status == ModelInstallStatus.INSTALLED) {
+            if (entry.status == ModelInstallStatus.INSTALLED && showTechDetails) {
                 Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                     Icon(Icons.Rounded.VerifiedUser, contentDescription = null, tint = MaterialTheme.colorScheme.tertiary, modifier = Modifier.size(16.dp))
                     Text(
-                        "مثبّت • SHA-256: ${if (entry.verifiedSha256) "✓" else "✗"} • اختبار التحميل: ${if (entry.verifiedLoadTest) "✓" else "✗"}",
+                        "مثبّت • SHA-256: ${if (entry.verifiedSha256) "✓" else "✗"} • التحميل: ${if (entry.verifiedLoadTest) "✓" else "✗"}",
                         style = MaterialTheme.typography.labelSmall,
                         color = MaterialTheme.colorScheme.tertiary
                     )
@@ -615,9 +712,10 @@ private fun ModelCatalogCard(
                             }
                         }
                         Spacer(Modifier.weight(1f))
+                        val canDelete = spec.role == ModelRole.ASR || !entry.isActive
                         IconButton(
                             onClick = onDelete,
-                            enabled = !entry.isActive,
+                            enabled = canDelete,
                             modifier = Modifier
                                 .minimumInteractiveComponentSize()
                                 .testTag("delete_model_${spec.id}")
@@ -625,7 +723,7 @@ private fun ModelCatalogCard(
                             Icon(
                                 Icons.Rounded.DeleteOutline,
                                 contentDescription = stringResource(R.string.models_delete_model_cd),
-                                tint = if (entry.isActive) MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.4f)
+                                tint = if (!canDelete) MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.4f)
                                 else MaterialTheme.colorScheme.error
                             )
                         }

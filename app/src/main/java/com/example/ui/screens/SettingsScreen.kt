@@ -16,7 +16,10 @@ import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.rounded.AutoStories
+import androidx.compose.material.icons.rounded.Bookmarks
 import androidx.compose.material.icons.rounded.CleaningServices
+import androidx.compose.material.icons.rounded.CloudDownload
 import androidx.compose.material.icons.rounded.DeleteOutline
 import androidx.compose.material.icons.rounded.Download
 import androidx.compose.material.icons.rounded.Gavel
@@ -81,6 +84,10 @@ fun SettingsScreen(
     onDownloadTranslationPack: (TranslationDirection) -> Unit,
     onDeleteTranslationPack: (TranslationDirection) -> Unit,
     onClearAudioCache: () -> Unit,
+    onOpenReader: () -> Unit = {},
+    onOpenTranslator: () -> Unit = {},
+    onOpenModels: () -> Unit = {},
+    onOpenVocab: () -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     val atelier = LocalEcouteAtelierColors.current
@@ -94,6 +101,68 @@ fun SettingsScreen(
             contentPadding = PaddingValues(horizontal = 16.dp, vertical = 14.dp),
             verticalArrangement = Arrangement.spacedBy(14.dp)
         ) {
+            item {
+                AtelierCard(modifier = Modifier.fillMaxWidth()) {
+                    Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                        Text(stringResource(R.string.settings_studio_tools_title), style = MaterialTheme.typography.titleMedium)
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            OutlinedButton(
+                                onClick = onOpenModels,
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .minimumInteractiveComponentSize()
+                                    .testTag("settings_open_models")
+                            ) {
+                                Icon(Icons.Rounded.CloudDownload, contentDescription = null)
+                                Spacer(Modifier.width(6.dp))
+                                Text(stringResource(R.string.nav_models), maxLines = 1)
+                            }
+                            OutlinedButton(
+                                onClick = onOpenTranslator,
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .minimumInteractiveComponentSize()
+                                    .testTag("settings_open_translator")
+                            ) {
+                                Icon(Icons.Rounded.Translate, contentDescription = null)
+                                Spacer(Modifier.width(6.dp))
+                                Text(stringResource(R.string.nav_translator), maxLines = 1)
+                            }
+                        }
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            OutlinedButton(
+                                onClick = onOpenVocab,
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .minimumInteractiveComponentSize()
+                                    .testTag("settings_open_vocab")
+                            ) {
+                                Icon(Icons.Rounded.Bookmarks, contentDescription = null)
+                                Spacer(Modifier.width(6.dp))
+                                Text(stringResource(R.string.nav_vocab), maxLines = 1)
+                            }
+                            OutlinedButton(
+                                onClick = onOpenReader,
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .minimumInteractiveComponentSize()
+                                    .testTag("settings_open_reader")
+                            ) {
+                                Icon(Icons.Rounded.AutoStories, contentDescription = null)
+                                Spacer(Modifier.width(6.dp))
+                                Text(stringResource(R.string.nav_reader), maxLines = 1)
+                            }
+                        }
+                    }
+                }
+            }
+
             item {
                 AtelierCard(modifier = Modifier.fillMaxWidth()) {
                     Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {

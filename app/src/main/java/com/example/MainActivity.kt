@@ -1,11 +1,14 @@
 package com.example
 
+import android.net.Uri
 import android.os.Bundle
 import androidx.activity.ComponentActivity
+import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.annotation.StringRes
 import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -18,30 +21,44 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.navigationBarsPadding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.LibraryBooks
 import androidx.compose.material.icons.automirrored.rounded.LibraryBooks
+import androidx.compose.material.icons.outlined.AddCircleOutline
 import androidx.compose.material.icons.outlined.AutoStories
 import androidx.compose.material.icons.outlined.Bookmarks
 import androidx.compose.material.icons.outlined.CloudDownload
 import androidx.compose.material.icons.outlined.GraphicEq
+import androidx.compose.material.icons.outlined.Headphones
+import androidx.compose.material.icons.outlined.Home
 import androidx.compose.material.icons.outlined.Settings
 import androidx.compose.material.icons.outlined.Translate
+import androidx.compose.material.icons.rounded.Add
 import androidx.compose.material.icons.rounded.AutoStories
 import androidx.compose.material.icons.rounded.Bookmarks
 import androidx.compose.material.icons.rounded.CloudDownload
 import androidx.compose.material.icons.rounded.GraphicEq
+import androidx.compose.material.icons.rounded.Headphones
+import androidx.compose.material.icons.rounded.Home
+import androidx.compose.material.icons.rounded.Search
 import androidx.compose.material.icons.rounded.Settings
 import androidx.compose.material.icons.rounded.Translate
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.IconButtonDefaults
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.NavigationBar
-import androidx.compose.material3.NavigationBarItem
-import androidx.compose.material3.NavigationBarItemDefaults
 import androidx.compose.material3.NavigationRail
 import androidx.compose.material3.NavigationRailItem
 import androidx.compose.material3.NavigationRailItemDefaults
@@ -66,7 +83,6 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
-import androidx.annotation.StringRes
 import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.stringResource
@@ -85,13 +101,17 @@ import androidx.navigation.compose.rememberNavController
 import androidx.navigation.toRoute
 import com.example.audio.PlaybackStatus
 import com.example.domain.BenchmarkCorpus
-import com.example.ui.components.AcousticWaveIndicator
+import com.example.ui.components.AsrModelMissingDialog
+import com.example.ui.components.AudioTranscriptionLanguageDialog
+import com.example.ui.components.DirectTextInputDialog
 import com.example.ui.components.EcouteAtelierBackdrop
 import com.example.ui.components.GlobalMiniPlayer
+import com.example.ui.components.QuickAddModalSheet
 import com.example.ui.components.shouldHideAppChrome
 import com.example.ui.components.shouldShowGlobalMiniPlayer
 import com.example.ui.navigation.AppRoute
 import com.example.ui.screens.FileTranslatorScreen
+import com.example.ui.screens.HomeScreen
 import com.example.ui.screens.LibraryScreen
 import com.example.ui.screens.ModelManagerScreen
 import com.example.ui.screens.PlayerAndLabScreen
@@ -129,6 +149,7 @@ private data class TopLevelNavItem(
 
 private fun isNavItemSelected(route: AppRoute, destination: androidx.navigation.NavDestination?): Boolean =
     when (route) {
+        is AppRoute.Home -> destination?.hasRoute<AppRoute.Home>() == true
         is AppRoute.Library -> destination?.hasRoute<AppRoute.Library>() == true
         is AppRoute.Reader -> destination?.hasRoute<AppRoute.Reader>() == true
         is AppRoute.FileTranslator -> destination?.hasRoute<AppRoute.FileTranslator>() == true
@@ -149,12 +170,43 @@ fun EcouteAppRoot(isExpandedNav: Boolean) {
     val modelsVm: ModelsAndSettingsViewModel = viewModel()
 
     val settings by modelsVm.settings.collectAsStateWithLifecycle()
+    val homeState by libraryVm.homeState.collectAsStateWithLifecycle()
     val libraryState by libraryVm.libraryState.collectAsStateWithLifecycle()
     val globalPlaybackState by playerVm.playbackState.collectAsStateWithLifecycle()
     val backStackEntry by navController.currentBackStackEntryAsState()
     val currentDest = backStackEntry?.destination
+    val isHomeDestination = currentDest?.hasRoute<AppRoute.Home>() == true
+    val isLibraryDestination = currentDest?.hasRoute<AppRoute.Library>() == true
     val isReaderDestination = currentDest?.hasRoute<AppRoute.Reader>() == true
     var isReaderImmersive by remember { mutableStateOf(false) }
+
+    var showQuickAddSheet by remember { mutableStateOf(false) }
+    var showDirectTextDialog by remember { mutableStateOf(false) }
+    var showAudioLangDialog by remember { mutableStateOf(false) }
+    var showAsrMissingDialog by remember { mutableStateOf(false) }
+    var showHomeSearchDialog by remember { mutableStateOf(false) }
+    var homeSearchQuery by remember { mutableStateOf("") }
+    var pendingAudioLang by remember { mutableStateOf("fr") }
+
+    val quickDocPickerLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.OpenDocument()
+    ) { uri: Uri? ->
+        if (uri != null) {
+            libraryVm.importBook(uri) { importedId ->
+                navController.navigate(AppRoute.Reader(importedId))
+            }
+        }
+    }
+
+    val quickAudioPickerLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.OpenDocument()
+    ) { uri: Uri? ->
+        if (uri != null) {
+            libraryVm.importAudioForTranscription(uri, pendingAudioLang) { bookId ->
+                navController.navigate(AppRoute.Reader(bookId))
+            }
+        }
+    }
 
     LaunchedEffect(isReaderDestination) {
         if (!isReaderDestination) isReaderImmersive = false
@@ -172,6 +224,13 @@ fun EcouteAppRoot(isExpandedNav: Boolean) {
         ?: BenchmarkCorpus.starterBooks.first().id
 
     val primaryTabs = listOf(
+        TopLevelNavItem(
+            labelRes = R.string.nav_home,
+            selectedIcon = Icons.Rounded.Home,
+            unselectedIcon = Icons.Outlined.Home,
+            testTag = "nav_home",
+            route = AppRoute.Home
+        ),
         TopLevelNavItem(
             labelRes = R.string.nav_library,
             selectedIcon = Icons.AutoMirrored.Rounded.LibraryBooks,
@@ -194,13 +253,6 @@ fun EcouteAppRoot(isExpandedNav: Boolean) {
             route = AppRoute.FileTranslator
         ),
         TopLevelNavItem(
-            labelRes = R.string.nav_player,
-            selectedIcon = Icons.Rounded.GraphicEq,
-            unselectedIcon = Icons.Outlined.GraphicEq,
-            testTag = "nav_player",
-            route = AppRoute.PlayerLab
-        ),
-        TopLevelNavItem(
             labelRes = R.string.nav_models,
             selectedIcon = Icons.Rounded.CloudDownload,
             unselectedIcon = Icons.Outlined.CloudDownload,
@@ -215,16 +267,16 @@ fun EcouteAppRoot(isExpandedNav: Boolean) {
                 saveState = true
             }
             launchSingleTop = true
-            // Reader carries active bookId in its route; avoid restoring a stale bookId stack entry.
             restoreState = target !is AppRoute.Reader
         }
     }
 
     val currentTitle = when {
-        currentDest?.hasRoute<AppRoute.Library>() == true -> stringResource(R.string.title_library)
-        currentDest?.hasRoute<AppRoute.Reader>() == true -> stringResource(R.string.title_reader)
+        isHomeDestination -> stringResource(R.string.title_home)
+        isLibraryDestination -> stringResource(R.string.title_library)
+        isReaderDestination -> stringResource(R.string.title_reader)
         currentDest?.hasRoute<AppRoute.FileTranslator>() == true -> stringResource(R.string.title_translator)
-        currentDest?.hasRoute<AppRoute.PlayerLab>() == true -> stringResource(R.string.title_player)
+        isFullPlayerDestination -> stringResource(R.string.title_player)
         currentDest?.hasRoute<AppRoute.Models>() == true -> stringResource(R.string.title_models)
         currentDest?.hasRoute<AppRoute.Vocabulary>() == true -> stringResource(R.string.title_vocab)
         currentDest?.hasRoute<AppRoute.Settings>() == true -> stringResource(R.string.title_settings)
@@ -242,109 +294,172 @@ fun EcouteAppRoot(isExpandedNav: Boolean) {
                 Scaffold(
                     containerColor = Color.Transparent,
                     contentWindowInsets = WindowInsets.safeDrawing,
+                    floatingActionButton = {
+                        if (!hideAppChrome && isExpandedNav && (isHomeDestination || isLibraryDestination)) {
+                            FloatingActionButton(
+                                onClick = { showQuickAddSheet = true },
+                                containerColor = MaterialTheme.colorScheme.secondary,
+                                contentColor = MaterialTheme.colorScheme.onSecondary,
+                                modifier = Modifier.testTag("fab_quick_add")
+                            ) {
+                                Icon(
+                                    Icons.Rounded.Add,
+                                    contentDescription = stringResource(R.string.fab_quick_add_cd)
+                                )
+                            }
+                        }
+                    },
                     topBar = {
                         if (!hideAppChrome) {
-                            Column {
+                            if (isHomeDestination) {
                                 TopAppBar(
                                     title = {
-                                        Row(
-                                            verticalAlignment = Alignment.CenterVertically,
-                                            horizontalArrangement = Arrangement.spacedBy(10.dp)
-                                        ) {
-                                            CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Ltr) {
-                                                Surface(
-                                                    color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.72f),
-                                                    shape = RoundedCornerShape(10.dp)
-                                                ) {
-                                                    Text(
-                                                        text = "Écoute",
-                                                        style = MaterialTheme.typography.titleMedium.copy(
-                                                            fontFamily = EditorialDisplayFamily,
-                                                            fontWeight = FontWeight.Bold
-                                                        ),
-                                                        color = MaterialTheme.colorScheme.primary,
-                                                        modifier = Modifier.padding(horizontal = 9.dp, vertical = 3.dp)
-                                                    )
-                                                }
-                                            }
+                                        CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Ltr) {
                                             Text(
-                                                text = currentTitle,
-                                                style = MaterialTheme.typography.titleLarge,
-                                                maxLines = 1,
-                                                overflow = TextOverflow.Ellipsis
+                                                text = "Écoute",
+                                                style = MaterialTheme.typography.titleLarge.copy(
+                                                    fontFamily = EditorialDisplayFamily,
+                                                    fontWeight = FontWeight.Bold
+                                                ),
+                                                color = MaterialTheme.colorScheme.onBackground
                                             )
                                         }
                                     },
                                     colors = TopAppBarDefaults.topAppBarColors(
-                                        containerColor = MaterialTheme.colorScheme.background.copy(alpha = 0.90f),
-                                        scrolledContainerColor = MaterialTheme.colorScheme.surface
+                                        containerColor = Color.Transparent,
+                                        scrolledContainerColor = MaterialTheme.colorScheme.background
                                     ),
                                     actions = {
-                                        if (isLiveAudio && !isFullPlayerDestination) {
-                                            Box(
-                                                modifier = Modifier
-                                                    .padding(end = 2.dp)
-                                                    .clip(RoundedCornerShape(12.dp))
-                                                    .background(MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.75f))
-                                                    .clickable { navigateTopLevel(AppRoute.PlayerLab) }
-                                                    .padding(horizontal = 8.dp, vertical = 6.dp),
-                                                contentAlignment = Alignment.Center
-                                            ) {
-                                                AcousticWaveIndicator(
-                                                    isPlaying = globalPlaybackState.status == PlaybackStatus.PLAYING,
-                                                    isBuffering = globalPlaybackState.status == PlaybackStatus.BUFFERING,
-                                                    barColor = MaterialTheme.colorScheme.secondary,
-                                                    barCount = 4,
-                                                    modifier = Modifier
-                                                        .width(18.dp)
-                                                        .height(16.dp)
-                                                )
-                                            }
-                                        }
                                         IconButton(
-                                            onClick = { navigateTopLevel(AppRoute.Vocabulary) },
-                                            colors = if (isVocabSelected) {
-                                                IconButtonDefaults.filledTonalIconButtonColors(
-                                                    containerColor = MaterialTheme.colorScheme.secondaryContainer,
-                                                    contentColor = MaterialTheme.colorScheme.onSecondaryContainer
-                                                )
-                                            } else {
-                                                IconButtonDefaults.iconButtonColors()
-                                            },
+                                            onClick = { showHomeSearchDialog = true },
                                             modifier = Modifier
                                                 .minimumInteractiveComponentSize()
-                                                .testTag("nav_vocabulary")
+                                                .testTag("home_search_button")
                                         ) {
                                             Icon(
-                                                if (isVocabSelected) Icons.Rounded.Bookmarks else Icons.Outlined.Bookmarks,
-                                                contentDescription = stringResource(R.string.title_vocab)
+                                                Icons.Rounded.Search,
+                                                contentDescription = stringResource(R.string.home_search_cd),
+                                                tint = MaterialTheme.colorScheme.onBackground
                                             )
                                         }
                                         IconButton(
                                             onClick = { navigateTopLevel(AppRoute.Settings) },
-                                            colors = if (isSettingsSelected) {
-                                                IconButtonDefaults.filledTonalIconButtonColors(
-                                                    containerColor = MaterialTheme.colorScheme.secondaryContainer,
-                                                    contentColor = MaterialTheme.colorScheme.onSecondaryContainer
-                                                )
-                                            } else {
-                                                IconButtonDefaults.iconButtonColors()
-                                            },
                                             modifier = Modifier
                                                 .minimumInteractiveComponentSize()
                                                 .testTag("nav_settings")
                                         ) {
                                             Icon(
-                                                if (isSettingsSelected) Icons.Rounded.Settings else Icons.Outlined.Settings,
-                                                contentDescription = stringResource(R.string.title_settings)
+                                                Icons.Outlined.Settings,
+                                                contentDescription = stringResource(R.string.title_settings),
+                                                tint = MaterialTheme.colorScheme.onBackground
                                             )
                                         }
                                     }
                                 )
-                                HorizontalDivider(
-                                    thickness = 1.dp,
-                                    color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.65f)
-                                )
+                            } else {
+                                Column {
+                                    TopAppBar(
+                                        title = {
+                                            Row(
+                                                verticalAlignment = Alignment.CenterVertically,
+                                                horizontalArrangement = Arrangement.spacedBy(10.dp)
+                                            ) {
+                                                CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Ltr) {
+                                                    Surface(
+                                                        color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.72f),
+                                                        shape = RoundedCornerShape(10.dp)
+                                                    ) {
+                                                        Text(
+                                                            text = "Écoute",
+                                                            style = MaterialTheme.typography.titleMedium.copy(
+                                                                fontFamily = EditorialDisplayFamily,
+                                                                fontWeight = FontWeight.Bold
+                                                            ),
+                                                            color = MaterialTheme.colorScheme.primary,
+                                                            modifier = Modifier.padding(horizontal = 9.dp, vertical = 3.dp)
+                                                        )
+                                                    }
+                                                }
+                                                Text(
+                                                    text = currentTitle,
+                                                    style = MaterialTheme.typography.titleLarge,
+                                                    maxLines = 1,
+                                                    overflow = TextOverflow.Ellipsis
+                                                )
+                                            }
+                                        },
+                                        colors = TopAppBarDefaults.topAppBarColors(
+                                            containerColor = MaterialTheme.colorScheme.background.copy(alpha = 0.90f),
+                                            scrolledContainerColor = MaterialTheme.colorScheme.surface
+                                        ),
+                                        actions = {
+                                            IconButton(
+                                                onClick = { navigateTopLevel(AppRoute.FileTranslator) },
+                                                modifier = Modifier
+                                                    .minimumInteractiveComponentSize()
+                                                    .testTag("nav_file_translator")
+                                            ) {
+                                                Icon(
+                                                    if (currentDest?.hasRoute<AppRoute.FileTranslator>() == true) Icons.Rounded.Translate else Icons.Outlined.Translate,
+                                                    contentDescription = stringResource(R.string.nav_translator)
+                                                )
+                                            }
+                                            IconButton(
+                                                onClick = { navigateTopLevel(AppRoute.Models) },
+                                                modifier = Modifier
+                                                    .minimumInteractiveComponentSize()
+                                                    .testTag("nav_models")
+                                            ) {
+                                                Icon(
+                                                    if (currentDest?.hasRoute<AppRoute.Models>() == true) Icons.Rounded.CloudDownload else Icons.Outlined.CloudDownload,
+                                                    contentDescription = stringResource(R.string.nav_models)
+                                                )
+                                            }
+                                            IconButton(
+                                                onClick = { navigateTopLevel(AppRoute.Vocabulary) },
+                                                colors = if (isVocabSelected) {
+                                                    IconButtonDefaults.filledTonalIconButtonColors(
+                                                        containerColor = MaterialTheme.colorScheme.secondaryContainer,
+                                                        contentColor = MaterialTheme.colorScheme.onSecondaryContainer
+                                                    )
+                                                } else {
+                                                    IconButtonDefaults.iconButtonColors()
+                                                },
+                                                modifier = Modifier
+                                                    .minimumInteractiveComponentSize()
+                                                    .testTag("nav_vocabulary")
+                                            ) {
+                                                Icon(
+                                                    if (isVocabSelected) Icons.Rounded.Bookmarks else Icons.Outlined.Bookmarks,
+                                                    contentDescription = stringResource(R.string.title_vocab)
+                                                )
+                                            }
+                                            IconButton(
+                                                onClick = { navigateTopLevel(AppRoute.Settings) },
+                                                colors = if (isSettingsSelected) {
+                                                    IconButtonDefaults.filledTonalIconButtonColors(
+                                                        containerColor = MaterialTheme.colorScheme.secondaryContainer,
+                                                        contentColor = MaterialTheme.colorScheme.onSecondaryContainer
+                                                    )
+                                                } else {
+                                                    IconButtonDefaults.iconButtonColors()
+                                                },
+                                                modifier = Modifier
+                                                    .minimumInteractiveComponentSize()
+                                                    .testTag("nav_settings")
+                                            ) {
+                                                Icon(
+                                                    if (isSettingsSelected) Icons.Rounded.Settings else Icons.Outlined.Settings,
+                                                    contentDescription = stringResource(R.string.title_settings)
+                                                )
+                                            }
+                                        }
+                                    )
+                                    HorizontalDivider(
+                                        thickness = 1.dp,
+                                        color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.65f)
+                                    )
+                                }
                             }
                         }
                     },
@@ -357,47 +472,100 @@ fun EcouteAppRoot(isExpandedNav: Boolean) {
                                         onTogglePlayPause = playerVm::togglePlayPause,
                                         onPrevious = playerVm::previousSentence,
                                         onNext = playerVm::nextSentence,
+                                        onSeekBack = { playerVm.seekRelativeSeconds(-15) },
+                                        onSeekForward = { playerVm.seekRelativeSeconds(15) },
                                         onOpen = { navigateTopLevel(AppRoute.PlayerLab) },
                                         modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp)
                                     )
                                 }
                                 if (!isExpandedNav) {
-                                    HorizontalDivider(
-                                        thickness = 1.dp,
-                                        color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.6f)
-                                    )
-                                    NavigationBar(
-                                        containerColor = MaterialTheme.colorScheme.surface.copy(alpha = 0.96f),
+                                    Surface(
+                                        color = MaterialTheme.colorScheme.background.copy(alpha = 0.98f),
                                         tonalElevation = 0.dp
                                     ) {
-                                        primaryTabs.forEach { tab ->
-                                            val selected = isNavItemSelected(tab.route, currentDest)
-                                            val tabLabel = stringResource(tab.labelRes)
-                                            NavigationBarItem(
-                                                selected = selected,
-                                                onClick = { navigateTopLevel(tab.route) },
-                                                icon = {
-                                                    Icon(
-                                                        if (selected) tab.selectedIcon else tab.unselectedIcon,
-                                                        contentDescription = tabLabel
-                                                    )
-                                                },
-                                                label = {
-                                                    Text(
-                                                        tabLabel,
-                                                        maxLines = 1,
-                                                        overflow = TextOverflow.Ellipsis
-                                                    )
-                                                },
-                                                colors = NavigationBarItemDefaults.colors(
-                                                    selectedIconColor = MaterialTheme.colorScheme.secondary,
-                                                    selectedTextColor = MaterialTheme.colorScheme.primary,
-                                                    indicatorColor = MaterialTheme.colorScheme.secondaryContainer,
-                                                    unselectedIconColor = MaterialTheme.colorScheme.onSurfaceVariant,
-                                                    unselectedTextColor = MaterialTheme.colorScheme.onSurfaceVariant
-                                                ),
-                                                modifier = Modifier.testTag(tab.testTag)
+                                        Column(modifier = Modifier.navigationBarsPadding()) {
+                                            HorizontalDivider(
+                                                thickness = 0.8.dp,
+                                                color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.75f)
                                             )
+                                            Row(
+                                                modifier = Modifier
+                                                    .fillMaxWidth()
+                                                    .height(60.dp)
+                                                    .padding(horizontal = 8.dp),
+                                                horizontalArrangement = Arrangement.SpaceAround,
+                                                verticalAlignment = Alignment.CenterVertically
+                                            ) {
+                                                IconButton(
+                                                    onClick = { navigateTopLevel(AppRoute.Home) },
+                                                    modifier = Modifier
+                                                        .minimumInteractiveComponentSize()
+                                                        .testTag("nav_home")
+                                                ) {
+                                                    Icon(
+                                                        imageVector = Icons.Outlined.Home,
+                                                        contentDescription = stringResource(R.string.nav_home),
+                                                        tint = if (isHomeDestination) MaterialTheme.colorScheme.secondary else MaterialTheme.colorScheme.onBackground,
+                                                        modifier = Modifier.size(25.dp)
+                                                    )
+                                                }
+
+                                                IconButton(
+                                                    onClick = { navigateTopLevel(AppRoute.Library) },
+                                                    modifier = Modifier
+                                                        .minimumInteractiveComponentSize()
+                                                        .testTag("nav_library")
+                                                ) {
+                                                    Icon(
+                                                        imageVector = if (isLibraryDestination) Icons.AutoMirrored.Rounded.LibraryBooks else Icons.AutoMirrored.Outlined.LibraryBooks,
+                                                        contentDescription = stringResource(R.string.nav_library),
+                                                        tint = if (isLibraryDestination) MaterialTheme.colorScheme.secondary else MaterialTheme.colorScheme.onBackground,
+                                                        modifier = Modifier.size(24.dp)
+                                                    )
+                                                }
+
+                                                IconButton(
+                                                    onClick = { showQuickAddSheet = true },
+                                                    modifier = Modifier
+                                                        .minimumInteractiveComponentSize()
+                                                        .testTag("fab_quick_add")
+                                                ) {
+                                                    Icon(
+                                                        imageVector = Icons.Outlined.AddCircleOutline,
+                                                        contentDescription = stringResource(R.string.fab_quick_add_cd),
+                                                        tint = MaterialTheme.colorScheme.onBackground,
+                                                        modifier = Modifier.size(27.dp)
+                                                    )
+                                                }
+
+                                                IconButton(
+                                                    onClick = { navigateTopLevel(AppRoute.PlayerLab) },
+                                                    modifier = Modifier
+                                                        .minimumInteractiveComponentSize()
+                                                        .testTag("nav_player")
+                                                ) {
+                                                    Icon(
+                                                        imageVector = if (isFullPlayerDestination) Icons.Rounded.Headphones else Icons.Outlined.Headphones,
+                                                        contentDescription = stringResource(R.string.nav_player),
+                                                        tint = if (isFullPlayerDestination || isLiveAudio) MaterialTheme.colorScheme.secondary else MaterialTheme.colorScheme.onBackground,
+                                                        modifier = Modifier.size(24.dp)
+                                                    )
+                                                }
+
+                                                IconButton(
+                                                    onClick = { navigateTopLevel(AppRoute.Settings) },
+                                                    modifier = Modifier
+                                                        .minimumInteractiveComponentSize()
+                                                        .testTag("nav_settings_tab")
+                                                ) {
+                                                    Icon(
+                                                        imageVector = if (isSettingsSelected) Icons.Rounded.Settings else Icons.Outlined.Settings,
+                                                        contentDescription = stringResource(R.string.nav_settings),
+                                                        tint = if (isSettingsSelected) MaterialTheme.colorScheme.secondary else MaterialTheme.colorScheme.onBackground,
+                                                        modifier = Modifier.size(24.dp)
+                                                    )
+                                                }
+                                            }
                                         }
                                     }
                                 }
@@ -437,6 +605,22 @@ fun EcouteAppRoot(isExpandedNav: Boolean) {
                                     )
                                 }
                                 NavigationRailItem(
+                                    selected = isFullPlayerDestination,
+                                    onClick = { navigateTopLevel(AppRoute.PlayerLab) },
+                                    icon = {
+                                        Icon(
+                                            if (isFullPlayerDestination) Icons.Rounded.GraphicEq else Icons.Outlined.GraphicEq,
+                                            contentDescription = stringResource(R.string.nav_player)
+                                        )
+                                    },
+                                    label = { Text(stringResource(R.string.nav_player)) },
+                                    colors = NavigationRailItemDefaults.colors(
+                                        selectedIconColor = MaterialTheme.colorScheme.secondary,
+                                        selectedTextColor = MaterialTheme.colorScheme.primary,
+                                        indicatorColor = MaterialTheme.colorScheme.secondaryContainer
+                                    )
+                                )
+                                NavigationRailItem(
                                     selected = isVocabSelected,
                                     onClick = { navigateTopLevel(AppRoute.Vocabulary) },
                                     icon = {
@@ -473,13 +657,40 @@ fun EcouteAppRoot(isExpandedNav: Boolean) {
 
                         NavHost(
                             navController = navController,
-                            startDestination = AppRoute.Library,
+                            startDestination = AppRoute.Home,
                             modifier = Modifier.weight(1f)
                         ) {
+                            composable<AppRoute.Home> {
+                                HomeScreen(
+                                    state = homeState,
+                                    onOpenBook = { bookId -> navController.navigate(AppRoute.Reader(bookId)) },
+                                    onViewAllLibrary = { navigateTopLevel(AppRoute.Library) },
+                                    onOpenActivity = { activity ->
+                                        when (activity.targetRoute) {
+                                            "reader" -> navController.navigate(AppRoute.Reader(activity.targetId))
+                                            "translator" -> navigateTopLevel(AppRoute.FileTranslator)
+                                            "models" -> navigateTopLevel(AppRoute.Models)
+                                            "player" -> navigateTopLevel(AppRoute.PlayerLab)
+                                            else -> navigateTopLevel(AppRoute.Library)
+                                        }
+                                    },
+                                    onOpenQuickAdd = { showQuickAddSheet = true },
+                                    onPauseTask = libraryVm::pauseTask,
+                                    onResumeTask = libraryVm::resumeTask,
+                                    onCancelTask = libraryVm::cancelTask,
+                                    onRetryTask = libraryVm::retryTask,
+                                    onDismissTask = libraryVm::dismissTask,
+                                    onClearFinishedTasks = libraryVm::clearFinishedTasks
+                                )
+                            }
+
                             composable<AppRoute.Library> {
                                 LibraryScreen(
                                     state = libraryState,
                                     onSearchChange = libraryVm::setBookSearchQuery,
+                                    onFilterSelected = libraryVm::setLibraryFilter,
+                                    onSortSelected = libraryVm::setLibrarySortOrder,
+                                    onToggleViewMode = libraryVm::toggleLibraryViewMode,
                                     onImportUri = { uri ->
                                         libraryVm.importBook(uri) { importedId ->
                                             navController.navigate(AppRoute.Reader(importedId))
@@ -488,6 +699,9 @@ fun EcouteAppRoot(isExpandedNav: Boolean) {
                                     onOpenBook = { bookId ->
                                         navController.navigate(AppRoute.Reader(bookId))
                                     },
+                                    onRenameBook = libraryVm::renameBook,
+                                    onUpdateCoverTemplate = libraryVm::updateBookCoverTemplate,
+                                    onUpdateCoverFromUri = libraryVm::updateBookCoverFromUri,
                                     onDeleteBook = libraryVm::deleteBook,
                                     onDismissBanner = libraryVm::dismissBanner,
                                     onOpenModels = { navigateTopLevel(AppRoute.Models) }
@@ -576,6 +790,7 @@ fun EcouteAppRoot(isExpandedNav: Boolean) {
 
                             composable<AppRoute.PlayerLab> {
                                 val playbackState by playerVm.playbackState.collectAsStateWithLifecycle()
+                                val activeBook by playerVm.activeBook.collectAsStateWithLifecycle()
                                 val engineState by playerVm.engineRuntimeState.collectAsStateWithLifecycle()
                                 val playerSettings by playerVm.settings.collectAsStateWithLifecycle()
                                 val models by modelsVm.models.collectAsStateWithLifecycle()
@@ -584,6 +799,7 @@ fun EcouteAppRoot(isExpandedNav: Boolean) {
 
                                 PlayerAndLabScreen(
                                     playbackState = playbackState,
+                                    activeBook = activeBook,
                                     engineState = engineState,
                                     settings = playerSettings,
                                     models = models,
@@ -593,9 +809,16 @@ fun EcouteAppRoot(isExpandedNav: Boolean) {
                                     onStop = playerVm::stop,
                                     onNext = playerVm::nextSentence,
                                     onPrev = playerVm::previousSentence,
+                                    onNextParagraph = playerVm::nextParagraph,
+                                    onPrevParagraph = playerVm::previousParagraph,
+                                    onSeekRelativeSeconds = playerVm::seekRelativeSeconds,
                                     onReplaySentence = playerVm::replaySentence,
                                     onToggleRepeat = playerVm::toggleRepeatSentence,
                                     onSetSpeed = playerVm::setPlaybackSpeed,
+                                    onSelectVoice = playerVm::setActiveVoice,
+                                    onStartSleepTimerMinutes = playerVm::startSleepTimerMinutes,
+                                    onStartEndOfChapterTimer = playerVm::startEndOfChapterSleepTimer,
+                                    onCancelSleepTimer = playerVm::cancelSleepTimer,
                                     onReleaseEngine = playerVm::releaseEngineFromRam,
                                     onRunSingleBenchmark = playerVm::runSingleBenchmark,
                                     onRunFullBenchmark = playerVm::runFullSuiteOnInstalledModels,
@@ -608,12 +831,14 @@ fun EcouteAppRoot(isExpandedNav: Boolean) {
                                 LaunchedEffect(Unit) { modelsVm.refreshStorageAndTranslation() }
                                 val models by modelsVm.models.collectAsStateWithLifecycle()
                                 val storage by modelsVm.storageBreakdown.collectAsStateWithLifecycle()
+                                val memorySnap by modelsVm.memoryGovernorSnapshot.collectAsStateWithLifecycle()
                                 val translationState by modelsVm.translationState.collectAsStateWithLifecycle()
                                 val actionMessage by modelsVm.actionMessage.collectAsStateWithLifecycle()
 
                                 ModelManagerScreen(
                                     models = models,
                                     storage = storage,
+                                    memorySnapshot = memorySnap,
                                     translationState = translationState,
                                     actionMessage = actionMessage,
                                     onStartOrResume = modelsVm::startOrResumeDownload,
@@ -623,6 +848,7 @@ fun EcouteAppRoot(isExpandedNav: Boolean) {
                                     onDelete = modelsVm::deleteModel,
                                     onDownloadTranslationPack = modelsVm::downloadTranslationPack,
                                     onDeleteTranslationPack = modelsVm::deleteTranslationPack,
+                                    onReleaseIdleEngines = modelsVm::releaseIdleEnginesNow,
                                     onDismissMessage = modelsVm::dismissMessage,
                                     onRefreshStorage = modelsVm::refreshStorageAndTranslation
                                 )
@@ -654,11 +880,150 @@ fun EcouteAppRoot(isExpandedNav: Boolean) {
                                     onLineHeightChange = modelsVm::setLineHeight,
                                     onDownloadTranslationPack = modelsVm::downloadTranslationPack,
                                     onDeleteTranslationPack = modelsVm::deleteTranslationPack,
-                                    onClearAudioCache = modelsVm::clearAudioCache
+                                    onClearAudioCache = modelsVm::clearAudioCache,
+                                    onOpenReader = { navController.navigate(AppRoute.Reader(defaultBookId)) },
+                                    onOpenTranslator = { navigateTopLevel(AppRoute.FileTranslator) },
+                                    onOpenModels = { navigateTopLevel(AppRoute.Models) },
+                                    onOpenVocab = { navigateTopLevel(AppRoute.Vocabulary) }
                                 )
                             }
                         }
                     }
+                }
+
+                if (showHomeSearchDialog) {
+                    val matchingBooks = remember(homeSearchQuery, libraryState.books) {
+                        val q = homeSearchQuery.trim().lowercase()
+                        if (q.isEmpty()) libraryState.books.take(6)
+                        else libraryState.books.filter {
+                            it.title.lowercase().contains(q) || it.author.lowercase().contains(q)
+                        }.take(8)
+                    }
+                    AlertDialog(
+                        onDismissRequest = {
+                            showHomeSearchDialog = false
+                            homeSearchQuery = ""
+                        },
+                        title = { Text(stringResource(R.string.home_search_cd)) },
+                        text = {
+                            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                                OutlinedTextField(
+                                    value = homeSearchQuery,
+                                    onValueChange = { homeSearchQuery = it },
+                                    placeholder = { Text(stringResource(R.string.home_search_hint)) },
+                                    singleLine = true,
+                                    modifier = Modifier.fillMaxWidth()
+                                )
+                                LazyColumn(
+                                    modifier = Modifier.height(220.dp),
+                                    verticalArrangement = Arrangement.spacedBy(6.dp)
+                                ) {
+                                    items(matchingBooks, key = { it.id }) { book ->
+                                        Row(
+                                            modifier = Modifier
+                                                .fillMaxWidth()
+                                                .clip(RoundedCornerShape(10.dp))
+                                                .clickable {
+                                                    showHomeSearchDialog = false
+                                                    homeSearchQuery = ""
+                                                    navController.navigate(AppRoute.Reader(book.id))
+                                                }
+                                                .padding(horizontal = 8.dp, vertical = 10.dp),
+                                            horizontalArrangement = Arrangement.SpaceBetween,
+                                            verticalAlignment = Alignment.CenterVertically
+                                        ) {
+                                            Column(modifier = Modifier.weight(1f)) {
+                                                Text(book.title, style = MaterialTheme.typography.titleSmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                                Text(
+                                                    if (book.mediaKind == "AUDIO") stringResource(R.string.home_audio_label) else stringResource(R.string.home_ebook_label),
+                                                    style = MaterialTheme.typography.bodySmall,
+                                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                                )
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        },
+                        confirmButton = {
+                            TextButton(
+                                onClick = {
+                                    showHomeSearchDialog = false
+                                    homeSearchQuery = ""
+                                    navigateTopLevel(AppRoute.Library)
+                                }
+                            ) {
+                                Text(stringResource(R.string.home_view_all))
+                            }
+                        },
+                        dismissButton = {
+                            TextButton(
+                                onClick = {
+                                    showHomeSearchDialog = false
+                                    homeSearchQuery = ""
+                                }
+                            ) {
+                                Text(stringResource(R.string.common_close))
+                            }
+                        }
+                    )
+                }
+
+                if (showQuickAddSheet) {
+                    QuickAddModalSheet(
+                        onPickDocument = {
+                            quickDocPickerLauncher.launch(
+                                arrayOf(
+                                    "text/plain",
+                                    "application/epub+zip",
+                                    "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                                    "application/octet-stream"
+                                )
+                            )
+                        },
+                        onPickAudio = {
+                            if (homeState.readyAsrAvailable) {
+                                showAudioLangDialog = true
+                            } else {
+                                showAsrMissingDialog = true
+                            }
+                        },
+                        onOpenDirectText = { showDirectTextDialog = true },
+                        onDismiss = { showQuickAddSheet = false }
+                    )
+                }
+
+                if (showDirectTextDialog) {
+                    DirectTextInputDialog(
+                        onSave = { title, body, lang ->
+                            showDirectTextDialog = false
+                            libraryVm.importDirectText(title, body, lang) { importedId ->
+                                navController.navigate(AppRoute.Reader(importedId))
+                            }
+                        },
+                        onDismiss = { showDirectTextDialog = false }
+                    )
+                }
+
+                if (showAudioLangDialog) {
+                    AudioTranscriptionLanguageDialog(
+                        onSelectLanguage = { lang ->
+                            pendingAudioLang = lang
+                            showAudioLangDialog = false
+                            quickAudioPickerLauncher.launch(arrayOf("audio/*", "application/octet-stream"))
+                        },
+                        onDismiss = { showAudioLangDialog = false }
+                    )
+                }
+
+                if (showAsrMissingDialog) {
+                    AsrModelMissingDialog(
+                        onGoToModels = {
+                            showAsrMissingDialog = false
+                            navigateTopLevel(AppRoute.Models)
+                        },
+                        onDismiss = { showAsrMissingDialog = false }
+                    )
                 }
             }
         }

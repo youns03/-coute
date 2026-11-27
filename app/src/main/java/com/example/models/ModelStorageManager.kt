@@ -96,7 +96,7 @@ class ModelStorageManager(private val context: Context) {
         val remainingDownload = (spec.expectedSizeBytes - alreadyDownloadedBytes).coerceAtLeast(0L)
         val installStagePeak = when (spec.archiveType) {
             // Even though renameTo avoids copying on same filesystem, reserve full copy fallback peak safely
-            ArchiveType.SINGLE_LITERTLM -> spec.expectedSizeBytes
+            ArchiveType.SINGLE_LITERTLM, ArchiveType.SINGLE_ONNX -> spec.expectedSizeBytes
             ArchiveType.TAR_BZ2, ArchiveType.ZIP -> (spec.expectedSizeBytes * 1.6).toLong()
         }
         return remainingDownload + installStagePeak + depBytes + safetyMargin
@@ -155,11 +155,11 @@ class ModelStorageManager(private val context: Context) {
                 }
 
                 when (spec.archiveType) {
-                    ArchiveType.SINGLE_LITERTLM -> {
+                    ArchiveType.SINGLE_LITERTLM, ArchiveType.SINGLE_ONNX -> {
                         val outFile = File(stagingDir, spec.downloadUrl.substringAfterLast('/'))
                         downloadedFile.copyTo(outFile, overwrite = true)
                         if (outFile.length() != spec.expectedSizeBytes) {
-                            error("فشل نسخ ملف LiteRT-LM إلى مجلد التجهيز.")
+                            error("فشل نسخ ملف النموذج إلى مجلد التجهيز.")
                         }
                     }
                     ArchiveType.TAR_BZ2 -> {
@@ -463,6 +463,7 @@ class ModelStorageManager(private val context: Context) {
     private fun moveOrCopyDirectory(source: File, target: File): Boolean {
         if (!source.exists()) return false
         if (target.exists() && !target.deleteRecursively()) return false
+        target.parentFile?.mkdirs()
         if (source.renameTo(target)) return true
         val copied = runCatching {
             source.copyRecursively(target, overwrite = false)
@@ -631,6 +632,14 @@ class ModelStorageManager(private val context: Context) {
                     error("ملفات Piper ONNX غير صالحة.")
                 }
             }
+            EngineType.SHERPA_ASR -> {
+                val onnxFiles = dir.walkTopDown().filter { it.isFile && it.extension == "onnx" }.toList()
+                val tokens = dir.walkTopDown().firstOrNull { it.isFile && it.name == "tokens.txt" }
+                    ?: error("ملف tokens.txt مفقود داخل حزمة التفريغ الصوتي.")
+                if (onnxFiles.isEmpty() || onnxFiles.any { it.length() < 1_000_000L } || tokens.length() == 0L) {
+                    error("ملفات نموذج التعرف على الكلام غير صالحة أو غير مكتملة.")
+                }
+            }
         }
     }
 
@@ -648,6 +657,29 @@ class ModelStorageManager(private val context: Context) {
         val sharedEspeak = getSharedEspeakDir().takeIf { File(it, "phontab").exists() }
         val espeak = localEspeak ?: sharedEspeak ?: return null
         return Triple(onnx, tokens, espeak)
+    }
+
+    data class AsrResolvedFiles(
+        val tokensFile: File,
+        val ctcModelFile: File? = null,
+        val encoderFile: File? = null,
+        val decoderFile: File? = null
+    )
+
+    fun resolveAsrPaths(modelDir: File): AsrResolvedFiles? {
+        if (!modelDir.isDirectory) return null
+        val allFiles = modelDir.walkTopDown().filter { it.isFile }.toList()
+        val tokens = allFiles.firstOrNull { it.name == "tokens.txt" } ?: return null
+        val onnxFiles = allFiles.filter { it.extension == "onnx" }
+        val encoder = onnxFiles.firstOrNull { it.name.contains("encoder", ignoreCase = true) }
+        val decoder = onnxFiles.firstOrNull { it.name.contains("decoder", ignoreCase = true) }
+        if (encoder != null && decoder != null) {
+            return AsrResolvedFiles(tokensFile = tokens, encoderFile = encoder, decoderFile = decoder)
+        }
+        val singleCtc = onnxFiles.firstOrNull { it.name.contains("model", ignoreCase = true) }
+            ?: onnxFiles.firstOrNull()
+            ?: return null
+        return AsrResolvedFiles(tokensFile = tokens, ctcModelFile = singleCtc)
     }
 
     fun deleteModelFiles(modelId: String): Boolean =

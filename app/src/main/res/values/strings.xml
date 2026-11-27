@@ -159,11 +159,11 @@
     <string name="translator_shared_engine">المحرك المشترك: %1$s</string>
     <string name="translator_download_engine">تنزيل المحرك</string>
     <string name="translator_ready_offline_cd">جاهز دون اتصال</string>
-    <string name="translator_import_button">استيراد ملف نصي للترجمة (TXT / EPUB)</string>
-    <string name="translator_supported_formats">يدعم ملفات TXT وEPUB حالياً مع الحفاظ على العناوين والفقرات.</string>
+    <string name="translator_import_button">استيراد ملف للترجمة (TXT / EPUB / DOCX)</string>
+    <string name="translator_supported_formats">يدعم ملفات TXT وEPUB وDOCX محلياً مع الحفاظ على العناوين والفقرات.</string>
     <string name="translator_jobs_title">مهام الترجمة</string>
     <string name="translator_empty_title">لا توجد ملفات قيد الترجمة بعد</string>
-    <string name="translator_empty_subtitle">استورد ملف TXT أو EPUB بالفرنسية أو الإنجليزية؛ سيُقسَّم تلقائياً إلى دفعات وتستمر ترجمته في الخلفية مع حفظ كل جزء منجز.</string>
+    <string name="translator_empty_subtitle">استورد ملف TXT أو EPUB أو DOCX بالفرنسية أو الإنجليزية؛ سيُقسَّم تلقائياً إلى دفعات وتستمر ترجمته في الخلفية مع حفظ كل جزء منجز.</string>
     <string name="translator_delete_job_cd">حذف المهمة</string>
     <string name="translator_export_completed_cd">تصدير الأجزاء المنجزة</string>
 
@@ -193,6 +193,17 @@
     <string name="player_stop_cd">إيقاف كامل</string>
     <string name="player_speed_label">سرعة القراءة:</string>
     <string name="player_repeat_label">تكرار</string>
+    <string name="player_seek_back_15_cd">ترجيع 15 ثانية</string>
+    <string name="player_seek_forward_15_cd">تقديم 15 ثانية</string>
+    <string name="player_prev_paragraph_cd">الفقرة السابقة</string>
+    <string name="player_next_paragraph_cd">الفقرة التالية</string>
+    <string name="player_sleep_timer">مؤقت النوم</string>
+    <string name="player_sleep_timer_off">إيقاف</string>
+    <string name="player_sleep_timer_eoc">نهاية الفصل</string>
+    <string name="player_sleep_timer_minutes">%1$d د</string>
+    <string name="player_sleep_timer_sheet_title">مؤقت النوم التلقائي</string>
+    <string name="player_sleep_timer_cancel">إلغاء المؤقت</string>
+    <string name="player_voice_label">الصوت المختار:</string>
     <string name="player_engine_telemetry_title">حالة المحرك والذاكرة في الوقت الفعلي</string>
     <string name="player_release_ram">تحرير RAM</string>
     <string name="player_lab_title">مختبر قياس جودة الصوت</string>
@@ -204,4 +215,84 @@
     <string name="playback_status_playing">قيد التشغيل</string>
     <string name="playback_status_paused">متوقف مؤقتاً</string>
     <string name="playback_status_error">خطأ</string>
+
+    <string name="nav_home">الرئيسية</string>
+    <string name="title_home">الرئيسية</string>
+
+    <string name="home_greeting_title">مرحباً بك</string>
+    <string name="home_greeting_subtitle">تابع رحلتك في القراءة والاستماع</string>
+    <string name="home_continue_section">متابعة القراءة</string>
+    <string name="home_continue_sublabel">تابع من حيث توقفت</string>
+    <string name="home_percent_complete">%1$d%% مكتمل</string>
+    <string name="home_tasks_section">المهام الجارية على الجهاز</string>
+    <string name="home_tasks_clear_finished">مسح المنجزة</string>
+    <string name="home_shelf_section">مكتبتي</string>
+    <string name="home_view_all">عرض الكل</string>
+    <string name="home_ebook_label">كتاب إلكتروني</string>
+    <string name="home_audio_label">ملف صوتي</string>
+    <string name="home_recent_section">آخر الأنشطة</string>
+    <string name="home_recent_empty">ابدأ بقراءة كتاب أو استيراد ملف صوتي ليظهر هنا</string>
+    <string name="home_search_cd">بحث في المكتبة</string>
+    <string name="home_search_hint">ابحث عن كتاب أو كلمة...</string>
+    <string name="settings_studio_tools_title">أدوات الاستوديو</string>
+
+    <string name="fab_quick_add_cd">إضافة محتوى جديد</string>
+    <string name="add_sheet_title">ماذا تريد أن تضيف؟</string>
+    <string name="add_sheet_subtitle">اختر مصدراً لإضافته إلى مكتبتك المحلية فوراً.</string>
+    <string name="add_option_document_title">استيراد كتاب أو مستند</string>
+    <string name="add_option_document_desc">ملفات TXT أو EPUB أو DOCX بالفرنسية أو الإنجليزية</string>
+    <string name="add_option_audio_title">استيراد ملف صوتي وتفريغه</string>
+    <string name="add_option_audio_desc">تحويل الصوتيات (WAV / MP3 / M4A) إلى نص متزامن محلياً</string>
+    <string name="add_option_text_title">إضافة نص مباشر</string>
+    <string name="add_option_text_desc">الصق فقرة أو مقالاً قصيراً لقراءته وسماعه فوراً</string>
+
+    <string name="direct_text_dialog_title">إضافة نص مباشر للمكتبة</string>
+    <string name="direct_text_title_label">عنوان النص</string>
+    <string name="direct_text_body_label">المحتوى الفرنسي أو الإنجليزي</string>
+    <string name="direct_text_save">حفظ وفتح في القارئ</string>
+
+    <string name="audio_import_lang_title">اختر لغة الملف الصوتي</string>
+    <string name="audio_import_lang_desc">سيتم تفريغ الصوت محلياً وحفظه كعنصر قابل للقراءة والترجمة والبحث.</string>
+    <string name="audio_asr_missing_title">يلزم نموذج التفريغ الصوتي أولاً</string>
+    <string name="audio_asr_missing_desc">لتفريغ الملفات الصوتية محلياً دون إنترنت، يرجى تثبيت نموذج التعرف على الكلام (ASR) من قسم النماذج.</string>
+    <string name="audio_asr_go_models">الانتقال لتثبيت النموذج</string>
+
+    <string name="library_filter_all">الكل</string>
+    <string name="library_filter_books">الكتب</string>
+    <string name="library_filter_audio">ملفات صوتية</string>
+    <string name="library_filter_translated">المترجمة</string>
+    <string name="library_filter_in_progress">قيد القراءة</string>
+    <string name="library_filter_completed">المكتملة</string>
+    <string name="library_sort_recent">الأحدث قراءة</string>
+    <string name="library_sort_added">الأحدث إضافة</string>
+    <string name="library_sort_name">الاسم (أ-ي)</string>
+    <string name="library_view_grid_cd">تبديل للعرض الشبكي</string>
+    <string name="library_view_list_cd">تبديل لعرض القائمة</string>
+    <string name="library_badge_audio">صوتي</string>
+    <string name="library_badge_translated">مترجم</string>
+    <string name="library_badge_completed">مكتمل</string>
+    <string name="library_more_options_cd">خيارات الكتاب</string>
+    <string name="library_menu_continue">متابعة القراءة</string>
+    <string name="library_menu_rename">إعادة تسمية</string>
+    <string name="library_menu_cover">تعديل الغلاف</string>
+    <string name="library_menu_info">معلومات الملف</string>
+    <string name="library_menu_delete">حذف من المكتبة</string>
+    <string name="library_rename_title">إعادة تسمية العنصر</string>
+    <string name="library_rename_label">الاسم الجديد</string>
+    <string name="common_save">حفظ</string>
+    <string name="library_info_title">معلومات الملف</string>
+
+    <string name="cover_sheet_title">تخصيص غلاف الكتاب</string>
+    <string name="cover_style_auto">غلاف تلقائي من العنوان</string>
+    <string name="cover_style_atelier">أسلوب إيكوت الكلاسيكي</string>
+    <string name="cover_style_waves">أمواج صوتية</string>
+    <string name="cover_style_botanical">مخطوط نباتي</string>
+    <string name="cover_pick_device_photo">اختيار صورة من الجهاز</string>
+
+    <string name="models_tab_tts">أصوات القراءة</string>
+    <string name="models_tab_asr">التعرف على الكلام</string>
+    <string name="models_tab_translation">الترجمة</string>
+    <string name="models_remaining_bytes">المتبقي: %1$s</string>
+    <string name="models_tech_details_toggle">التفاصيل التقنية ومراقبة الذاكرة</string>
+    <string name="models_unload_idle_ram">تفريغ المحركات الخاملة الآن</string>
 </resources>

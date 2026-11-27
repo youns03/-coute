@@ -62,6 +62,16 @@ class TtsEngineManager internal constructor(
     private val _runtimeState = MutableStateFlow(EngineRuntimeState())
     val runtimeState: StateFlow<EngineRuntimeState> = _runtimeState.asStateFlow()
 
+    @Volatile
+    private var onTtsActivityCallback: (() -> Unit)? = null
+
+    val isEngineLoaded: Boolean
+        get() = activeEngine?.isLoaded == true
+
+    fun setOnActivityCallback(callback: () -> Unit) {
+        onTtsActivityCallback = callback
+    }
+
     private fun verifyPackageReady(spec: ModelSpec): Boolean {
         return packageVerifier?.invoke(spec)
             ?: storageManager.verifyInstalledPackage(spec, verifyIntegrity = true)
@@ -71,6 +81,7 @@ class TtsEngineManager internal constructor(
         return engineFactory?.invoke(spec) ?: when (spec.engineType) {
             EngineType.KOKORO_LITERT -> KokoroLiteRtTtsEngine(context, storageManager)
             EngineType.PIPER_SHERPA_ONNX -> PiperSherpaTtsEngine(storageManager)
+            EngineType.SHERPA_ASR -> error("نموذج ${spec.displayName} مخصص للتعرف على الكلام وليس للنطق الصوتي.")
         }
     }
 
@@ -270,7 +281,9 @@ class TtsEngineManager internal constructor(
         val resolvedVoice = voiceId.ifBlank { spec?.defaultVoiceFor(languageCode) ?: "ff_siwis" }
 
         return@withLock try {
+            onTtsActivityCallback?.invoke()
             val res = engine.synthesize(spokenText, resolvedVoice, speed, locale)
+            onTtsActivityCallback?.invoke()
             val peakRam = MemoryDiagnostics.getProcessPssMb(context)
             val synth = res.getOrNull()
             _runtimeState.value = _runtimeState.value.copy(

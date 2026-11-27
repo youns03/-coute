@@ -190,6 +190,21 @@ object MemoryDiagnostics {
                 )
                 else -> staticReport
             }
+            EngineType.SHERPA_ASR -> when {
+                avail < 200L -> ModelCompatibilityReport(
+                    status = ModelCompatibilityStatus.INCOMPATIBLE_RAM,
+                    isSupported = false,
+                    summaryAr = "الذاكرة الحرة المتاحة منخفضة جداً للتفريغ الصوتي (${avail} MB)",
+                    detailsAr = "يتطلب محرك التفريغ الصوتي 200 MB حرة على الأقل لتشغيل نموذج التعرف بثبات."
+                )
+                avail <= 380L -> ModelCompatibilityReport(
+                    status = ModelCompatibilityStatus.WARNING_LOW_RAM,
+                    isSupported = true,
+                    summaryAr = "الذاكرة الحرة محدودة (${avail} MB)",
+                    detailsAr = "سيعمل التفريغ الصوتي محلياً مع تقسيم المقاطع لتقليل استهلاك الذاكرة."
+                )
+                else -> staticReport
+            }
         }
     }
 }

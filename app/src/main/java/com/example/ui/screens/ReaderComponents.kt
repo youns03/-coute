@@ -77,6 +77,7 @@ import com.example.audio.PlaybackUiState
 import com.example.data.ChapterEntity
 import com.example.data.SentenceEntity
 import com.example.data.UserSettings
+import com.example.data.importengine.LanguageDetector
 import com.example.translation.SourceLanguage
 import com.example.translation.TranslationDirection
 import com.example.translation.TranslationPackStatus
@@ -94,6 +95,7 @@ internal fun ReaderToolbar(
     bookTitle: String?,
     chapterTitle: String,
     hasBook: Boolean,
+    isArabicSource: Boolean = false,
     languageBadge: String,
     isSearchOpen: Boolean,
     showInlineTranslations: Boolean,
@@ -134,20 +136,27 @@ internal fun ReaderToolbar(
                         )
                     }
                     Column(modifier = Modifier.weight(1f)) {
-                        CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Ltr) {
+                        val resolvedBookTitle = bookTitle ?: stringResource(R.string.reader_choose_book)
+                        val titleIsArabic = isArabicSource || LanguageDetector.isArabicText(resolvedBookTitle)
+                        CompositionLocalProvider(
+                            LocalLayoutDirection provides if (titleIsArabic) LayoutDirection.Rtl else LayoutDirection.Ltr
+                        ) {
                             Text(
-                                text = bookTitle ?: stringResource(R.string.reader_choose_book),
+                                text = resolvedBookTitle,
                                 style = MaterialTheme.typography.titleSmall.copy(
-                                    fontFamily = FrenchSerifFamily,
+                                    fontFamily = if (titleIsArabic) ArabicSansFamily else FrenchSerifFamily,
                                     fontWeight = FontWeight.SemiBold
                                 ),
                                 maxLines = 1,
                                 overflow = TextOverflow.Ellipsis
                             )
                             if (chapterTitle.isNotEmpty()) {
+                                val chapterIsArabic = isArabicSource || LanguageDetector.isArabicText(chapterTitle)
                                 Text(
                                     text = chapterTitle,
-                                    style = MaterialTheme.typography.labelSmall,
+                                    style = MaterialTheme.typography.labelSmall.copy(
+                                        fontFamily = if (chapterIsArabic) ArabicSansFamily else FrenchSerifFamily
+                                    ),
                                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                                     maxLines = 1,
                                     overflow = TextOverflow.Ellipsis
@@ -161,6 +170,7 @@ internal fun ReaderToolbar(
                     if (hasBook) {
                         AssistChip(
                             onClick = onToggleBookLanguage,
+                            enabled = !isArabicSource,
                             label = {
                                 Text(
                                     languageBadge,
@@ -188,24 +198,26 @@ internal fun ReaderToolbar(
                             contentDescription = stringResource(R.string.reader_search_content_description)
                         )
                     }
-                    IconButton(
-                        onClick = onToggleInlineTranslations,
-                        colors = if (showInlineTranslations) {
-                            IconButtonDefaults.filledTonalIconButtonColors(
-                                containerColor = MaterialTheme.colorScheme.secondaryContainer,
-                                contentColor = MaterialTheme.colorScheme.secondary
+                    if (!isArabicSource) {
+                        IconButton(
+                            onClick = onToggleInlineTranslations,
+                            colors = if (showInlineTranslations) {
+                                IconButtonDefaults.filledTonalIconButtonColors(
+                                    containerColor = MaterialTheme.colorScheme.secondaryContainer,
+                                    contentColor = MaterialTheme.colorScheme.secondary
+                                )
+                            } else {
+                                IconButtonDefaults.iconButtonColors()
+                            },
+                            modifier = Modifier
+                                .minimumInteractiveComponentSize()
+                                .testTag("toggle_translation_button")
+                        ) {
+                            Icon(
+                                if (showInlineTranslations) Icons.Rounded.Translate else Icons.Rounded.VisibilityOff,
+                                contentDescription = stringResource(R.string.reader_toggle_translations_content_description)
                             )
-                        } else {
-                            IconButtonDefaults.iconButtonColors()
-                        },
-                        modifier = Modifier
-                            .minimumInteractiveComponentSize()
-                            .testTag("toggle_translation_button")
-                    ) {
-                        Icon(
-                            if (showInlineTranslations) Icons.Rounded.Translate else Icons.Rounded.VisibilityOff,
-                            contentDescription = stringResource(R.string.reader_toggle_translations_content_description)
-                        )
+                        }
                     }
                     IconButton(
                         onClick = onOpenAppearance,
@@ -287,10 +299,15 @@ internal fun ReaderSearchPanel(
                                 .padding(vertical = 8.dp, horizontal = 4.dp),
                             verticalArrangement = Arrangement.spacedBy(4.dp)
                         ) {
-                            CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Ltr) {
+                            val resultIsArabic = LanguageDetector.isArabicText(s.originalText)
+                            CompositionLocalProvider(
+                                LocalLayoutDirection provides if (resultIsArabic) LayoutDirection.Rtl else LayoutDirection.Ltr
+                            ) {
                                 Text(
                                     text = s.originalText,
-                                    style = MaterialTheme.typography.bodyMedium.copy(fontFamily = FrenchSerifFamily),
+                                    style = MaterialTheme.typography.bodyMedium.copy(
+                                        fontFamily = if (resultIsArabic) ArabicSansFamily else FrenchSerifFamily
+                                    ),
                                     maxLines = 2,
                                     overflow = TextOverflow.Ellipsis
                                 )
@@ -317,6 +334,7 @@ internal fun ReaderSearchPanel(
 internal fun ReaderAudioBar(
     playbackState: PlaybackUiState,
     bookSourceLanguage: SourceLanguage,
+    isArabicSource: Boolean = false,
     isPlayingThisChapter: Boolean,
     currentSpeed: Float,
     onTogglePlay: () -> Unit,
@@ -391,16 +409,22 @@ internal fun ReaderAudioBar(
                             style = MaterialTheme.typography.labelMedium,
                             color = MaterialTheme.colorScheme.secondary
                         )
-                        CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Ltr) {
+                        val barText = playbackState.currentSentenceText.takeIf {
+                            isPlayingThisChapter && it.isNotBlank()
+                        } ?: when {
+                            isArabicSource -> stringResource(R.string.reader_ready_to_listen_french)
+                            bookSourceLanguage == SourceLanguage.FRENCH -> stringResource(R.string.reader_ready_to_listen_french)
+                            else -> stringResource(R.string.reader_ready_to_listen_english)
+                        }
+                        val barIsArabic = isArabicSource || LanguageDetector.isArabicText(barText)
+                        CompositionLocalProvider(
+                            LocalLayoutDirection provides if (barIsArabic) LayoutDirection.Rtl else LayoutDirection.Ltr
+                        ) {
                             Text(
-                                text = playbackState.currentSentenceText.takeIf {
-                                    isPlayingThisChapter && it.isNotBlank()
-                                } ?: if (bookSourceLanguage == SourceLanguage.FRENCH) {
-                                    stringResource(R.string.reader_ready_to_listen_french)
-                                } else {
-                                    stringResource(R.string.reader_ready_to_listen_english)
-                                },
-                                style = MaterialTheme.typography.bodySmall.copy(fontFamily = FrenchSerifFamily),
+                                text = barText,
+                                style = MaterialTheme.typography.bodySmall.copy(
+                                    fontFamily = if (barIsArabic) ArabicSansFamily else FrenchSerifFamily
+                                ),
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                                 maxLines = 1,
                                 overflow = TextOverflow.Ellipsis
@@ -545,10 +569,15 @@ internal fun ReaderChaptersBottomSheet(
                         horizontalArrangement = Arrangement.SpaceBetween,
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Ltr) {
+                        val chIsArabic = LanguageDetector.isArabicText(ch.title)
+                        CompositionLocalProvider(
+                            LocalLayoutDirection provides if (chIsArabic) LayoutDirection.Rtl else LayoutDirection.Ltr
+                        ) {
                             Text(
                                 text = ch.title,
-                                style = MaterialTheme.typography.titleSmall.copy(fontFamily = FrenchSerifFamily),
+                                style = MaterialTheme.typography.titleSmall.copy(
+                                    fontFamily = if (chIsArabic) ArabicSansFamily else FrenchSerifFamily
+                                ),
                                 modifier = Modifier.weight(1f)
                             )
                         }
@@ -570,6 +599,7 @@ internal fun ReaderChaptersBottomSheet(
 @Composable
 internal fun ReaderAppearanceBottomSheet(
     bookSourceLang: SourceLanguage,
+    isArabicSource: Boolean = false,
     languageBadge: String,
     settings: UserSettings,
     onToggleBookLanguage: () -> Unit,
@@ -586,20 +616,22 @@ internal fun ReaderAppearanceBottomSheet(
             verticalArrangement = Arrangement.spacedBy(14.dp)
         ) {
             Text(stringResource(R.string.reader_appearance_title), style = MaterialTheme.typography.titleLarge)
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Text(
-                    stringResource(R.string.reader_language_for_translation, languageBadge),
-                    style = MaterialTheme.typography.bodyMedium
-                )
-                OutlinedButton(onClick = onToggleBookLanguage) {
+            if (!isArabicSource) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
                     Text(
-                        if (bookSourceLang == SourceLanguage.FRENCH) stringResource(R.string.reader_switch_to_english)
-                        else stringResource(R.string.reader_switch_to_french)
+                        stringResource(R.string.reader_language_for_translation, languageBadge),
+                        style = MaterialTheme.typography.bodyMedium
                     )
+                    OutlinedButton(onClick = onToggleBookLanguage) {
+                        Text(
+                            if (bookSourceLang == SourceLanguage.FRENCH) stringResource(R.string.reader_switch_to_english)
+                            else stringResource(R.string.reader_switch_to_french)
+                        )
+                    }
                 }
             }
             Row(

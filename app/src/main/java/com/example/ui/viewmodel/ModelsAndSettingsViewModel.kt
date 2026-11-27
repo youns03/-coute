@@ -34,10 +34,14 @@ class ModelsAndSettingsViewModel(application: Application) : AndroidViewModel(ap
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), UserSettings())
 
     val models: StateFlow<List<ModelUiEntry>> = modelRepo
-        .observeModels(settingsRepo.settingsFlow.map { it.activeModelId })
+        .observeAllModels(
+            activeTtsIdFlow = settingsRepo.settingsFlow.map { it.activeModelId },
+            activeAsrIdFlow = settingsRepo.settingsFlow.map { it.activeAsrModelId }
+        )
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
     val engineRuntimeState: StateFlow<EngineRuntimeState> = ttsEngineManager.runtimeState
+    val memoryGovernorSnapshot: StateFlow<com.example.runtime.MemoryGovernorSnapshot> = app.memoryGovernor.snapshot
     val translationState: StateFlow<TranslationManagerUiState> = engineManager.state
 
     private val _storageBreakdown = MutableStateFlow(modelRepo.getStorageBreakdown())
@@ -50,7 +54,26 @@ class ModelsAndSettingsViewModel(application: Application) : AndroidViewModel(ap
 
     fun refreshStorageAndTranslation() {
         _storageBreakdown.value = modelRepo.getStorageBreakdown()
-        viewModelScope.launch { engineManager.refreshAllStatuses() }
+        viewModelScope.launch {
+            engineManager.refreshAllStatuses()
+            app.memoryGovernor.evaluateAndEnforce()
+        }
+    }
+
+    fun releaseIdleEnginesNow() {
+        viewModelScope.launch {
+            val pbStatus = app.playbackController.state.value.status
+            if (pbStatus != com.example.audio.PlaybackStatus.PLAYING &&
+                pbStatus != com.example.audio.PlaybackStatus.BUFFERING
+            ) {
+                ttsEngineManager.releaseActiveEngine()
+            }
+            if (!app.speechTranscriptionManager.isTranscribing) {
+                app.speechTranscriptionManager.releaseActiveEngine()
+            }
+            app.memoryGovernor.evaluateAndEnforce()
+            _actionMessage.value = "تم تحرير الذاكرة من المحركات الخاملة بنجاح."
+        }
     }
 
     fun startOrResumeDownload(modelId: String) {
@@ -86,13 +109,19 @@ class ModelsAndSettingsViewModel(application: Application) : AndroidViewModel(ap
             return
         }
         viewModelScope.launch {
-            app.playbackController.stop()
-            val res = ttsEngineManager.switchModel(entry.spec.id, settings.value.acceleratorMode)
-            res.onSuccess {
-                settingsRepo.setActiveModelId(entry.spec.id)
-                _actionMessage.value = "تم تفعيل وتحميل ${entry.spec.displayName} (${it.activeAccelerator})."
-            }.onFailure { err ->
-                _actionMessage.value = "فشل تحميل النموذج (تم الإبقاء على الاختيار السابق): ${err.message}"
+            if (entry.spec.role == com.example.domain.ModelRole.ASR) {
+                settingsRepo.setActiveAsrModelId(entry.spec.id)
+                _actionMessage.value = "تم تعيين «${entry.spec.displayName}» كنموذج التعرف على الكلام النشط."
+            } else {
+                app.playbackController.stop()
+                val res = ttsEngineManager.switchModel(entry.spec.id, settings.value.acceleratorMode)
+                res.onSuccess {
+                    settingsRepo.setActiveModelId(entry.spec.id)
+                    settingsRepo.setActiveVoiceId("")
+                    _actionMessage.value = "تم تفعيل وتحميل ${entry.spec.displayName} (${it.activeAccelerator})."
+                }.onFailure { err ->
+                    _actionMessage.value = "فشل تحميل النموذج (تم الإبقاء على الاختيار السابق): ${err.message}"
+                }
             }
             _storageBreakdown.value = modelRepo.getStorageBreakdown()
         }
@@ -100,7 +129,15 @@ class ModelsAndSettingsViewModel(application: Application) : AndroidViewModel(ap
 
     fun deleteModel(modelId: String) {
         viewModelScope.launch {
-            val res = modelRepo.deleteInstalledModel(modelId, settings.value.activeModelId)
+            val spec = com.example.models.ModelCatalog.findById(modelId)
+            val activeGuardId = if (spec?.role == com.example.domain.ModelRole.ASR) {
+                if (app.speechTranscriptionManager.isTranscribing && settings.value.activeAsrModelId == modelId) {
+                    modelId
+                } else ""
+            } else {
+                settings.value.activeModelId
+            }
+            val res = modelRepo.deleteInstalledModel(modelId, activeGuardId)
             res.onSuccess {
                 _actionMessage.value = "تم حذف النموذج وتحرير المساحة."
             }.onFailure { err ->

@@ -1,7 +1,10 @@
 package com.example.ui.screens
 
+import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -19,15 +22,22 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.rounded.Bedtime
 import androidx.compose.material.icons.rounded.DeleteSweep
+import androidx.compose.material.icons.rounded.ExpandLess
+import androidx.compose.material.icons.rounded.ExpandMore
+import androidx.compose.material.icons.rounded.Forward10
 import androidx.compose.material.icons.rounded.GraphicEq
 import androidx.compose.material.icons.rounded.Memory
 import androidx.compose.material.icons.rounded.Pause
 import androidx.compose.material.icons.rounded.PlayArrow
+import androidx.compose.material.icons.rounded.RecordVoiceOver
 import androidx.compose.material.icons.rounded.RepeatOne
 import androidx.compose.material.icons.rounded.Replay
+import androidx.compose.material.icons.rounded.Replay10
 import androidx.compose.material.icons.rounded.Science
 import androidx.compose.material.icons.rounded.SkipNext
 import androidx.compose.material.icons.rounded.SkipPrevious
@@ -36,6 +46,7 @@ import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.HorizontalDivider
@@ -43,6 +54,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.SegmentedButton
 import androidx.compose.material3.SegmentedButtonDefaults
@@ -72,14 +84,17 @@ import com.example.R
 import com.example.audio.PlaybackStatus
 import com.example.audio.PlaybackUiState
 import com.example.data.BenchmarkReportEntity
+import com.example.data.BookEntity
 import com.example.data.UserSettings
 import com.example.domain.BenchmarkCorpus
 import com.example.domain.BenchmarkItem
 import com.example.domain.ModelInstallStatus
+import com.example.domain.ModelRole
 import com.example.models.ModelUiEntry
 import com.example.tts.EngineRuntimeState
 import com.example.ui.components.AcousticWaveIndicator
 import com.example.ui.components.AtelierCard
+import com.example.ui.components.BookCoverArtwork
 import com.example.ui.components.EditorialSectionHeader
 import com.example.ui.components.MonospaceMetricPill
 import com.example.ui.theme.EditorialDisplayFamily
@@ -91,6 +106,7 @@ import com.example.ui.viewmodel.BenchmarkLabUiState
 @Composable
 fun PlayerAndLabScreen(
     playbackState: PlaybackUiState,
+    activeBook: BookEntity?,
     engineState: EngineRuntimeState,
     settings: UserSettings,
     models: List<ModelUiEntry>,
@@ -100,9 +116,16 @@ fun PlayerAndLabScreen(
     onStop: () -> Unit,
     onNext: () -> Unit,
     onPrev: () -> Unit,
+    onNextParagraph: () -> Unit,
+    onPrevParagraph: () -> Unit,
+    onSeekRelativeSeconds: (Int) -> Unit,
     onReplaySentence: () -> Unit,
     onToggleRepeat: () -> Unit,
     onSetSpeed: (Float) -> Unit,
+    onSelectVoice: (String) -> Unit,
+    onStartSleepTimerMinutes: (Int) -> Unit,
+    onStartEndOfChapterTimer: () -> Unit,
+    onCancelSleepTimer: () -> Unit,
     onReleaseEngine: () -> Unit,
     onRunSingleBenchmark: (String, BenchmarkItem, Float) -> Unit,
     onRunFullBenchmark: () -> Unit,
@@ -143,20 +166,29 @@ fun PlayerAndLabScreen(
             if (selectedTab == 0) {
                 PlayerTabContent(
                     playbackState = playbackState,
+                    activeBook = activeBook,
                     engineState = engineState,
                     settings = settings,
+                    models = models,
                     onTogglePlayPause = onTogglePlayPause,
                     onStop = onStop,
                     onNext = onNext,
                     onPrev = onPrev,
+                    onNextParagraph = onNextParagraph,
+                    onPrevParagraph = onPrevParagraph,
+                    onSeekRelativeSeconds = onSeekRelativeSeconds,
                     onReplaySentence = onReplaySentence,
                     onToggleRepeat = onToggleRepeat,
                     onSetSpeed = onSetSpeed,
+                    onSelectVoice = onSelectVoice,
+                    onStartSleepTimerMinutes = onStartSleepTimerMinutes,
+                    onStartEndOfChapterTimer = onStartEndOfChapterTimer,
+                    onCancelSleepTimer = onCancelSleepTimer,
                     onReleaseEngine = onReleaseEngine
                 )
             } else {
                 AudioLabTabContent(
-                    models = models,
+                    models = models.filter { it.spec.role == ModelRole.TTS },
                     labState = labState,
                     reports = reports,
                     onRunSingle = onRunSingleBenchmark,
@@ -169,28 +201,46 @@ fun PlayerAndLabScreen(
     }
 }
 
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
 @Composable
 private fun PlayerTabContent(
     playbackState: PlaybackUiState,
+    activeBook: BookEntity?,
     engineState: EngineRuntimeState,
     settings: UserSettings,
+    models: List<ModelUiEntry>,
     onTogglePlayPause: () -> Unit,
     onStop: () -> Unit,
     onNext: () -> Unit,
     onPrev: () -> Unit,
+    onNextParagraph: () -> Unit,
+    onPrevParagraph: () -> Unit,
+    onSeekRelativeSeconds: (Int) -> Unit,
     onReplaySentence: () -> Unit,
     onToggleRepeat: () -> Unit,
     onSetSpeed: (Float) -> Unit,
+    onSelectVoice: (String) -> Unit,
+    onStartSleepTimerMinutes: (Int) -> Unit,
+    onStartEndOfChapterTimer: () -> Unit,
+    onCancelSleepTimer: () -> Unit,
     onReleaseEngine: () -> Unit
 ) {
     val atelier = LocalEcouteAtelierColors.current
     val isPlaying = playbackState.status == PlaybackStatus.PLAYING
     val isBuffering = playbackState.status == PlaybackStatus.BUFFERING
+    var showSleepTimerSheet by remember { mutableStateOf(false) }
+    var showTechnicalTelemetry by remember { mutableStateOf(false) }
+
+    val activeTtsModel = models.firstOrNull { it.isActive && it.spec.role == ModelRole.TTS }
+    val availableVoices = activeTtsModel?.spec
+        ?.voicesByLanguage
+        ?.get(playbackState.activeLanguageCode.lowercase())
+        .orEmpty()
 
     LazyColumn(
         modifier = Modifier.fillMaxSize(),
         verticalArrangement = Arrangement.spacedBy(14.dp),
-        contentPadding = PaddingValues(bottom = 80.dp)
+        contentPadding = PaddingValues(bottom = 84.dp)
     ) {
         item {
             AtelierCard(
@@ -210,34 +260,42 @@ private fun PlayerTabContent(
                             verticalAlignment = Alignment.CenterVertically,
                             horizontalArrangement = Arrangement.spacedBy(12.dp)
                         ) {
-                            Box(
-                                modifier = Modifier
-                                    .size(46.dp)
-                                    .clip(RoundedCornerShape(14.dp))
-                                    .background(
-                                        if (isPlaying || isBuffering) MaterialTheme.colorScheme.secondaryContainer
-                                        else MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.65f)
-                                    ),
-                                contentAlignment = Alignment.Center
-                            ) {
-                                AcousticWaveIndicator(
-                                    isPlaying = isPlaying,
-                                    isBuffering = isBuffering,
-                                    barColor = if (isPlaying || isBuffering) MaterialTheme.colorScheme.secondary else MaterialTheme.colorScheme.primary,
-                                    barCount = 5,
-                                    modifier = Modifier
-                                        .width(26.dp)
-                                        .height(22.dp)
+                            if (activeBook != null) {
+                                BookCoverArtwork(
+                                    book = activeBook,
+                                    compact = true,
+                                    modifier = Modifier.size(width = 50.dp, height = 68.dp)
                                 )
+                            } else {
+                                Box(
+                                    modifier = Modifier
+                                        .size(48.dp)
+                                        .clip(RoundedCornerShape(14.dp))
+                                        .background(
+                                            if (isPlaying || isBuffering) MaterialTheme.colorScheme.secondaryContainer
+                                            else MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.65f)
+                                        ),
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    AcousticWaveIndicator(
+                                        isPlaying = isPlaying,
+                                        isBuffering = isBuffering,
+                                        barColor = if (isPlaying || isBuffering) MaterialTheme.colorScheme.secondary else MaterialTheme.colorScheme.primary,
+                                        barCount = 5,
+                                        modifier = Modifier
+                                            .width(26.dp)
+                                            .height(22.dp)
+                                    )
+                                }
                             }
-                            Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                            Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
                                 Text(
                                     text = playbackState.bookTitle.ifBlank { stringResource(R.string.player_no_active_playback) },
                                     style = MaterialTheme.typography.titleMedium
                                 )
                                 Text(
                                     text = if (playbackState.totalSentencesInChapter > 0) {
-                                        "${playbackState.chapterTitle} • جملة ${playbackState.sentenceIndex + 1} / ${playbackState.totalSentencesInChapter}"
+                                        "${playbackState.chapterTitle} • فقرة ${playbackState.paragraphIndex + 1} • جملة ${playbackState.sentenceIndex + 1}/${playbackState.totalSentencesInChapter}"
                                     } else {
                                         stringResource(R.string.player_start_hint)
                                     },
@@ -283,7 +341,7 @@ private fun PlayerTabContent(
                                 )
                                 Text(
                                     text = playbackState.currentSentenceText.ifBlank {
-                                        "Sélectionnez un livre dans la bibliothèque pour écouter la prononciation française locale."
+                                        "Sélectionnez un livre dans la bibliothèque pour écouter la prononciation locale."
                                     },
                                     style = MaterialTheme.typography.headlineSmall.copy(
                                         fontFamily = FrenchSerifFamily,
@@ -304,17 +362,22 @@ private fun PlayerTabContent(
                         )
                     }
 
-                    // Transport Controls
+                    // Primary Transport Controls (-15s, Prev, Play/Pause, Next, +15s)
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.SpaceEvenly,
                         verticalAlignment = Alignment.CenterVertically
                     ) {
+                        IconButton(
+                            onClick = { onSeekRelativeSeconds(-15) },
+                            modifier = Modifier
+                                .minimumInteractiveComponentSize()
+                                .testTag("player_seek_back_15")
+                        ) {
+                            Icon(Icons.Rounded.Replay10, contentDescription = stringResource(R.string.player_seek_back_15_cd))
+                        }
                         IconButton(onClick = onPrev, modifier = Modifier.minimumInteractiveComponentSize()) {
                             Icon(Icons.Rounded.SkipPrevious, contentDescription = stringResource(R.string.player_prev_cd))
-                        }
-                        IconButton(onClick = onReplaySentence, modifier = Modifier.minimumInteractiveComponentSize()) {
-                            Icon(Icons.Rounded.Replay, contentDescription = stringResource(R.string.player_replay_cd))
                         }
                         Button(
                             onClick = onTogglePlayPause,
@@ -341,20 +404,83 @@ private fun PlayerTabContent(
                         IconButton(onClick = onNext, modifier = Modifier.minimumInteractiveComponentSize()) {
                             Icon(Icons.Rounded.SkipNext, contentDescription = stringResource(R.string.player_next_cd))
                         }
+                        IconButton(
+                            onClick = { onSeekRelativeSeconds(15) },
+                            modifier = Modifier
+                                .minimumInteractiveComponentSize()
+                                .testTag("player_seek_forward_15")
+                        ) {
+                            Icon(Icons.Rounded.Forward10, contentDescription = stringResource(R.string.player_seek_forward_15_cd))
+                        }
+                    }
+
+                    // Secondary Row: Paragraph jump, Replay sentence, Repeat, Sleep Timer, Stop
+                    FlowRow(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        verticalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        OutlinedButton(
+                            onClick = onPrevParagraph,
+                            contentPadding = PaddingValues(horizontal = 10.dp, vertical = 6.dp),
+                            modifier = Modifier.minimumInteractiveComponentSize()
+                        ) {
+                            Text(stringResource(R.string.player_prev_paragraph_cd), style = MaterialTheme.typography.labelMedium)
+                        }
+                        OutlinedButton(
+                            onClick = onNextParagraph,
+                            contentPadding = PaddingValues(horizontal = 10.dp, vertical = 6.dp),
+                            modifier = Modifier.minimumInteractiveComponentSize()
+                        ) {
+                            Text(stringResource(R.string.player_next_paragraph_cd), style = MaterialTheme.typography.labelMedium)
+                        }
+                        IconButton(onClick = onReplaySentence, modifier = Modifier.minimumInteractiveComponentSize()) {
+                            Icon(Icons.Rounded.Replay, contentDescription = stringResource(R.string.player_replay_cd))
+                        }
+                        FilterChip(
+                            selected = playbackState.repeatCurrentSentence,
+                            onClick = onToggleRepeat,
+                            leadingIcon = {
+                                Icon(Icons.Rounded.RepeatOne, contentDescription = null, modifier = Modifier.size(16.dp))
+                            },
+                            label = { Text(stringResource(R.string.player_repeat_label)) }
+                        )
+                        val sleepActive = playbackState.sleepTimerRemainingSec > 0 || playbackState.sleepTimerEndOfChapter
+                        FilterChip(
+                            selected = sleepActive,
+                            onClick = { showSleepTimerSheet = true },
+                            leadingIcon = {
+                                Icon(Icons.Rounded.Bedtime, contentDescription = null, modifier = Modifier.size(16.dp))
+                            },
+                            label = {
+                                val txt = when {
+                                    playbackState.sleepTimerRemainingSec > 0 -> {
+                                        val m = playbackState.sleepTimerRemainingSec / 60
+                                        val s = playbackState.sleepTimerRemainingSec % 60
+                                        "%d:%02d".format(m, s)
+                                    }
+                                    playbackState.sleepTimerEndOfChapter -> stringResource(R.string.player_sleep_timer_eoc)
+                                    else -> stringResource(R.string.player_sleep_timer)
+                                }
+                                Text(txt)
+                            },
+                            modifier = Modifier.testTag("player_sleep_timer_chip")
+                        )
                         IconButton(onClick = onStop, modifier = Modifier.minimumInteractiveComponentSize()) {
                             Icon(Icons.Rounded.Stop, contentDescription = stringResource(R.string.player_stop_cd))
                         }
                     }
 
-                    // Speed Pills & Repeat Current Sentence
+                    // Speed Pills
                     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                         Text(stringResource(R.string.player_speed_label), style = MaterialTheme.typography.labelMedium)
                         Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.spacedBy(8.dp),
-                            verticalAlignment = Alignment.CenterVertically
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .horizontalScroll(rememberScrollState()),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
                         ) {
-                            listOf(0.75f, 1.0f, 1.25f, 1.5f).forEach { speed ->
+                            listOf(0.75f, 1.0f, 1.25f, 1.5f, 1.75f).forEach { speed ->
                                 FilterChip(
                                     selected = settings.playbackSpeed == speed,
                                     onClick = { onSetSpeed(speed) },
@@ -366,30 +492,53 @@ private fun PlayerTabContent(
                                     }
                                 )
                             }
-                            Spacer(Modifier.weight(1f))
-                            FilterChip(
-                                selected = playbackState.repeatCurrentSentence,
-                                onClick = onToggleRepeat,
-                                leadingIcon = {
-                                    Icon(Icons.Rounded.RepeatOne, contentDescription = null, modifier = Modifier.size(16.dp))
-                                },
-                                label = { Text(stringResource(R.string.player_repeat_label)) }
-                            )
+                        }
+                    }
+
+                    // Voice Picker for active model
+                    if (availableVoices.isNotEmpty()) {
+                        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(6.dp)
+                            ) {
+                                Icon(Icons.Rounded.RecordVoiceOver, contentDescription = null, modifier = Modifier.size(16.dp))
+                                Text(stringResource(R.string.player_voice_label), style = MaterialTheme.typography.labelMedium)
+                            }
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .horizontalScroll(rememberScrollState()),
+                                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                            ) {
+                                availableVoices.forEach { voice ->
+                                    val selected = playbackState.activeVoiceId == voice ||
+                                        (playbackState.activeVoiceId.isBlank() && settings.activeVoiceId == voice)
+                                    FilterChip(
+                                        selected = selected,
+                                        onClick = { onSelectVoice(voice) },
+                                        label = { Text(voice, style = MaterialTheme.typography.labelMedium.copy(fontFamily = StudioMonoFamily)) }
+                                    )
+                                }
+                            }
                         }
                     }
                 }
             }
         }
 
-        // Live Engine & Memory Telemetry Card
+        // Collapsible Technical Telemetry Card
         item {
             AtelierCard(
                 containerColor = MaterialTheme.colorScheme.surface,
                 modifier = Modifier.fillMaxWidth()
             ) {
-                Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                Column(modifier = Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
                     Row(
-                        modifier = Modifier.fillMaxWidth(),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable { showTechnicalTelemetry = !showTechnicalTelemetry }
+                            .padding(vertical = 4.dp),
                         horizontalArrangement = Arrangement.SpaceBetween,
                         verticalAlignment = Alignment.CenterVertically
                     ) {
@@ -398,49 +547,112 @@ private fun PlayerTabContent(
                             Spacer(Modifier.width(8.dp))
                             Text(stringResource(R.string.player_engine_telemetry_title), style = MaterialTheme.typography.titleSmall)
                         }
-                        OutlinedButton(onClick = onReleaseEngine) {
-                            Text(stringResource(R.string.player_release_ram))
+                        Icon(
+                            if (showTechnicalTelemetry) Icons.Rounded.ExpandLess else Icons.Rounded.ExpandMore,
+                            contentDescription = null
+                        )
+                    }
+
+                    AnimatedVisibility(visible = showTechnicalTelemetry) {
+                        Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                            ) {
+                                TelemetryTile(
+                                    label = "قبل التحميل",
+                                    value = "${"%.1f".format(engineState.ramBeforeLoadMb)} MB",
+                                    modifier = Modifier.weight(1f)
+                                )
+                                TelemetryTile(
+                                    label = "بعد التحميل",
+                                    value = "${"%.1f".format(engineState.ramAfterLoadMb)} MB",
+                                    modifier = Modifier.weight(1f)
+                                )
+                                TelemetryTile(
+                                    label = "الذروة",
+                                    value = "${"%.1f".format(engineState.ramPeakSynthesisMb)} MB",
+                                    modifier = Modifier.weight(1f)
+                                )
+                            }
+                            HorizontalDivider(color = atelier.cardBorder)
+                            Text(
+                                text = "النموذج المحمّل: ${engineState.loadedModelName ?: "غير محمل (يُحمّل عند التشغيل)"}",
+                                style = MaterialTheme.typography.bodySmall
+                            )
+                            Text(
+                                text = "المُسرّع الفعلي: ${engineState.acceleratorLabel}" +
+                                    if (engineState.fellBackToCpu) " (تراجع تلقائي لـ CPU)" else "",
+                                style = MaterialTheme.typography.bodySmall
+                            )
+                            Text(
+                                text = "وضع السرعة: ${settings.speedControlMode.labelAr} • الجمل المسبقة: ${playbackState.bufferedAheadCount}",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                            OutlinedButton(
+                                onClick = onReleaseEngine,
+                                modifier = Modifier.fillMaxWidth()
+                            ) {
+                                Text(stringResource(R.string.player_release_ram))
+                            }
                         }
                     }
-
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(8.dp)
-                    ) {
-                        TelemetryTile(
-                            label = "قبل التحميل",
-                            value = "${"%.1f".format(engineState.ramBeforeLoadMb)} MB",
-                            modifier = Modifier.weight(1f)
-                        )
-                        TelemetryTile(
-                            label = "بعد التحميل",
-                            value = "${"%.1f".format(engineState.ramAfterLoadMb)} MB",
-                            modifier = Modifier.weight(1f)
-                        )
-                        TelemetryTile(
-                            label = "الذروة",
-                            value = "${"%.1f".format(engineState.ramPeakSynthesisMb)} MB",
-                            modifier = Modifier.weight(1f)
-                        )
-                    }
-
-                    HorizontalDivider(color = atelier.cardBorder)
-
-                    Text(
-                        text = "النموذج المحمّل: ${engineState.loadedModelName ?: "غير محمل (يُحمّل عند التشغيل)"}",
-                        style = MaterialTheme.typography.bodySmall
-                    )
-                    Text(
-                        text = "المُسرّع الفعلي: ${engineState.acceleratorLabel}" +
-                            if (engineState.fellBackToCpu) " (تراجع تلقائي لـ CPU)" else "",
-                        style = MaterialTheme.typography.bodySmall
-                    )
-                    Text(
-                        text = "وضع السرعة: ${settings.speedControlMode.labelAr} • الجمل المسبقة بالرتل: ${playbackState.bufferedAheadCount}",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
                 }
+            }
+        }
+    }
+
+    if (showSleepTimerSheet) {
+        ModalBottomSheet(onDismissRequest = { showSleepTimerSheet = false }) {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 20.dp, vertical = 10.dp),
+                verticalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
+                Text(stringResource(R.string.player_sleep_timer_sheet_title), style = MaterialTheme.typography.titleLarge)
+                listOf(15, 30, 45, 60).forEach { mins ->
+                    FilledTonalButton(
+                        onClick = {
+                            onStartSleepTimerMinutes(mins)
+                            showSleepTimerSheet = false
+                        },
+                        shape = RoundedCornerShape(12.dp),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .minimumInteractiveComponentSize()
+                    ) {
+                        Text(stringResource(R.string.player_sleep_timer_minutes, mins))
+                    }
+                }
+                FilledTonalButton(
+                    onClick = {
+                        onStartEndOfChapterTimer()
+                        showSleepTimerSheet = false
+                    },
+                    shape = RoundedCornerShape(12.dp),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .minimumInteractiveComponentSize()
+                ) {
+                    Text(stringResource(R.string.player_sleep_timer_eoc))
+                }
+                if (playbackState.sleepTimerRemainingSec > 0 || playbackState.sleepTimerEndOfChapter) {
+                    OutlinedButton(
+                        onClick = {
+                            onCancelSleepTimer()
+                            showSleepTimerSheet = false
+                        },
+                        shape = RoundedCornerShape(12.dp),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .minimumInteractiveComponentSize()
+                    ) {
+                        Text(stringResource(R.string.player_sleep_timer_cancel))
+                    }
+                }
+                Spacer(Modifier.height(16.dp))
             }
         }
     }
@@ -501,13 +713,10 @@ private fun AudioLabTabContent(
     LazyColumn(
         modifier = Modifier.fillMaxSize(),
         verticalArrangement = Arrangement.spacedBy(12.dp),
-        contentPadding = PaddingValues(bottom = 80.dp)
+        contentPadding = PaddingValues(bottom = 84.dp)
     ) {
         item {
-            AtelierCard(
-                elevation = 1.dp,
-                modifier = Modifier.fillMaxWidth()
-            ) {
+            AtelierCard(elevation = 1.dp, modifier = Modifier.fillMaxWidth()) {
                 Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
                     Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         Icon(Icons.Rounded.Science, contentDescription = null, tint = MaterialTheme.colorScheme.secondary)
@@ -527,7 +736,7 @@ private fun AudioLabTabContent(
                             modifier = Modifier.fillMaxWidth()
                         ) {
                             Text(
-                                text = "نزّل نموذجاً واحداً على الأقل (Kokoro أو Piper SIWIS أو Piper TOM) من شاشة إدارة النماذج لتشغيل اختبارات المرحلة صفر.",
+                                text = "نزّل نموذجاً واحداً على الأقل من شاشة إدارة النماذج لتشغيل اختبارات القياس.",
                                 style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.onSecondaryContainer,
                                 modifier = Modifier.padding(12.dp)
@@ -551,10 +760,7 @@ private fun AudioLabTabContent(
                                     selected = testSpeed == sp,
                                     onClick = { testSpeed = sp },
                                     label = {
-                                        Text(
-                                            "${sp}x",
-                                            style = MaterialTheme.typography.labelMedium.copy(fontFamily = StudioMonoFamily)
-                                        )
+                                        Text("${sp}x", style = MaterialTheme.typography.labelMedium.copy(fontFamily = StudioMonoFamily))
                                     }
                                 )
                             }
@@ -584,11 +790,7 @@ private fun AudioLabTabContent(
                     }
 
                     if (!labState.lastError.isNullOrBlank()) {
-                        Text(
-                            text = labState.lastError,
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.error
-                        )
+                        Text(labState.lastError, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error)
                     }
                 }
             }
@@ -638,34 +840,21 @@ private fun AudioLabTabContent(
                         countBadge = "${reports.size}",
                         modifier = Modifier.weight(1f)
                     )
-                    IconButton(
-                        onClick = { confirmClearReports = true },
-                        modifier = Modifier.minimumInteractiveComponentSize()
-                    ) {
+                    IconButton(onClick = { confirmClearReports = true }, modifier = Modifier.minimumInteractiveComponentSize()) {
                         Icon(Icons.Rounded.DeleteSweep, contentDescription = stringResource(R.string.player_lab_clear_reports_cd))
                     }
                 }
             }
-
             items(reports, key = { it.id }) { r ->
-                AtelierCard(
-                    containerColor = MaterialTheme.colorScheme.surface,
-                    modifier = Modifier.fillMaxWidth()
-                ) {
+                AtelierCard(containerColor = MaterialTheme.colorScheme.surface, modifier = Modifier.fillMaxWidth()) {
                     Column(modifier = Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                        Text(
-                            "${r.modelDisplayName} • ${r.corpusCategory}",
-                            style = MaterialTheme.typography.titleSmall
-                        )
+                        Text("${r.modelDisplayName} • ${r.corpusCategory}", style = MaterialTheme.typography.titleSmall)
                         Text(
                             "الجهاز: ${r.deviceModel} (${r.socOrAbi}, ${r.totalRamMb} MB RAM, ${r.androidVersion})",
                             style = MaterialTheme.typography.labelSmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
-                        FlowRow(
-                            horizontalArrangement = Arrangement.spacedBy(6.dp),
-                            verticalArrangement = Arrangement.spacedBy(6.dp)
-                        ) {
+                        FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                             MonospaceMetricPill(text = "LOAD ${r.modelLoadTimeMs}ms")
                             MonospaceMetricPill(
                                 text = "TTFA ${r.ttfaMs}ms",
@@ -679,22 +868,6 @@ private fun AudioLabTabContent(
                             )
                             MonospaceMetricPill(text = "${r.acceleratorUsed} • ${r.speedFactor}x")
                         }
-                        Text(
-                            "التوليد: ${r.totalSynthesisMs} ms • طول الصوت: ${r.audioDurationMs} ms",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                        Text(
-                            "RAM قبل: ${"%.1f".format(r.ramBeforeLoadMb)} MB • بعد التحميل: ${"%.1f".format(r.ramAfterLoadMb)} MB • الذروة: ${"%.1f".format(r.ramPeakSynthesisMb)} MB",
-                            style = MaterialTheme.typography.bodySmall
-                        )
-                        if (r.notes.isNotBlank()) {
-                            Text(
-                                r.notes,
-                                style = MaterialTheme.typography.labelSmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                        }
                         if (!r.wavSamplePath.isNullOrBlank()) {
                             HorizontalDivider(color = atelier.cardBorder)
                             OutlinedButton(
@@ -704,10 +877,7 @@ private fun AudioLabTabContent(
                             ) {
                                 Icon(Icons.Rounded.PlayArrow, contentDescription = null, modifier = Modifier.size(16.dp))
                                 Spacer(Modifier.width(6.dp))
-                                Text(
-                                    if (labState.playingSamplePath == r.wavSamplePath) "جاري تشغيل WAV..."
-                                    else "استماع للعينة المحفوظة (WAV)"
-                                )
+                                Text(if (labState.playingSamplePath == r.wavSamplePath) "جاري تشغيل WAV..." else "استماع للعينة (WAV)")
                             }
                         }
                     }

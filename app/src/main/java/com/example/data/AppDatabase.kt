@@ -17,9 +17,10 @@ import androidx.sqlite.db.SupportSQLiteDatabase
         BenchmarkReportEntity::class,
         TranslationJobEntity::class,
         TranslationChunkEntity::class,
-        ParagraphTranslationEntity::class
+        ParagraphTranslationEntity::class,
+        RecentActivityEntity::class
     ],
-    version = 4,
+    version = 5,
     exportSchema = true
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -28,6 +29,7 @@ abstract class AppDatabase : RoomDatabase() {
     abstract fun modelRecordDao(): ModelRecordDao
     abstract fun benchmarkReportDao(): BenchmarkReportDao
     abstract fun translationJobDao(): TranslationJobDao
+    abstract fun recentActivityDao(): RecentActivityDao
 
     companion object {
         val MIGRATION_1_2 = object : Migration(1, 2) {
@@ -103,6 +105,35 @@ abstract class AppDatabase : RoomDatabase() {
             }
         }
 
+        val MIGRATION_4_5 = object : Migration(4, 5) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE `books` ADD COLUMN `mediaKind` TEXT NOT NULL DEFAULT 'BOOK'")
+                db.execSQL("ALTER TABLE `books` ADD COLUMN `coverStyleId` TEXT NOT NULL DEFAULT 'auto'")
+                db.execSQL("ALTER TABLE `books` ADD COLUMN `coverImagePath` TEXT")
+                db.execSQL("ALTER TABLE `books` ADD COLUMN `sourceContentHash` TEXT")
+                db.execSQL("ALTER TABLE `books` ADD COLUMN `fileSizeBytes` INTEGER NOT NULL DEFAULT 0")
+                db.execSQL("ALTER TABLE `books` ADD COLUMN `audioFilePath` TEXT")
+                db.execSQL("ALTER TABLE `books` ADD COLUMN `audioDurationMs` INTEGER NOT NULL DEFAULT 0")
+                db.execSQL("ALTER TABLE `books` ADD COLUMN `isCompleted` INTEGER NOT NULL DEFAULT 0")
+                db.execSQL("ALTER TABLE `books` ADD COLUMN `lastPositionMs` INTEGER NOT NULL DEFAULT 0")
+                db.execSQL(
+                    """
+                    CREATE TABLE IF NOT EXISTS `recent_activities` (
+                        `id` TEXT NOT NULL,
+                        `kind` TEXT NOT NULL,
+                        `title` TEXT NOT NULL,
+                        `subtitle` TEXT NOT NULL,
+                        `targetRoute` TEXT NOT NULL,
+                        `targetId` TEXT NOT NULL,
+                        `progress` REAL NOT NULL,
+                        `timestamp` INTEGER NOT NULL,
+                        PRIMARY KEY(`id`)
+                    )
+                    """.trimIndent()
+                )
+            }
+        }
+
         @Volatile
         private var INSTANCE: AppDatabase? = null
 
@@ -113,7 +144,7 @@ abstract class AppDatabase : RoomDatabase() {
                     AppDatabase::class.java,
                     "ecoute_studio.db"
                 )
-                    .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4)
+                    .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5)
                     .build()
                     .also { INSTANCE = it }
             }

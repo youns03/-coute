@@ -47,6 +47,9 @@ mediapipeTasksAudio = "1.2.2"
 mlkitTranslate = "17.0.3"
 commonsCompress = "1.27.1"
 coroutinesPlayServices = "1.10.2"
+jsoup = "1.18.3"
+pdfboxAndroid = "2.0.27.0"
+mlkitTextRecognition = "16.0.1"
 
 
 [libraries]
@@ -99,7 +102,10 @@ androidx-media3-common = { group = "androidx.media3", name = "media3-common", ve
 androidx-media3-session = { group = "androidx.media3", name = "media3-session", version.ref = "media3" }
 mediapipe-tasks-audio = { group = "com.google.mediapipe", name = "tasks-audio", version.ref = "mediapipeTasksAudio" }
 mlkit-translate = { group = "com.google.mlkit", name = "translate", version.ref = "mlkitTranslate" }
+mlkit-text-recognition = { group = "com.google.mlkit", name = "text-recognition", version.ref = "mlkitTextRecognition" }
 commons-compress = { group = "org.apache.commons", name = "commons-compress", version.ref = "commonsCompress" }
+jsoup = { group = "org.jsoup", name = "jsoup", version.ref = "jsoup" }
+pdfbox-android = { group = "com.tom-roush", name = "pdfbox-android", version.ref = "pdfboxAndroid" }
 robolectric = { group = "org.robolectric", name = "robolectric", version.ref = "robolectric" }
 firebase-bom = { group = "com.google.firebase", name = "firebase-bom", version.ref = "firebaseBom" }
 firebase-ai = { group = "com.google.firebase", name = "firebase-ai" }

@@ -328,7 +328,12 @@ fun FileTranslatorScreen(
                         Button(
                             onClick = {
                                 openDocumentLauncher.launch(
-                                    arrayOf("text/plain", "application/epub+zip", "application/octet-stream")
+                                    arrayOf(
+                                        "text/plain",
+                                        "application/epub+zip",
+                                        "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                                        "application/octet-stream"
+                                    )
                                 )
                             },
                             enabled = !isImporting,

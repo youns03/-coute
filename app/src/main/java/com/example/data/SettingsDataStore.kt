@@ -18,20 +18,27 @@ private val Context.settingsDataStore: DataStore<Preferences> by preferencesData
 
 data class UserSettings(
     val activeModelId: String = "kokoro-82m-gpu-fp16",
+    val activeVoiceId: String = "",
+    val activeAsrModelId: String = "sherpa-asr-nemo-fast-conformer-fr-en",
     val acceleratorMode: AcceleratorMode = AcceleratorMode.AUTO_GPU_WITH_CPU_FALLBACK,
     val playbackSpeed: Float = 1.0f,
     val speedControlMode: SpeedControlMode = SpeedControlMode.AUDIO_TRACK_TIME_STRETCH,
     val readerFontSizeSp: Float = 20f,
     val readerLineHeightMultiplier: Float = 1.65f,
-    val nightMode: Boolean = false,
+    val nightMode: Boolean = true,
     val showInlineTranslations: Boolean = false,
-    val activeBookId: String? = null
+    val activeBookId: String? = null,
+    val libraryViewMode: String = "GRID", // "GRID" or "LIST"
+    val librarySortOrder: String = "RECENT", // "RECENT", "ADDED", "NAME"
+    val lastRouteName: String = "Home"
 )
 
 class SettingsRepository(private val context: Context) {
 
     private object Keys {
         val ACTIVE_MODEL_ID = stringPreferencesKey("active_model_id")
+        val ACTIVE_VOICE_ID = stringPreferencesKey("active_voice_id")
+        val ACTIVE_ASR_MODEL_ID = stringPreferencesKey("active_asr_model_id")
         val ACCELERATOR_MODE = stringPreferencesKey("accelerator_mode")
         val PLAYBACK_SPEED = floatPreferencesKey("playback_speed")
         val SPEED_CONTROL_MODE = stringPreferencesKey("speed_control_mode")
@@ -40,6 +47,9 @@ class SettingsRepository(private val context: Context) {
         val NIGHT_MODE = booleanPreferencesKey("night_mode")
         val SHOW_INLINE_TRANSLATIONS = booleanPreferencesKey("show_inline_translations")
         val ACTIVE_BOOK_ID = stringPreferencesKey("active_book_id")
+        val LIBRARY_VIEW_MODE = stringPreferencesKey("library_view_mode")
+        val LIBRARY_SORT_ORDER = stringPreferencesKey("library_sort_order")
+        val LAST_ROUTE_NAME = stringPreferencesKey("last_route_name")
     }
 
     val settingsFlow: Flow<UserSettings> = context.settingsDataStore.data.map { prefs ->
@@ -47,6 +57,8 @@ class SettingsRepository(private val context: Context) {
         val speedModeName = prefs[Keys.SPEED_CONTROL_MODE]
         UserSettings(
             activeModelId = prefs[Keys.ACTIVE_MODEL_ID] ?: "kokoro-82m-gpu-fp16",
+            activeVoiceId = prefs[Keys.ACTIVE_VOICE_ID] ?: "",
+            activeAsrModelId = prefs[Keys.ACTIVE_ASR_MODEL_ID] ?: "sherpa-asr-nemo-fast-conformer-fr-en",
             acceleratorMode = AcceleratorMode.entries.firstOrNull { it.name == accelName }
                 ?: AcceleratorMode.AUTO_GPU_WITH_CPU_FALLBACK,
             playbackSpeed = prefs[Keys.PLAYBACK_SPEED] ?: 1.0f,
@@ -54,14 +66,25 @@ class SettingsRepository(private val context: Context) {
                 ?: SpeedControlMode.AUDIO_TRACK_TIME_STRETCH,
             readerFontSizeSp = prefs[Keys.READER_FONT_SIZE] ?: 20f,
             readerLineHeightMultiplier = prefs[Keys.READER_LINE_HEIGHT] ?: 1.65f,
-            nightMode = prefs[Keys.NIGHT_MODE] ?: false,
+            nightMode = prefs[Keys.NIGHT_MODE] ?: true,
             showInlineTranslations = prefs[Keys.SHOW_INLINE_TRANSLATIONS] ?: false,
-            activeBookId = prefs[Keys.ACTIVE_BOOK_ID]
+            activeBookId = prefs[Keys.ACTIVE_BOOK_ID],
+            libraryViewMode = prefs[Keys.LIBRARY_VIEW_MODE] ?: "GRID",
+            librarySortOrder = prefs[Keys.LIBRARY_SORT_ORDER] ?: "RECENT",
+            lastRouteName = prefs[Keys.LAST_ROUTE_NAME] ?: "Home"
         )
     }
 
     suspend fun setActiveModelId(modelId: String) {
         context.settingsDataStore.edit { it[Keys.ACTIVE_MODEL_ID] = modelId }
+    }
+
+    suspend fun setActiveVoiceId(voiceId: String) {
+        context.settingsDataStore.edit { it[Keys.ACTIVE_VOICE_ID] = voiceId }
+    }
+
+    suspend fun setActiveAsrModelId(modelId: String) {
+        context.settingsDataStore.edit { it[Keys.ACTIVE_ASR_MODEL_ID] = modelId }
     }
 
     suspend fun setAcceleratorMode(mode: AcceleratorMode) {
@@ -95,4 +118,17 @@ class SettingsRepository(private val context: Context) {
     suspend fun setActiveBookId(bookId: String) {
         context.settingsDataStore.edit { it[Keys.ACTIVE_BOOK_ID] = bookId }
     }
+
+    suspend fun setLibraryViewMode(mode: String) {
+        context.settingsDataStore.edit { it[Keys.LIBRARY_VIEW_MODE] = mode }
+    }
+
+    suspend fun setLibrarySortOrder(order: String) {
+        context.settingsDataStore.edit { it[Keys.LIBRARY_SORT_ORDER] = order }
+    }
+
+    suspend fun setLastRouteName(routeName: String) {
+        context.settingsDataStore.edit { it[Keys.LAST_ROUTE_NAME] = routeName }
+    }
 }
+

@@ -12,6 +12,7 @@ object SpeechTextProcessor {
     fun splitAndPreprocess(rawText: String, languageCode: String): List<ProcessedSentence> {
         return when (normalizeLangCode(languageCode)) {
             "en" -> EnglishTextPreprocessor.splitAndPreprocess(rawText)
+            "ar" -> ArabicTextPreprocessor.splitAndPreprocess(rawText)
             else -> FrenchTextPreprocessor.splitAndPreprocess(rawText)
         }
     }
@@ -19,13 +20,48 @@ object SpeechTextProcessor {
     fun prepareForSpeech(originalText: String, languageCode: String): String {
         return when (normalizeLangCode(languageCode)) {
             "en" -> EnglishTextPreprocessor.prepareForSpeech(originalText)
+            "ar" -> ArabicTextPreprocessor.prepareForSpeech(originalText)
             else -> FrenchTextPreprocessor.prepareForSpeech(originalText)
         }
     }
 
     fun normalizeLangCode(code: String?): String {
         val lower = code.orEmpty().trim().lowercase()
-        return if (lower.startsWith("en")) "en" else "fr"
+        return when {
+            lower.startsWith("en") -> "en"
+            lower.startsWith("ar") -> "ar"
+            else -> "fr"
+        }
+    }
+
+    /**
+     * Splits an unusually long normalized speech string at natural clause punctuation
+     * so TTS synthesis maintains fast first-audio latency and natural breath phrasing.
+     */
+    fun splitLongSpokenClauses(spokenText: String, maxChars: Int = 220): List<String> {
+        val clean = spokenText.trim()
+        if (clean.isEmpty()) return emptyList()
+        if (clean.length <= maxChars) return listOf(clean)
+
+        val chunks = mutableListOf<String>()
+        var remaining = clean
+        while (remaining.length > maxChars) {
+            val windowEnd = maxChars.coerceAtMost(remaining.length)
+            val minPivot = (maxChars * 0.45f).toInt()
+            val punctIdx = remaining.substring(minPivot, windowEnd)
+                .indexOfLast { it == ';' || it == ':' || it == ',' }
+            val splitAt = if (punctIdx >= 0) {
+                minPivot + punctIdx + 1
+            } else {
+                val spaceIdx = remaining.substring(minPivot, windowEnd).indexOfLast { it.isWhitespace() }
+                if (spaceIdx >= 0) minPivot + spaceIdx else windowEnd
+            }
+            val piece = remaining.substring(0, splitAt).trim()
+            if (piece.isNotEmpty()) chunks.add(piece)
+            remaining = remaining.substring(splitAt).trimStart()
+        }
+        if (remaining.isNotEmpty()) chunks.add(remaining)
+        return chunks
     }
 }
 
@@ -130,8 +166,12 @@ object EnglishTextPreprocessor {
             .replace("‘", "'")
             .replace("“", "\"")
             .replace("”", "\"")
+            .replace("...", ", ")
+            .replace("…", ", ")
             .replace("—", ", ")
             .replace("–", ", ")
+            .replace("(", ", ")
+            .replace(")", ", ")
 
         for ((pattern, replacement) in abbreviationExpansions) {
             text = pattern.replace(text, replacement)
@@ -167,7 +207,9 @@ object EnglishTextPreprocessor {
         }
 
         return text
+            .replace(Regex("""\s*,\s*(?=,|$)"""), "")
             .replace(Regex("""\s+([?!;:,])"""), "$1")
+            .replace(Regex("""([?!;:,])([^\s?!;:,."'])"""), "$1 $2")
             .replace(Regex("""\s{2,}"""), " ")
             .trim()
     }
@@ -222,5 +264,88 @@ object EnglishTextPreprocessor {
             }
         }
         return parts.joinToString(" ")
+    }
+}
+
+object ArabicTextPreprocessor {
+
+    fun splitAndPreprocess(rawText: String): List<ProcessedSentence> {
+        val normalizedNewlines = rawText.replace("\r\n", "\n").replace('\r', '\n')
+        val paragraphs = normalizedNewlines
+            .split(Regex("""\n\s*\n+"""))
+            .map { it.trim() }
+            .filter { it.isNotEmpty() }
+
+        val output = mutableListOf<ProcessedSentence>()
+        var sentenceCounter = 0
+        var readingParagraphIndex = 0
+
+        paragraphs.forEach { paragraph ->
+            val cleanParagraph = paragraph
+                .replace(Regex("""\n+"""), " ")
+                .replace(Regex("""\s+"""), " ")
+                .trim()
+            val readingParagraphs = ReadingParagraphSegmenter.segment(splitIntoSentences(cleanParagraph))
+            readingParagraphs.forEach { readingParagraph ->
+                readingParagraph.forEach { original ->
+                    if (original.isNotBlank()) {
+                        output.add(
+                            ProcessedSentence(
+                                index = sentenceCounter++,
+                                paragraphIndex = readingParagraphIndex,
+                                originalText = original,
+                                spokenText = prepareForSpeech(original)
+                            )
+                        )
+                    }
+                }
+                readingParagraphIndex++
+            }
+        }
+        return output
+    }
+
+    fun splitIntoSentences(paragraph: String): List<String> {
+        if (paragraph.isBlank()) return emptyList()
+        val results = mutableListOf<String>()
+        val current = StringBuilder()
+        var i = 0
+        while (i < paragraph.length) {
+            val ch = paragraph[i]
+            current.append(ch)
+            if (ch == '.' || ch == '!' || ch == '?' || ch == '؟' || ch == '…') {
+                while (i + 1 < paragraph.length && paragraph[i + 1] in charArrayOf('"', '”', '»', ')', ']', '\'')) {
+                    i++
+                    current.append(paragraph[i])
+                }
+                val chunk = current.toString().trim()
+                val nextIsSpaceOrEnd = i + 1 >= paragraph.length || paragraph[i + 1].isWhitespace()
+                val isDecimalDot = ch == '.' && i > 0 && i + 1 < paragraph.length &&
+                    paragraph[i - 1].isDigit() && paragraph[i + 1].isDigit()
+                val isEllipsisWait = ch == '.' && i + 1 < paragraph.length && paragraph[i + 1] == '.'
+
+                if (nextIsSpaceOrEnd && !isDecimalDot && !isEllipsisWait) {
+                    results.add(chunk)
+                    current.clear()
+                }
+            }
+            i++
+        }
+        val tail = current.toString().trim()
+        if (tail.isNotEmpty()) {
+            results.add(tail)
+        }
+        return results
+    }
+
+    fun prepareForSpeech(original: String): String {
+        return Normalizer.normalize(original, Normalizer.Form.NFKC)
+            .replace('\u00A0', ' ')
+            .replace('\u202F', ' ')
+            .replace("\u0640", "") // remove decorative tatweel for speech
+            .replace("«", "")
+            .replace("»", "")
+            .replace(Regex("""\s+"""), " ")
+            .trim()
     }
 }
