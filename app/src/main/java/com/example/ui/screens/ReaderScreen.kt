@@ -22,6 +22,9 @@ import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.ui.input.nestedscroll.NestedScrollConnection
+import androidx.compose.ui.input.nestedscroll.NestedScrollSource
+import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.foundation.text.ClickableText
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.BookmarkAdd
@@ -65,10 +68,12 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.platform.testTag
@@ -132,6 +137,7 @@ fun ReaderScreen(
     var showChaptersSheet by remember { mutableStateOf(false) }
     var showAppearanceSheet by remember { mutableStateOf(false) }
     val listState = rememberLazyListState()
+    var followState by remember { mutableStateOf(ReaderFollowState()) }
     val context = LocalContext.current
     val notificationPermissionLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestPermission()
@@ -154,20 +160,57 @@ fun ReaderScreen(
         playbackState.chapterIndex == state.activeChapterIndex &&
         playbackState.status != PlaybackStatus.IDLE
 
+    val isPlaybackActive = playbackState.bookId == activeBookId &&
+        playbackState.chapterIndex == state.activeChapterIndex &&
+        (playbackState.status == PlaybackStatus.BUFFERING ||
+            playbackState.status == PlaybackStatus.PLAYING)
+    val hasPlaybackAnchor = isPlayingThisChapter
+    val hasPlaybackAnchorState by rememberUpdatedState(hasPlaybackAnchor)
+
     val activeSentenceIdx = if (isPlayingThisChapter) playbackState.sentenceIndex else -1
 
     val groupedParagraphs = remember(state.sentences) {
         state.sentences.groupBy { it.paragraphIndex }.toList().sortedBy { it.first }
     }
 
-    LaunchedEffect(activeSentenceIdx) {
-        if (activeSentenceIdx >= 0) {
-            val itemPos = groupedParagraphs.indexOfFirst { (_, sents) ->
-                sents.any { it.sentenceIndex == activeSentenceIdx }
+    val followScrollConnection = remember {
+        object : NestedScrollConnection {
+            override fun onPreScroll(available: Offset, source: NestedScrollSource): Offset {
+                if (source == NestedScrollSource.UserInput &&
+                    available.getDistance() > 0f &&
+                    hasPlaybackAnchorState
+                ) {
+                    followState = followState.onManualScroll()
+                }
+                return Offset.Zero
             }
-            if (itemPos >= 0) {
-                listState.animateScrollToItem(itemPos)
-            }
+        }
+    }
+
+    LaunchedEffect(playbackState.status, activeBookId, state.activeChapterIndex) {
+        if (playbackState.status == PlaybackStatus.IDLE) {
+            followState = followState.onPlaybackSessionStopped()
+        } else if (isPlaybackActive &&
+            !followState.isFollowingAudio &&
+            !followState.detachedByUser
+        ) {
+            followState = followState.onPlaybackSessionStarted()
+        }
+    }
+
+    LaunchedEffect(
+        activeSentenceIdx,
+        playbackState.status,
+        followState.isFollowingAudio,
+        groupedParagraphs
+    ) {
+        if (activeSentenceIdx < 0 || !followState.canAutoScroll(playbackState.status)) return@LaunchedEffect
+
+        val itemPos = groupedParagraphs.indexOfFirst { (_, sents) ->
+            sents.any { it.sentenceIndex == activeSentenceIdx }
+        }
+        if (itemPos >= 0 && listState.layoutInfo.visibleItemsInfo.none { it.index == itemPos }) {
+            listState.animateScrollToItem(itemPos)
         }
     }
 
@@ -312,7 +355,8 @@ fun ReaderScreen(
                 state = listState,
                 modifier = Modifier
                     .weight(1f)
-                    .fillMaxWidth(),
+                    .fillMaxWidth()
+                    .nestedScroll(followScrollConnection),
                 contentPadding = PaddingValues(horizontal = 16.dp, vertical = 14.dp),
                 verticalArrangement = Arrangement.spacedBy(16.dp)
             ) {
@@ -477,6 +521,18 @@ fun ReaderScreen(
                     }
                 }
                 item { Spacer(Modifier.height(16.dp)) }
+            }
+
+            if (hasPlaybackAnchor && !followState.isFollowingAudio) {
+                FilledTonalButton(
+                    onClick = { followState = followState.onReturnToPlayback() },
+                    modifier = Modifier
+                        .align(Alignment.End)
+                        .padding(end = 16.dp, bottom = 8.dp)
+                        .testTag("return_to_playback_button")
+                ) {
+                    Text("العودة إلى موضع الاستماع")
+                }
             }
 
             // Docked Audio Playback Bar
