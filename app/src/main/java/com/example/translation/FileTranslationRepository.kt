@@ -6,21 +6,25 @@ import androidx.work.Data
 import androidx.work.ExistingWorkPolicy
 import androidx.work.OneTimeWorkRequestBuilder
 import androidx.work.WorkManager
-import com.example.data.BookImporter
-import com.example.data.RecentActivityDao
-import com.example.data.RecentActivityEntity
-import com.example.data.TranslationChunkEntity
-import com.example.data.TranslationJobDao
-import com.example.data.TranslationJobEntity
-import com.example.data.importengine.DocumentExtractionOptions
-import com.example.data.importengine.FileInspectionPreview
-import com.example.data.importengine.ImportProgressEvent
-import com.example.runtime.LocalTaskCoordinator
-import com.example.runtime.LocalTaskEntry
-import com.example.runtime.LocalTaskPriority
-import com.example.runtime.LocalTaskStatus
-import com.example.runtime.LocalTaskType
-import com.example.runtime.TaskControls
+import com.example.contracts.DocumentImportGateway
+import com.example.contracts.FileTranslationGateway
+import com.example.contracts.RecentActivityGateway
+import com.example.contracts.TaskControls
+import com.example.contracts.TaskCoordinatorGateway
+import com.example.contracts.TranslationJobStore
+import com.example.domain.DocumentExtractionOptions
+import com.example.domain.ExportMode
+import com.example.domain.FileInspectionPreview
+import com.example.domain.ImportProgressEvent
+import com.example.domain.LocalTaskEntry
+import com.example.domain.LocalTaskPriority
+import com.example.domain.LocalTaskStatus
+import com.example.domain.LocalTaskType
+import com.example.domain.RecentActivity
+import com.example.domain.SourceLanguage
+import com.example.domain.TranslationChunk
+import com.example.domain.TranslationDirection
+import com.example.domain.TranslationJob
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.sync.Mutex
@@ -30,42 +34,42 @@ import java.util.UUID
 
 class FileTranslationRepository(
     private val context: Context,
-    private val jobDao: TranslationJobDao,
-    private val bookImporter: BookImporter,
-    private val recentActivityDao: RecentActivityDao? = null,
-    private val taskCoordinator: LocalTaskCoordinator? = null
-) {
+    private val jobStore: TranslationJobStore,
+    private val documentImportGateway: DocumentImportGateway,
+    private val recentActivityGateway: RecentActivityGateway? = null,
+    private val taskCoordinator: TaskCoordinatorGateway? = null
+) : FileTranslationGateway {
     private val workManager: WorkManager by lazy { WorkManager.getInstance(context) }
     private val jobMutationMutex = Mutex()
 
-    fun observeAllJobs(): Flow<List<TranslationJobEntity>> = jobDao.observeAllJobs()
+    override fun observeAllJobs(): Flow<List<TranslationJob>> = jobStore.observeAllJobs()
 
-    fun observeChunks(jobId: String): Flow<List<TranslationChunkEntity>> = jobDao.observeChunks(jobId)
+    override fun observeChunks(jobId: String): Flow<List<TranslationChunk>> = jobStore.observeChunks(jobId)
 
-    suspend fun reconcileOnStartup() {
-        jobDao.resetRunningJobsToPaused()
+    override suspend fun reconcileOnStartup() {
+        jobStore.resetRunningJobsToPaused()
     }
 
-    suspend fun inspectImportUris(uris: List<Uri>): List<FileInspectionPreview> =
-        bookImporter.inspectUris(uris)
+    override suspend fun inspectImportUris(uris: List<Uri>): List<FileInspectionPreview> =
+        documentImportGateway.inspectUris(uris)
 
-    suspend fun createJobFromUri(
+    override suspend fun createJobFromUri(
         uri: Uri,
         selectedSourceLanguage: SourceLanguage?
-    ): Result<TranslationJobEntity> = createJobFromUri(
+    ): Result<TranslationJob> = createJobFromUri(
         uri = uri,
         selectedSourceLanguage = selectedSourceLanguage,
         options = DocumentExtractionOptions(),
         onProgress = {}
     )
 
-    suspend fun createJobFromUri(
+    override suspend fun createJobFromUri(
         uri: Uri,
         selectedSourceLanguage: SourceLanguage?,
         options: DocumentExtractionOptions,
-        onProgress: (ImportProgressEvent) -> Unit = {}
-    ): Result<TranslationJobEntity> = withContext(Dispatchers.IO) {
-        bookImporter.parseDocumentFromUri(uri, options, onProgress).mapCatching { doc ->
+        onProgress: (ImportProgressEvent) -> Unit
+    ): Result<TranslationJob> = withContext(Dispatchers.IO) {
+        documentImportGateway.parseDocumentFromUri(uri, options, onProgress).mapCatching { doc ->
             if (selectedSourceLanguage == null && doc.detectedLanguageCode.equals("ar", ignoreCase = true)) {
                 error("المستند المكتشف باللغة العربية. مترجم الملفات المحلي يترجم من الفرنسية أو الإنجليزية إلى العربية فقط؛ يمكنك استيراد الملفات العربية مباشرة إلى المكتبة للقراءة.")
             }
@@ -75,7 +79,7 @@ class FileTranslationRepository(
             if (chunks.isEmpty()) error("لا توجد نصوص قابلة للترجمة داخل هذا الملف.")
 
             val lang = selectedSourceLanguage ?: doc.detectedLanguage
-            val job = TranslationJobEntity(
+            val job = TranslationJob(
                 id = jobId,
                 title = doc.title,
                 originalFileName = doc.fileName,
@@ -86,9 +90,9 @@ class FileTranslationRepository(
                 totalChunks = chunks.size,
                 completedChunks = 0
             )
-            jobDao.insertJobWithChunks(job, chunks)
-            recentActivityDao?.upsert(
-                RecentActivityEntity(
+            jobStore.insertJobWithChunks(job, chunks)
+            recentActivityGateway?.upsert(
+                RecentActivity(
                     id = "act_tx_$jobId",
                     kind = "TRANSLATION",
                     title = doc.title,
@@ -102,13 +106,13 @@ class FileTranslationRepository(
         }
     }
 
-    suspend fun updateJobSourceLanguageIfEmpty(jobId: String, language: SourceLanguage): Boolean {
+    override suspend fun updateJobSourceLanguageIfEmpty(jobId: String, language: SourceLanguage): Boolean {
         return jobMutationMutex.withLock {
-            val job = jobDao.getJob(jobId) ?: return@withLock false
+            val job = jobStore.getJob(jobId) ?: return@withLock false
             if (job.status == "RUNNING") return@withLock false
-            val actualDone = jobDao.countCompletedChunks(jobId)
+            val actualDone = jobStore.countCompletedChunks(jobId)
             if (actualDone > 0 || job.completedChunks > 0) return@withLock false
-            jobDao.updateJob(
+            jobStore.updateJob(
                 job.copy(
                     sourceLanguage = language.code,
                     status = "PENDING",
@@ -125,24 +129,24 @@ class FileTranslationRepository(
         runCatching { workManager.cancelUniqueWork(uniqueWorkName) }
     }
 
-    suspend fun resetAndChangeJobSourceLanguage(jobId: String, language: SourceLanguage) {
+    override suspend fun resetAndChangeJobSourceLanguage(jobId: String, language: SourceLanguage) {
         jobMutationMutex.lock()
         try {
             cancelWorkSafely("file_tx_$jobId")
-            val exists = jobDao.getJob(jobId) != null
+            val exists = jobStore.getJob(jobId) != null
             if (exists) {
-                jobDao.resetJobAtomically(jobId, language.code)
+                jobStore.resetJobAtomically(jobId, language.code)
             }
         } finally {
             jobMutationMutex.unlock()
         }
     }
 
-    suspend fun startOrResumeJob(jobId: String) {
+    override suspend fun startOrResumeJob(jobId: String) {
         jobMutationMutex.withLock {
-            val job = jobDao.getJob(jobId) ?: return@withLock
+            val job = jobStore.getJob(jobId) ?: return@withLock
             if (job.status == "COMPLETED" || job.status == "RUNNING") return@withLock
-            jobDao.updateJobProgress(jobId, job.completedChunks, "RUNNING", null)
+            jobStore.updateJobProgress(jobId, job.completedChunks, "RUNNING", null)
 
             taskCoordinator?.upsertExternalTask(
                 entry = LocalTaskEntry(
@@ -179,28 +183,28 @@ class FileTranslationRepository(
         }
     }
 
-    suspend fun pauseJob(jobId: String) {
+    override suspend fun pauseJob(jobId: String) {
         cancelWorkSafely("file_tx_$jobId")
-        val done = jobDao.countCompletedChunks(jobId)
-        jobDao.updateJobProgress(jobId, done, "PAUSED", null)
+        val done = jobStore.countCompletedChunks(jobId)
+        jobStore.updateJobProgress(jobId, done, "PAUSED", null)
         taskCoordinator?.updateTaskStatus("tx_$jobId", LocalTaskStatus.PAUSED, subtitle = "متوقف مؤقتاً")
     }
 
-    suspend fun deleteJob(jobId: String) {
+    override suspend fun deleteJob(jobId: String) {
         cancelWorkSafely("file_tx_$jobId")
-        jobDao.deleteJob(jobId)
-        recentActivityDao?.deleteByTargetId(jobId)
+        jobStore.deleteJob(jobId)
+        recentActivityGateway?.deleteByTargetId(jobId)
         taskCoordinator?.dismissTask("tx_$jobId")
     }
 
-    suspend fun exportJobToUri(
+    override suspend fun exportJobToUri(
         jobId: String,
         targetUri: Uri,
         mode: ExportMode
     ): Result<String> = withContext(Dispatchers.IO) {
         runCatching {
-            val job = jobDao.getJob(jobId) ?: error("المهمة غير موجودة.")
-            val chunks = jobDao.getAllChunks(jobId)
+            val job = jobStore.getJob(jobId) ?: error("المهمة غير موجودة.")
+            val chunks = jobStore.getAllChunks(jobId)
             val direction = TranslationDirection.forSource(SourceLanguage.fromCode(job.sourceLanguage))
             val formatted = DocumentChunker.formatForExport(
                 title = job.title,
@@ -213,4 +217,3 @@ class FileTranslationRepository(
         }
     }
 }
-

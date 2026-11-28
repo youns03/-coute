@@ -4,59 +4,75 @@ import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.net.Uri
-import com.example.data.importengine.DocumentExtractionOptions
-import com.example.data.importengine.FileInspectionPreview
-import com.example.data.importengine.ImportProgressEvent
+import com.example.contracts.DocumentImportGateway
+import com.example.contracts.LibraryContentGateway
+import com.example.contracts.RecentActivityGateway
 import com.example.domain.BenchmarkCorpus
+import com.example.domain.Book
+import com.example.domain.BookImportOutcome
+import com.example.domain.Chapter
+import com.example.domain.DocumentExtractionOptions
+import com.example.domain.FileInspectionPreview
+import com.example.domain.ImportProgressEvent
+import com.example.domain.ParagraphTranslation
+import com.example.domain.RecentActivity
+import com.example.domain.Sentence
 import com.example.domain.SpeechTextProcessor
+import com.example.domain.VocabularyItem
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flowOf
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.withContext
 import java.io.File
 import java.io.FileOutputStream
 
-data class BookImportOutcome(
-    val book: BookEntity,
-    val wasDuplicate: Boolean,
-    val warningMessageAr: String? = null
-)
-
 class LibraryRepository(
     private val bookDao: BookDao,
     private val vocabularyDao: VocabularyDao,
-    private val bookImporter: BookImporter,
+    private val bookImporter: DocumentImportGateway,
     private val context: Context? = null,
-    private val recentActivityDao: RecentActivityDao? = null
-) {
-    fun observeAllBooks(): Flow<List<BookEntity>> = bookDao.observeAllBooks()
+    private val recentActivityGateway: RecentActivityGateway? = null
+) : LibraryContentGateway {
 
-    fun observeAllChapters(): Flow<List<ChapterEntity>> = bookDao.observeAllChapters()
+    override fun observeAllBooks(): Flow<List<Book>> =
+        bookDao.observeAllBooks().map { list -> list.map { it.toDomain() } }
 
-    fun observeBook(bookId: String): Flow<BookEntity?> = bookDao.observeBook(bookId)
+    override fun observeAllChapters(): Flow<List<Chapter>> =
+        bookDao.observeAllChapters().map { list -> list.map { it.toDomain() } }
 
-    fun observeChapters(bookId: String): Flow<List<ChapterEntity>> = bookDao.observeChapters(bookId)
+    override fun observeBook(bookId: String): Flow<Book?> =
+        bookDao.observeBook(bookId).map { it?.toDomain() }
 
-    fun observeChapterSentences(bookId: String, chapterIndex: Int): Flow<List<SentenceEntity>> =
-        bookDao.observeChapterSentences(bookId, chapterIndex)
+    override suspend fun getBook(bookId: String): Book? =
+        bookDao.getBook(bookId)?.toDomain()
 
-    fun observeParagraphTranslations(
+    override fun observeChapters(bookId: String): Flow<List<Chapter>> =
+        bookDao.observeChapters(bookId).map { list -> list.map { it.toDomain() } }
+
+    override fun observeChapterSentences(bookId: String, chapterIndex: Int): Flow<List<Sentence>> =
+        bookDao.observeChapterSentences(bookId, chapterIndex).map { list -> list.map { it.toDomain() } }
+
+    override fun observeParagraphTranslations(
         bookId: String,
         chapterIndex: Int,
         sourceLanguage: String
-    ): Flow<List<ParagraphTranslationEntity>> =
+    ): Flow<List<ParagraphTranslation>> =
         bookDao.observeParagraphTranslations(bookId, chapterIndex, sourceLanguage)
+            .map { list -> list.map { it.toDomain() } }
 
-    fun observeBookIdsWithTranslations(): Flow<List<String>> =
+    override fun observeBookIdsWithTranslations(): Flow<List<String>> =
         bookDao.observeBookIdsWithParagraphTranslations()
 
-    fun observeRecentActivities(): Flow<List<RecentActivityEntity>> =
-        recentActivityDao?.observeRecent() ?: flowOf(emptyList())
+    override fun observeRecentActivities(): Flow<List<RecentActivity>> =
+        recentActivityGateway?.observeRecent() ?: flowOf(emptyList())
 
-    fun observeVocabulary(query: String): Flow<List<VocabularyEntity>> =
-        if (query.isBlank()) vocabularyDao.observeAll() else vocabularyDao.search(query.trim())
+    override fun observeVocabulary(query: String): Flow<List<VocabularyItem>> {
+        val raw = if (query.isBlank()) vocabularyDao.observeAll() else vocabularyDao.search(query.trim())
+        return raw.map { list -> list.map { it.toDomain() } }
+    }
 
-    suspend fun seedStarterBooksIfEmpty() {
+    override suspend fun seedStarterBooksIfEmpty() {
         if (bookDao.countBooks() > 0) return
         for (seed in BenchmarkCorpus.starterBooks) {
             val chapters = mutableListOf<ChapterEntity>()
@@ -101,26 +117,41 @@ class LibraryRepository(
         }
     }
 
-    suspend fun inspectImportUris(uris: List<Uri>): List<FileInspectionPreview> =
+    override suspend fun insertTranscribedBook(
+        book: Book,
+        chapters: List<Chapter>,
+        sentences: List<Sentence>
+    ) {
+        bookDao.insertFullBook(
+            book = book.toEntity(),
+            chapters = chapters.map { it.toEntity() },
+            sentences = sentences.map { it.toEntity() }
+        )
+    }
+
+    override suspend fun findBookByContentHash(hash: String): Book? =
+        bookDao.findByContentHash(hash)?.toDomain()
+
+    override suspend fun inspectImportUris(uris: List<Uri>): List<FileInspectionPreview> =
         bookImporter.inspectUris(uris)
 
-    suspend fun importBook(uri: Uri): Result<BookEntity> =
+    override suspend fun importBook(uri: Uri): Result<Book> =
         importBookChecked(uri).map { it.book }
 
-    suspend fun importBookChecked(uri: Uri): Result<BookImportOutcome> =
+    override suspend fun importBookChecked(uri: Uri): Result<BookImportOutcome> =
         importBookChecked(uri, DocumentExtractionOptions()) {}
 
-    suspend fun importBookChecked(
+    override suspend fun importBookChecked(
         uri: Uri,
         options: DocumentExtractionOptions,
-        onProgress: (ImportProgressEvent) -> Unit = {}
+        onProgress: (ImportProgressEvent) -> Unit
     ): Result<BookImportOutcome> {
         val parsed = bookImporter.importFromUri(uri, options, onProgress)
         if (parsed.isFailure) return Result.failure(parsed.exceptionOrNull()!!)
         val payload = parsed.getOrThrow()
         val hash = payload.book.sourceContentHash
         if (!hash.isNullOrBlank()) {
-            val existing = bookDao.findByContentHash(hash)
+            val existing = bookDao.findByContentHash(hash)?.toDomain()
             if (existing != null) {
                 return Result.success(
                     BookImportOutcome(
@@ -131,9 +162,13 @@ class LibraryRepository(
                 )
             }
         }
-        bookDao.insertFullBook(payload.book, payload.chapters, payload.sentences)
-        recentActivityDao?.upsert(
-            RecentActivityEntity(
+        bookDao.insertFullBook(
+            payload.book.toEntity(),
+            payload.chapters.map { it.toEntity() },
+            payload.sentences.map { it.toEntity() }
+        )
+        recentActivityGateway?.upsert(
+            RecentActivity(
                 id = "act_book_${payload.book.id}",
                 kind = "READ",
                 title = payload.book.title,
@@ -152,24 +187,28 @@ class LibraryRepository(
         )
     }
 
-    suspend fun importDirectText(
+    override suspend fun importDirectText(
         title: String,
         body: String,
-        languageCode: String? = null
+        languageCode: String?
     ): Result<BookImportOutcome> {
         val parsed = bookImporter.importDirectText(title, body, languageCode)
         if (parsed.isFailure) return Result.failure(parsed.exceptionOrNull()!!)
         val payload = parsed.getOrThrow()
         val hash = payload.book.sourceContentHash
         if (!hash.isNullOrBlank()) {
-            val existing = bookDao.findByContentHash(hash)
+            val existing = bookDao.findByContentHash(hash)?.toDomain()
             if (existing != null) {
                 return Result.success(BookImportOutcome(book = existing, wasDuplicate = true))
             }
         }
-        bookDao.insertFullBook(payload.book, payload.chapters, payload.sentences)
-        recentActivityDao?.upsert(
-            RecentActivityEntity(
+        bookDao.insertFullBook(
+            payload.book.toEntity(),
+            payload.chapters.map { it.toEntity() },
+            payload.sentences.map { it.toEntity() }
+        )
+        recentActivityGateway?.upsert(
+            RecentActivity(
                 id = "act_book_${payload.book.id}",
                 kind = "READ",
                 title = payload.book.title,
@@ -182,14 +221,14 @@ class LibraryRepository(
         return Result.success(BookImportOutcome(book = payload.book, wasDuplicate = false))
     }
 
-    suspend fun renameBook(bookId: String, newTitle: String) {
+    override suspend fun renameBook(bookId: String, newTitle: String) {
         val clean = newTitle.trim()
         if (clean.isNotEmpty()) {
             bookDao.renameBook(bookId, clean)
         }
     }
 
-    suspend fun updateBookCoverTemplate(bookId: String, styleId: String) {
+    override suspend fun updateBookCoverTemplate(bookId: String, styleId: String) {
         val existing = bookDao.getBook(bookId)
         existing?.coverImagePath?.let { oldPath ->
             runCatching { File(oldPath).delete() }
@@ -197,7 +236,7 @@ class LibraryRepository(
         bookDao.updateBookCover(bookId, styleId, null)
     }
 
-    suspend fun updateBookCoverFromUri(bookId: String, imageUri: Uri): Result<String> = withContext(Dispatchers.IO) {
+    override suspend fun updateBookCoverFromUri(bookId: String, imageUri: Uri): Result<String> = withContext(Dispatchers.IO) {
         runCatching {
             val appCtx = context ?: error("سياق التطبيق غير متوفر لحفظ الغلاف.")
             val coversDir = File(appCtx.filesDir, "covers").apply { mkdirs() }
@@ -243,20 +282,20 @@ class LibraryRepository(
         return Bitmap.createScaledBitmap(src, newW, newH, true)
     }
 
-    suspend fun searchInBook(bookId: String, query: String): List<SentenceEntity> {
+    override suspend fun searchInBook(bookId: String, query: String): List<Sentence> {
         if (query.isBlank()) return emptyList()
-        return bookDao.searchInBook(bookId, query.trim())
+        return bookDao.searchInBook(bookId, query.trim()).map { it.toDomain() }
     }
 
-    suspend fun updateReadingPosition(bookId: String, chapterIndex: Int, sentenceIndex: Int) {
+    override suspend fun updateReadingPosition(bookId: String, chapterIndex: Int, sentenceIndex: Int) {
         bookDao.updateReadingPosition(bookId, chapterIndex, sentenceIndex)
     }
 
-    suspend fun cacheSentenceTranslation(sentenceId: Long, arabic: String) {
+    override suspend fun cacheSentenceTranslation(sentenceId: Long, arabic: String) {
         bookDao.updateSentenceTranslation(sentenceId, arabic)
     }
 
-    suspend fun saveParagraphTranslation(
+    override suspend fun saveParagraphTranslation(
         bookId: String,
         chapterIndex: Int,
         paragraphIndex: Int,
@@ -275,19 +314,19 @@ class LibraryRepository(
         )
     }
 
-    suspend fun updateBookSourceLanguage(bookId: String, sourceLanguage: String) {
+    override suspend fun updateBookSourceLanguage(bookId: String, sourceLanguage: String) {
         bookDao.updateBookSourceLanguage(bookId, sourceLanguage)
     }
 
-    suspend fun deleteBook(bookId: String) {
+    override suspend fun deleteBook(bookId: String) {
         val book = bookDao.getBook(bookId)
         book?.coverImagePath?.let { path -> runCatching { File(path).delete() } }
         book?.audioFilePath?.let { path -> runCatching { File(path).delete() } }
-        recentActivityDao?.deleteByTargetId(bookId)
+        recentActivityGateway?.deleteByTargetId(bookId)
         bookDao.deleteBook(bookId)
     }
 
-    suspend fun saveVocabulary(
+    override suspend fun saveVocabulary(
         frenchTerm: String,
         arabicTranslation: String,
         contextSentence: String,
@@ -307,10 +346,13 @@ class LibraryRepository(
         )
     }
 
-    suspend fun deleteVocabulary(id: Long) = vocabularyDao.deleteById(id)
+    override suspend fun deleteVocabulary(id: Long) = vocabularyDao.deleteById(id)
+
+    override fun calculateProgress(book: Book, chapters: List<Chapter>): Float =
+        calculateBookProgress(book, chapters)
 
     companion object {
-        fun calculateBookProgress(book: BookEntity, bookChapters: List<ChapterEntity>): Float {
+        fun calculateBookProgress(book: Book, bookChapters: List<Chapter>): Float {
             if (book.isCompleted) return 1f
             val total = book.totalSentences.coerceAtLeast(bookChapters.sumOf { it.sentenceCount })
             if (total <= 0) return 0f
@@ -323,6 +365,8 @@ class LibraryRepository(
                 .coerceIn(0, total)
             return (currentOffset.toFloat() / total.toFloat()).coerceIn(0f, 1f)
         }
+
+        fun calculateBookProgress(book: BookEntity, bookChapters: List<ChapterEntity>): Float =
+            calculateBookProgress(book.toDomain(), bookChapters.map { it.toDomain() })
     }
 }
-

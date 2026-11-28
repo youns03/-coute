@@ -31,6 +31,8 @@ val StudioMonoFamily = FontFamily(
     Font(R.font.jetbrains_mono, FontWeight.Normal)
 )
 
+fun TextStyle.withTabularNumbers(): TextStyle = copy(fontFeatureSettings = "tnum")
+
 val Typography = Typography(
     displaySmall = TextStyle(
         fontFamily = EditorialDisplayFamily,

@@ -1,12 +1,13 @@
 package com.example.tts
 
 import android.os.SystemClock
+import com.example.contracts.ModelStorageGateway
+import com.example.contracts.TtsEngine
 import com.example.domain.AcceleratorMode
 import com.example.domain.EngineType
 import com.example.domain.ModelSpec
 import com.example.domain.TtsStreamChunk
 import com.example.domain.TtsSynthesisResult
-import com.example.models.ModelStorageManager
 import com.k2fsa.sherpa.onnx.OfflineTts
 import com.k2fsa.sherpa.onnx.OfflineTtsConfig
 import com.k2fsa.sherpa.onnx.OfflineTtsModelConfig
@@ -82,11 +83,11 @@ private object DefaultPiperSessionFactory : PiperSessionFactory {
 }
 
 class PiperSherpaTtsEngine internal constructor(
-    private val storageManager: ModelStorageManager,
+    private val storageManager: ModelStorageGateway,
     private val sessionFactory: PiperSessionFactory
 ) : TtsEngine {
 
-    constructor(storageManager: ModelStorageManager) : this(
+    constructor(storageManager: ModelStorageGateway) : this(
         storageManager = storageManager,
         sessionFactory = DefaultPiperSessionFactory
     )

@@ -235,3 +235,43 @@ object AudioChunkCache {
         }
     }
 }
+
+class DiskAudioCacheGateway(
+    private val cacheRootProvider: () -> File
+) : com.example.contracts.AudioCacheGateway {
+
+    override fun buildCacheKey(
+        modelId: String,
+        languageCode: String,
+        voiceId: String,
+        speed: Float,
+        spokenText: String
+    ): String = AudioChunkCache.buildCacheKey(modelId, languageCode, voiceId, speed, spokenText)
+
+    override fun readValidated(cacheKey: String): com.example.contracts.CachedAudioEntry? {
+        val file = AudioChunkCache.cacheFileFor(cacheRootProvider(), cacheKey)
+        val payload = AudioChunkCache.readValidated(file) ?: return null
+        return com.example.contracts.CachedAudioEntry(
+            samples = payload.samples,
+            sampleRateHz = payload.sampleRateHz,
+            wordTimestamps = payload.wordTimestamps
+        )
+    }
+
+    override fun write(cacheKey: String, entry: com.example.contracts.CachedAudioEntry): Boolean {
+        val file = AudioChunkCache.cacheFileFor(cacheRootProvider(), cacheKey)
+        return AudioChunkCache.write(
+            file,
+            CachedAudioPayload(
+                samples = entry.samples,
+                sampleRateHz = entry.sampleRateHz,
+                wordTimestamps = entry.wordTimestamps
+            )
+        )
+    }
+
+    override fun pruneIfOversized() {
+        AudioChunkCache.pruneIfOversized(cacheRootProvider())
+    }
+}
+

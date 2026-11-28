@@ -1,5 +1,7 @@
 package com.example.translation
 
+import com.example.contracts.TranslationEngine
+import com.example.domain.TranslationDirection
 import com.google.mlkit.common.model.DownloadConditions
 import com.google.mlkit.common.model.RemoteModelManager
 import com.google.mlkit.nl.translate.TranslateLanguage

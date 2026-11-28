@@ -46,12 +46,34 @@ val InkBackgroundDark = Color(0xFF050606)
 val OnInkDark = Color(0xFFF3F4F2)
 val InkSurfaceDark = Color(0xFF1C1E1D)
 val InkSurfaceVariantDark = Color(0xFF2B2E2C)
-val OnInkVariantDark = Color(0xFF969A97)
+val OnInkVariantDark = Color(0xFFA4A8A5)
 val OutlineDark = Color(0xFF2F3331)
 val OutlineVariantDark = Color(0xFF212422)
 
-// Atelier Accents
+// Atelier Accents & Calm Reader Tokens
 val AtelierWarmGoldLight = Color(0xFFD99B26)
 val AtelierWarmGoldDark = Color(0xFFE5C17B)
-val WordHighlightBgLight = Color(0x33B84A24)
-val WordHighlightBgDark = Color(0x401DB954)
+val WordHighlightBgLight = Color(0x33236454)
+val WordHighlightBgDark = Color(0x4558A38D)
+
+val ReaderSageAccentLight = SageTertiaryLight
+val OnReaderSageAccentLight = OnSageLight
+val ReaderSageAccentDark = Color(0xFF58A38D)
+val OnReaderSageAccentDark = Color(0xFF051611)
+
+val ReaderTranslationTextLight = Color(0xFF3E444D)
+val ReaderTranslationTextDark = Color(0xFFC8D2CD)
+
+val ReaderSentenceHighlightBgLight = Color(0x18236454)
+val ReaderSentenceHighlightBgDark = Color(0x2658A38D)
+
+val ReaderActiveParagraphBgLight = Color(0xFFF2ECE1)
+val ReaderActiveParagraphBgDark = Color(0xFF141817)
+val ReaderSelectedParagraphBgLight = Color(0xFFEBE4D7)
+val ReaderSelectedParagraphBgDark = Color(0xFF1A201E)
+
+val ReaderReturnChipBgLight = SageTertiaryLight
+val ReaderReturnChipContentLight = OnSageLight
+val ReaderReturnChipBgDark = Color(0xFF214A3E)
+val ReaderReturnChipContentDark = Color(0xFFE6F4EE)
+

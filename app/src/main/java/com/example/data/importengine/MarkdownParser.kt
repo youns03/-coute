@@ -1,7 +1,8 @@
 package com.example.data.importengine
 
-import com.example.data.ExtractedDocumentSection
-import com.example.data.ParsedSourceDocument
+import com.example.domain.ExtractedDocumentSection
+import com.example.domain.ExtractionDiagnostics
+import com.example.domain.ParsedSourceDocument
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
 import java.io.BufferedReader
@@ -133,16 +134,12 @@ internal object MarkdownParser {
                     continue
                 }
                 if (inFencedCode) {
-                    if (trimmed.isNotEmpty()) {
-                        if (paraBuf.isNotEmpty()) paraBuf.append('\n')
-                        paraBuf.append(trimmed)
-                    }
                     continue
                 }
 
                 // Setext heading underline detection on previous line
                 if (prevNonBlankLineForSetext != null && (setextH1Regex.matches(trimmed) || setextH2Regex.matches(trimmed))) {
-                    val headingText = cleanInlineMarkdown(prevNonBlankLineForSetext!!)
+                    val headingText = cleanInlineMarkdown(prevNonBlankLineForSetext)
                     prevNonBlankLineForSetext = null
                     paraBuf.clear()
                     if (headingText.isNotEmpty()) {

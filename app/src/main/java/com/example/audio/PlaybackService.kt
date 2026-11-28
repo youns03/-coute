@@ -17,9 +17,11 @@ import androidx.media3.common.SimpleBasePlayer
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.session.MediaSession
 import androidx.media3.session.MediaSessionService
-import com.example.EcouteApplication
-import com.example.MainActivity
 import com.example.R
+import com.example.contracts.AppContainerProvider
+import com.example.contracts.PlaybackGateway
+import com.example.domain.PlaybackStatus
+import com.example.domain.PlaybackUiState
 import com.google.common.util.concurrent.Futures
 import com.google.common.util.concurrent.ListenableFuture
 import kotlinx.coroutines.CoroutineScope
@@ -44,13 +46,11 @@ class PlaybackService : MediaSessionService() {
     override fun onCreate() {
         super.onCreate()
         createNotificationChannel()
-        val app = applicationContext as EcouteApplication
-        val controller = app.playbackController
+        val container = (applicationContext as AppContainerProvider).container
+        val controller = container.playbackController
         val player = BridgeMediaPlayer(controller)
 
-        val launchIntent = Intent(this, MainActivity::class.java).apply {
-            flags = Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_CLEAR_TOP
-        }
+        val launchIntent = container.createMainActivityLaunchIntent()
         val pendingIntent = PendingIntent.getActivity(
             this,
             0,
@@ -91,8 +91,8 @@ class PlaybackService : MediaSessionService() {
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        val app = applicationContext as EcouteApplication
-        promoteToForeground(app.playbackController.state.value)
+        val container = (applicationContext as AppContainerProvider).container
+        promoteToForeground(container.playbackController.state.value)
         return super.onStartCommand(intent, flags, startId)
     }
 
@@ -174,7 +174,7 @@ class PlaybackService : MediaSessionService() {
     }
 
     private class BridgeMediaPlayer(
-        private val controller: AudioPlaybackController
+        private val controller: PlaybackGateway
     ) : SimpleBasePlayer(Looper.getMainLooper()) {
 
         fun notifyStateChanged() {

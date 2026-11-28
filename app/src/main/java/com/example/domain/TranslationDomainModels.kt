@@ -1,32 +1,4 @@
-package com.example.translation
-
-enum class SourceLanguage(
-    val code: String,
-    val labelAr: String,
-    val labelNative: String,
-    val opusModelId: String,
-    val opusApproxSizeMb: Int
-) {
-    FRENCH(
-        code = "fr",
-        labelAr = "الفرنسية",
-        labelNative = "Français",
-        opusModelId = "opus-mt-fr-ar",
-        opusApproxSizeMb = 307
-    ),
-    ENGLISH(
-        code = "en",
-        labelAr = "الإنجليزية",
-        labelNative = "English",
-        opusModelId = "opus-mt-en-ar",
-        opusApproxSizeMb = 308
-    );
-
-    companion object {
-        fun fromCode(code: String?): SourceLanguage =
-            entries.firstOrNull { it.code.equals(code, ignoreCase = true) } ?: FRENCH
-    }
-}
+package com.example.domain
 
 enum class TranslationDirection(
     val source: SourceLanguage,
@@ -89,11 +61,6 @@ data class OpusReferenceSpec(
 )
 
 object TranslationModelCatalog {
-    /**
-     * Reference matrix matching the 6 specialized OPUS-MT pairs from the architecture spec.
-     * Phase 1 enables ONLY the two -> Arabic directions (FR->AR and EN->AR) and shares them
-     * across both the Reader and the Background File Translator.
-     */
     val opusReferenceMatrix: List<OpusReferenceSpec> = listOf(
         OpusReferenceSpec("opus-mt-fr-ar", "الفرنسية ← العربية", 307, includedInPhase1 = true),
         OpusReferenceSpec("opus-mt-en-ar", "الإنجليزية ← العربية", 308, includedInPhase1 = true),
@@ -104,12 +71,8 @@ object TranslationModelCatalog {
     )
 }
 
-interface TranslationEngine {
-    val direction: TranslationDirection
-    val engineName: String
-    suspend fun isModelReady(): Boolean
-    suspend fun downloadModel(): Result<Unit>
-    suspend fun deleteSourcePack(deleteSharedArabicTarget: Boolean): Result<Unit>
-    suspend fun translateText(text: String): Result<String>
-    fun close()
+enum class ExportMode(val labelAr: String, val fileSuffix: String) {
+    ARABIC_COMPLETED_ONLY("الترجمة العربية (الأجزاء المنجزة فقط)", "_ar_completed.txt"),
+    BILINGUAL_COMPLETED_ONLY("ثنائي اللغة (الأجزاء المنجزة فقط)", "_bilingual_completed.txt"),
+    BILINGUAL_WITH_PLACEHOLDERS("مسودة كاملة (تشمل غير المترجم بوسم توضيحي)", "_bilingual_draft.txt")
 }

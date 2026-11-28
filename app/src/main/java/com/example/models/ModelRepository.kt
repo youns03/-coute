@@ -5,75 +5,56 @@ import androidx.work.Data
 import androidx.work.ExistingWorkPolicy
 import androidx.work.OneTimeWorkRequestBuilder
 import androidx.work.WorkManager
-import com.example.data.ModelRecordDao
-import com.example.data.ModelRecordEntity
-import com.example.domain.EngineType
-import com.example.domain.ModelCompatibilityReport
-import com.example.domain.ModelCompatibilityStatus
+import com.example.contracts.ModelCatalogProvider
+import com.example.contracts.ModelLoadVerifier
+import com.example.contracts.ModelRecordStore
+import com.example.contracts.ModelRepositoryGateway
+import com.example.contracts.ModelStorageGateway
+import com.example.contracts.TaskControls
+import com.example.contracts.TaskCoordinatorGateway
+import com.example.domain.LocalTaskEntry
+import com.example.domain.LocalTaskPriority
+import com.example.domain.LocalTaskStatus
+import com.example.domain.LocalTaskType
+import com.example.domain.MemoryDiagnostics
+import com.example.domain.ModelInstallRecord
 import com.example.domain.ModelInstallStatus
 import com.example.domain.ModelRole
 import com.example.domain.ModelSpec
+import com.example.domain.ModelUiEntry
 import com.example.domain.StorageBreakdown
-import com.example.runtime.LocalTaskCoordinator
-import com.example.runtime.LocalTaskEntry
-import com.example.runtime.LocalTaskPriority
-import com.example.runtime.LocalTaskStatus
-import com.example.runtime.LocalTaskType
-import com.example.runtime.TaskControls
-import com.example.transcription.SpeechTranscriptionManager
-import com.example.tts.MemoryDiagnostics
-import com.example.tts.TtsEngineManager
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.withContext
-
-data class ModelUiEntry(
-    val spec: ModelSpec,
-    val status: ModelInstallStatus,
-    val downloadedBytes: Long,
-    val totalBytes: Long,
-    val verifiedSha256: Boolean,
-    val verifiedLoadTest: Boolean,
-    val lastError: String?,
-    val isActive: Boolean,
-    val compatibility: ModelCompatibilityReport = ModelCompatibilityReport(
-        status = ModelCompatibilityStatus.COMPATIBLE,
-        isSupported = true,
-        summaryAr = "متوافق"
-    )
-) {
-    val progressFraction: Float
-        get() = if (totalBytes > 0L) (downloadedBytes.toFloat() / totalBytes.toFloat()).coerceIn(0f, 1f) else 0f
-
-    val remainingBytes: Long
-        get() = (totalBytes - downloadedBytes).coerceAtLeast(0L)
-}
+import java.io.File
 
 class ModelRepository(
     private val context: Context,
-    private val modelRecordDao: ModelRecordDao,
-    private val storageManager: ModelStorageManager,
-    private val ttsEngineManager: TtsEngineManager,
-    private val speechTranscriptionManager: SpeechTranscriptionManager? = null,
-    private val taskCoordinator: LocalTaskCoordinator? = null
-) {
+    private val modelRecordStore: ModelRecordStore,
+    private val storageManager: ModelStorageGateway,
+    private val modelCatalog: ModelCatalogProvider = ModelCatalog,
+    private val verifiers: List<ModelLoadVerifier> = emptyList(),
+    private val isModelActiveInRuntime: (String) -> Boolean = { false },
+    private val taskCoordinator: TaskCoordinatorGateway? = null
+) : ModelRepositoryGateway {
+
     private val workManager: WorkManager by lazy { WorkManager.getInstance(context) }
 
-    fun observeModels(activeModelIdFlow: Flow<String>): Flow<List<ModelUiEntry>> =
+    override fun observeModels(activeModelIdFlow: Flow<String>): Flow<List<ModelUiEntry>> =
         observeCatalogModels(
-            specs = ModelCatalog.ttsModels,
+            specs = modelCatalog.ttsModels,
             activeTtsIdFlow = activeModelIdFlow,
             activeAsrIdFlow = flowOf("")
         )
 
-    fun observeAllModels(
+    override fun observeAllModels(
         activeTtsIdFlow: Flow<String>,
         activeAsrIdFlow: Flow<String>
     ): Flow<List<ModelUiEntry>> =
         observeCatalogModels(
-            specs = ModelCatalog.allModels,
+            specs = modelCatalog.allModels,
             activeTtsIdFlow = activeTtsIdFlow,
             activeAsrIdFlow = activeAsrIdFlow
         )
@@ -83,7 +64,7 @@ class ModelRepository(
         activeTtsIdFlow: Flow<String>,
         activeAsrIdFlow: Flow<String>
     ): Flow<List<ModelUiEntry>> {
-        return combine(modelRecordDao.observeAll(), activeTtsIdFlow, activeAsrIdFlow) { records, activeTtsId, activeAsrId ->
+        return combine(modelRecordStore.observeAll(), activeTtsIdFlow, activeAsrIdFlow) { records, activeTtsId, activeAsrId ->
             val byId = records.associateBy { it.modelId }
             val hw = MemoryDiagnostics.getDeviceHardwareInfo(context)
             specs.map { spec ->
@@ -113,32 +94,29 @@ class ModelRepository(
         }
     }
 
-    private suspend fun verifySpecLoadable(spec: ModelSpec, modelDir: java.io.File): Result<Unit> {
-        return if (spec.engineType == EngineType.SHERPA_ASR) {
-            speechTranscriptionManager?.verifyModelLoadable(spec, modelDir) ?: Result.success(Unit)
-        } else {
-            ttsEngineManager.verifyModelLoadable(spec, modelDir)
-        }
+    private suspend fun verifySpecLoadable(spec: ModelSpec, modelDir: File): Result<Unit> {
+        val verifier = verifiers.firstOrNull { it.supportsRole(spec.role) } ?: return Result.success(Unit)
+        return verifier.verifyModelLoadable(spec, modelDir)
     }
 
     /**
      * Reconciles database status against actual files in permanent filesDir after app restart/reboot.
      * Enforces cryptographic SHA-256 manifest checks, hardware compatibility, and genuine engine load verification.
      */
-    suspend fun reconcileStorageOnStartup() {
+    override suspend fun reconcileStorageOnStartup() {
         storageManager.recoverPendingInstalls()
         val hw = MemoryDiagnostics.getDeviceHardwareInfo(context)
-        for (spec in ModelCatalog.allModels) {
-            val rec = modelRecordDao.getRecord(spec.id)
+        for (spec in modelCatalog.allModels) {
+            val rec = modelRecordStore.getRecord(spec.id)
             val modelDir = storageManager.getInstalledModelDir(spec.id)
             val cryptoValid = storageManager.verifyInstalledPackage(spec, verifyIntegrity = true)
             val espeakValid = !spec.requiresEspeakData ||
-                storageManager.verifyInstalledPackage(ModelCatalog.espeakNgDataSpec, verifyIntegrity = true)
+                storageManager.verifyInstalledPackage(modelCatalog.espeakNgDataSpec, verifyIntegrity = true)
             val compat = MemoryDiagnostics.evaluateModelCompatibility(spec, hw)
 
             if (rec?.status == ModelInstallStatus.INSTALLED.name) {
                 if (!cryptoValid || !espeakValid) {
-                    modelRecordDao.upsert(
+                    modelRecordStore.upsert(
                         rec.copy(
                             status = ModelInstallStatus.CORRUPTED.name,
                             verifiedSha256 = false,
@@ -147,7 +125,7 @@ class ModelRepository(
                         )
                     )
                 } else if (!compat.isSupported) {
-                    modelRecordDao.upsert(
+                    modelRecordStore.upsert(
                         rec.copy(
                             status = ModelInstallStatus.FAILED.name,
                             verifiedLoadTest = false,
@@ -157,7 +135,7 @@ class ModelRepository(
                 } else if (!rec.verifiedLoadTest) {
                     val loadRes = verifySpecLoadable(spec, modelDir)
                     if (loadRes.isSuccess) {
-                        modelRecordDao.upsert(
+                        modelRecordStore.upsert(
                             rec.copy(
                                 status = ModelInstallStatus.INSTALLED.name,
                                 verifiedSha256 = true,
@@ -166,7 +144,7 @@ class ModelRepository(
                             )
                         )
                     } else {
-                        modelRecordDao.upsert(
+                        modelRecordStore.upsert(
                             rec.copy(
                                 status = ModelInstallStatus.FAILED.name,
                                 verifiedLoadTest = false,
@@ -177,8 +155,8 @@ class ModelRepository(
                 }
             } else if (rec == null && modelDir.exists() && !modelDir.listFiles().isNullOrEmpty()) {
                 if (!cryptoValid || !espeakValid) {
-                    modelRecordDao.upsert(
-                        ModelRecordEntity(
+                    modelRecordStore.upsert(
+                        ModelInstallRecord(
                             modelId = spec.id,
                             status = ModelInstallStatus.CORRUPTED.name,
                             downloadedBytes = 0L,
@@ -190,8 +168,8 @@ class ModelRepository(
                         )
                     )
                 } else if (!compat.isSupported) {
-                    modelRecordDao.upsert(
-                        ModelRecordEntity(
+                    modelRecordStore.upsert(
+                        ModelInstallRecord(
                             modelId = spec.id,
                             status = ModelInstallStatus.FAILED.name,
                             downloadedBytes = spec.expectedSizeBytes,
@@ -204,8 +182,8 @@ class ModelRepository(
                     )
                 } else {
                     val loadRes = verifySpecLoadable(spec, modelDir)
-                    modelRecordDao.upsert(
-                        ModelRecordEntity(
+                    modelRecordStore.upsert(
+                        ModelInstallRecord(
                             modelId = spec.id,
                             status = if (loadRes.isSuccess) ModelInstallStatus.INSTALLED.name else ModelInstallStatus.FAILED.name,
                             downloadedBytes = spec.expectedSizeBytes,
@@ -220,7 +198,7 @@ class ModelRepository(
             } else if (rec?.status == ModelInstallStatus.DOWNLOADING.name ||
                 rec?.status == ModelInstallStatus.VERIFYING.name
             ) {
-                modelRecordDao.upsert(
+                modelRecordStore.upsert(
                     rec.copy(
                         status = ModelInstallStatus.PAUSED.name,
                         downloadedBytes = storageManager.getTempPartFile(spec.id).length()
@@ -230,8 +208,8 @@ class ModelRepository(
         }
     }
 
-    fun startOrResumeDownload(modelId: String) {
-        val spec = ModelCatalog.findById(modelId)
+    override fun startOrResumeDownload(modelId: String) {
+        val spec = modelCatalog.findById(modelId)
         taskCoordinator?.upsertExternalTask(
             entry = LocalTaskEntry(
                 id = "dl_$modelId",
@@ -265,20 +243,21 @@ class ModelRepository(
         )
     }
 
-    fun pauseDownload(modelId: String) {
+    override fun pauseDownload(modelId: String) {
         workManager.cancelUniqueWork("model_dl_$modelId")
         taskCoordinator?.updateTaskStatus("dl_$modelId", LocalTaskStatus.PAUSED, subtitle = "متوقف مؤقتاً")
     }
 
-    suspend fun cancelAndDiscardDownload(modelId: String) = withContext(Dispatchers.IO) {
+    override suspend fun cancelAndDiscardDownload(modelId: String) = withContext(Dispatchers.IO) {
         runCatching { workManager.cancelUniqueWork("model_dl_$modelId").result.get() }
         storageManager.getTempPartFile(modelId).delete()
-        modelRecordDao.delete(modelId)
+        modelRecordStore.delete(modelId)
         taskCoordinator?.dismissTask("dl_$modelId")
+        Unit
     }
 
-    suspend fun deleteInstalledModel(modelId: String, activeModelId: String): Result<Unit> {
-        if (modelId == activeModelId && ttsEngineManager.runtimeState.value.loadedModelId == modelId) {
+    override suspend fun deleteInstalledModel(modelId: String, activeModelId: String): Result<Unit> {
+        if (modelId == activeModelId && isModelActiveInRuntime(modelId)) {
             return Result.failure(IllegalStateException("لا يمكن حذف نموذج قيد الاستخدام حالياً. أوقف المحرك أو بدّل النموذج أولاً."))
         }
         if (modelId == activeModelId) {
@@ -286,11 +265,11 @@ class ModelRepository(
         }
         workManager.cancelUniqueWork("model_dl_$modelId")
         storageManager.deleteModelFiles(modelId)
-        modelRecordDao.delete(modelId)
+        modelRecordStore.delete(modelId)
         return Result.success(Unit)
     }
 
-    fun getStorageBreakdown(): StorageBreakdown = storageManager.getStorageBreakdown()
+    override fun getStorageBreakdown(): StorageBreakdown = storageManager.getStorageBreakdown()
 
-    fun clearAudioCache() = storageManager.clearAudioCache()
+    override fun clearAudioCache() = storageManager.clearAudioCache()
 }

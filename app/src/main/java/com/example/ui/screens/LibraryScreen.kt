@@ -75,6 +75,8 @@ import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
 import com.example.R
 import com.example.data.BookEntity
+import com.example.data.importengine.LanguageDetector
+import com.example.data.importengine.SupportedImportFormat
 import com.example.ui.components.AtelierCard
 import com.example.ui.components.BookCoverArtwork
 import com.example.ui.components.BookCoverSheet
@@ -83,6 +85,7 @@ import com.example.ui.components.BookRenameDialog
 import com.example.ui.components.DeleteBookConfirmDialog
 import com.example.ui.components.EditorialSectionHeader
 import com.example.ui.components.MonospaceMetricPill
+import com.example.ui.theme.ArabicSansFamily
 import com.example.ui.theme.FrenchSerifFamily
 import com.example.ui.theme.LocalEcouteAtelierColors
 import com.example.ui.viewmodel.LibraryFilter
@@ -98,6 +101,7 @@ fun LibraryScreen(
     onSortSelected: (LibrarySortOrder) -> Unit,
     onToggleViewMode: () -> Unit,
     onImportUri: (Uri) -> Unit,
+    onInspectImportUris: (List<Uri>) -> Unit = { uris -> uris.firstOrNull()?.let(onImportUri) },
     onOpenBook: (String) -> Unit,
     onRenameBook: (String, String) -> Unit,
     onUpdateCoverTemplate: (String, String) -> Unit,
@@ -115,9 +119,9 @@ fun LibraryScreen(
     var sortMenuExpanded by remember { mutableStateOf(false) }
 
     val filePickerLauncher = rememberLauncherForActivityResult(
-        contract = ActivityResultContracts.OpenDocument()
-    ) { uri: Uri? ->
-        if (uri != null) onImportUri(uri)
+        contract = ActivityResultContracts.OpenMultipleDocuments()
+    ) { uris: List<Uri> ->
+        if (uris.isNotEmpty()) onInspectImportUris(uris)
     }
 
     val coverPhotoPickerLauncher = rememberLauncherForActivityResult(
@@ -325,14 +329,7 @@ fun LibraryScreen(
                         }
                         Button(
                             onClick = {
-                                filePickerLauncher.launch(
-                                    arrayOf(
-                                        "text/plain",
-                                        "application/epub+zip",
-                                        "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-                                        "application/octet-stream"
-                                    )
-                                )
+                                filePickerLauncher.launch(SupportedImportFormat.safPickerMimeTypes())
                             },
                             enabled = !state.isImporting,
                             shape = RoundedCornerShape(12.dp),
@@ -515,11 +512,14 @@ private fun LibraryGridCard(
                 }
             }
 
-            CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Ltr) {
+            val titleIsArabic = book.sourceLanguage.lowercase().startsWith("ar") || LanguageDetector.isArabicText(book.title)
+            CompositionLocalProvider(
+                LocalLayoutDirection provides if (titleIsArabic) LayoutDirection.Rtl else LayoutDirection.Ltr
+            ) {
                 Text(
                     text = book.title,
                     style = MaterialTheme.typography.titleSmall.copy(
-                        fontFamily = FrenchSerifFamily,
+                        fontFamily = if (titleIsArabic) ArabicSansFamily else FrenchSerifFamily,
                         fontWeight = FontWeight.SemiBold
                     ),
                     maxLines = 2,
@@ -634,11 +634,14 @@ private fun LibraryListCard(
                             onDelete = onDelete
                         )
                     }
-                    CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Ltr) {
+                    val titleIsArabic = book.sourceLanguage.lowercase().startsWith("ar") || LanguageDetector.isArabicText(book.title)
+                    CompositionLocalProvider(
+                        LocalLayoutDirection provides if (titleIsArabic) LayoutDirection.Rtl else LayoutDirection.Ltr
+                    ) {
                         Text(
                             text = book.title,
                             style = MaterialTheme.typography.titleMedium.copy(
-                                fontFamily = FrenchSerifFamily,
+                                fontFamily = if (titleIsArabic) ArabicSansFamily else FrenchSerifFamily,
                                 fontWeight = FontWeight.SemiBold
                             ),
                             maxLines = 2,

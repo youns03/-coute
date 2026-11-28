@@ -8,7 +8,7 @@
     <string name="reader_appearance_content_description">تخصيص الخط والمظهر</string>
     <string name="reader_download_in_progress">جاري التنزيل...</string>
     <string name="common_close">إغلاق</string>
-    <string name="reader_return_to_audio">العودة إلى موضع الاستماع</string>
+    <string name="reader_return_to_audio">العودة إلى الاستماع</string>
     <string name="reader_paragraph_number">الفقرة %1$d</string>
     <string name="reader_paragraph_translating">تُترجم الفقرة...</string>
     <string name="reader_translation_complete">تمت الترجمة</string>
@@ -18,9 +18,19 @@
     <string name="reader_arabic_translation">الترجمة العربية</string>
     <string name="reader_translating_paragraph_locally">تُترجم الفقرة محلياً...</string>
     <string name="reader_save_sentence_translation_content_description">حفظ ترجمة الجملة في القاموس</string>
-    <string name="reader_translate_paragraph_hint">اضغط «ترجمة الفقرة» لعرض معناها بالعربية.</string>
+    <string name="reader_translate_paragraph_hint">اضغط على أيقونة الترجمة لعرض معناها بالعربية.</string>
     <string name="reader_appearance_title">مظهر القراءة ولغة النص</string>
     <string name="reader_language_for_translation">لغة الكتاب للترجمة (%1$s)</string>
+    <string name="reader_language_picker_title">لغة القراءة والترجمة</string>
+    <string name="reader_language_picker_subtitle">اختر لغة النص المصدر ليتم ربطها بمحرك الترجمة المحلية إلى العربية.</string>
+    <string name="reader_language_french_option">الفرنسية ← العربية (FR → AR)</string>
+    <string name="reader_language_english_option">الإنجليزية ← العربية (EN → AR)</string>
+    <string name="reader_language_arabic_only">النص عربي أصلاً</string>
+    <string name="reader_language_chip_cd">تغيير لغة القراءة والترجمة (%1$s)</string>
+    <string name="reader_more_options_cd">خيارات القارئ</string>
+    <string name="reader_open_chapters_cd">فتح قائمة الفصول: %1$s</string>
+    <string name="reader_show_all_translations">إظهار جميع الترجمات</string>
+    <string name="reader_hide_all_translations">إخفاء جميع الترجمات</string>
     <string name="reader_switch_to_english">تبديل للإنجليزية</string>
     <string name="reader_switch_to_french">تبديل للفرنسية</string>
     <string name="reader_night_mode">الوضع الليلي للقراءة</string>
@@ -37,18 +47,19 @@
     <string name="reader_search_placeholder">ابحث عن كلمة أو جملة داخل النص...</string>
     <string name="reader_close_search_content_description">إغلاق البحث</string>
     <string name="reader_search_result_position">الفصل %1$d • جملة %2$d</string>
-    <string name="reader_audio_preparing">جارٍ تجهيز الصوت</string>
-    <string name="reader_audio_now_reading">يُقرأ الآن</string>
+    <string name="reader_audio_preparing">جارٍ التجهيز</string>
+    <string name="reader_audio_now_reading">قيد التشغيل</string>
     <string name="reader_audio_paused">متوقف مؤقتاً</string>
-    <string name="reader_audio_player">مشغّل القراءة</string>
+    <string name="reader_audio_player">جاهز للاستماع</string>
     <string name="reader_ready_to_listen_french">جاهز للاستماع</string>
-    <string name="reader_ready_to_listen_english">Ready to listen</string>
+    <string name="reader_ready_to_listen_english">جاهز للاستماع</string>
     <string name="reader_previous_sentence_content_description">الجملة السابقة</string>
     <string name="reader_pause_label">إيقاف مؤقت</string>
     <string name="reader_play_content_description">تشغيل</string>
     <string name="reader_listen_button">استماع</string>
     <string name="reader_next_sentence_content_description">الجملة التالية</string>
-    <string name="reader_full_player_button">المشغّل</string>
+    <string name="reader_full_player_button">توسيع المشغّل الكامل</string>
+    <string name="reader_speed_chip_cd">سرعة القراءة %1$s ضعف</string>
     <string name="reader_pronounce_button">نطق</string>
     <string name="reader_offline_translation_label">الترجمة العربية (%1$s دون اتصال):</string>
     <string name="reader_translation_failed">تعذر الترجمة.</string>
@@ -57,6 +68,7 @@
     <string name="reader_saved_to_vocabulary">تم الحفظ في قاموس المفردات</string>
     <string name="reader_save_to_vocabulary">حفظ في قاموس المفردات</string>
     <string name="reader_speed_multiplier">%1$s×</string>
+    <string name="reader_empty_chapter">لا توجد فقرات معروضة في هذا الفصل حالياً.</string>
     <plurals name="reader_sentence_count">
         <item quantity="zero">لا توجد جمل</item>
         <item quantity="one">جملة واحدة</item>
@@ -115,11 +127,11 @@
     <string name="library_search_placeholder">ابحث في مكتبة الكتب الفرنسية والإنجليزية...</string>
     <string name="library_section_title">كتبك ونصوصك</string>
     <string name="library_empty_title">لا توجد كتب مطابقة لبحثك</string>
-    <string name="library_empty_subtitle">استورد ملف TXT أو EPUB بالفرنسية أو الإنجليزية لبدء القراءة والترجمة دون إنترنت.</string>
+    <string name="library_empty_subtitle">استورد PDF أو EPUB أو DOCX أو TXT أو Markdown أو HTML أو SRT/VTT بالعربية أو الفرنسية أو الإنجليزية للقراءة والاستماع دون إنترنت.</string>
     <string name="library_hero_content_description">مكتبة إيكوت لتعلم اللغات</string>
     <string name="library_hero_headline">اقرأ الفرنسية والإنجليزية واستمع محلياً</string>
     <string name="library_hero_subheadline">مزامنة النطق كلمة بكلمة، ترجمة جمل وفقرات للعربية، وتشغيل دون إنترنت.</string>
-    <string name="library_import_button">استيراد TXT / EPUB</string>
+    <string name="library_import_button">استيراد ملفات</string>
     <string name="library_models_button">النماذج الصوتية</string>
     <string name="library_delete_book_cd">حذف الكتاب</string>
     <string name="library_book_stats">%1$d فصول • %2$d جملة</string>
@@ -159,11 +171,11 @@
     <string name="translator_shared_engine">المحرك المشترك: %1$s</string>
     <string name="translator_download_engine">تنزيل المحرك</string>
     <string name="translator_ready_offline_cd">جاهز دون اتصال</string>
-    <string name="translator_import_button">استيراد ملف للترجمة (TXT / EPUB / DOCX)</string>
-    <string name="translator_supported_formats">يدعم ملفات TXT وEPUB وDOCX محلياً مع الحفاظ على العناوين والفقرات.</string>
+    <string name="translator_import_button">استيراد ملفات للترجمة</string>
+    <string name="translator_supported_formats">يدعم PDF وEPUB وDOCX وTXT وMarkdown وHTML وSRT وVTT محلياً مع الحفاظ على البنية والفقرات.</string>
     <string name="translator_jobs_title">مهام الترجمة</string>
     <string name="translator_empty_title">لا توجد ملفات قيد الترجمة بعد</string>
-    <string name="translator_empty_subtitle">استورد ملف TXT أو EPUB أو DOCX بالفرنسية أو الإنجليزية؛ سيُقسَّم تلقائياً إلى دفعات وتستمر ترجمته في الخلفية مع حفظ كل جزء منجز.</string>
+    <string name="translator_empty_subtitle">استورد ملفات PDF أو EPUB أو DOCX أو نصوصاً أو ترجمات SRT/VTT بالفرنسية أو الإنجليزية؛ ستُقسَّم تلقائياً وتُترجم في الخلفية.</string>
     <string name="translator_delete_job_cd">حذف المهمة</string>
     <string name="translator_export_completed_cd">تصدير الأجزاء المنجزة</string>
 
@@ -240,7 +252,7 @@
     <string name="add_sheet_title">ماذا تريد أن تضيف؟</string>
     <string name="add_sheet_subtitle">اختر مصدراً لإضافته إلى مكتبتك المحلية فوراً.</string>
     <string name="add_option_document_title">استيراد كتاب أو مستند</string>
-    <string name="add_option_document_desc">ملفات TXT أو EPUB أو DOCX بالفرنسية أو الإنجليزية</string>
+    <string name="add_option_document_desc">ملفات PDF وEPUB وDOCX وTXT وMD وHTML وSRT/VTT (متعدد)</string>
     <string name="add_option_audio_title">استيراد ملف صوتي وتفريغه</string>
     <string name="add_option_audio_desc">تحويل الصوتيات (WAV / MP3 / M4A) إلى نص متزامن محلياً</string>
     <string name="add_option_text_title">إضافة نص مباشر</string>
@@ -248,7 +260,7 @@
 
     <string name="direct_text_dialog_title">إضافة نص مباشر للمكتبة</string>
     <string name="direct_text_title_label">عنوان النص</string>
-    <string name="direct_text_body_label">المحتوى الفرنسي أو الإنجليزي</string>
+    <string name="direct_text_body_label">المحتوى (العربية أو الفرنسية أو الإنجليزية)</string>
     <string name="direct_text_save">حفظ وفتح في القارئ</string>
 
     <string name="audio_import_lang_title">اختر لغة الملف الصوتي</string>
@@ -295,4 +307,17 @@
     <string name="models_remaining_bytes">المتبقي: %1$s</string>
     <string name="models_tech_details_toggle">التفاصيل التقنية ومراقبة الذاكرة</string>
     <string name="models_unload_idle_ram">تفريغ المحركات الخاملة الآن</string>
+
+    <string name="import_queue_title">فحص واستيراد الملفات</string>
+    <string name="import_queue_inspecting">جاري فحص الصيغ والترميز...</string>
+    <string name="import_queue_inspecting_detail">يتم التحقق من التوقيع الفعلي وحجم الملفات دون استهلاك الذاكرة...</string>
+    <string name="import_queue_summary">جاهز: %1$d ملف • مستبعد: %2$d</string>
+    <string name="import_pdf_mode_label">وضع استخراج ملفات PDF</string>
+    <string name="import_queue_processing">جاري استخراج النص...</string>
+    <string name="import_queue_start">بدء الاستيراد</string>
+    <string name="import_queue_in_progress">جاري الاستيراد...</string>
+    <string name="import_queue_remove_file">إزالة</string>
+    <string name="import_pdf_encrypted_cd">ملف PDF محمي بكلمة مرور</string>
+    <string name="import_pdf_encrypted_warning">يبدو هذا الملف محمياً بكلمة مرور وقد يتعذر استخراجه.</string>
+    <string name="import_supported_categories_title">الصيغ المدعومة مصنفة</string>
 </resources>

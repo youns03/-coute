@@ -94,6 +94,7 @@ fun QuickAddModalSheet(
                     onOpenDirectText()
                 }
             )
+            SupportedFormatsLegendCard()
             Spacer(Modifier.height(16.dp))
         }
     }
@@ -174,6 +175,11 @@ fun DirectTextInputDialog(
                         selected = selectedLang == "en",
                         onClick = { selectedLang = "en" },
                         label = { Text("الإنجليزية (EN)") }
+                    )
+                    FilterChip(
+                        selected = selectedLang == "ar",
+                        onClick = { selectedLang = "ar" },
+                        label = { Text("العربية (AR)") }
                     )
                 }
                 OutlinedTextField(

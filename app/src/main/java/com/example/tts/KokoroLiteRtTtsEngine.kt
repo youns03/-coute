@@ -2,14 +2,16 @@ package com.example.tts
 
 import android.content.Context
 import android.os.SystemClock
+import com.example.contracts.ModelCatalogProvider
+import com.example.contracts.ModelStorageGateway
+import com.example.contracts.TtsEngine
 import com.example.domain.AcceleratorMode
 import com.example.domain.EngineType
+import com.example.domain.MemoryDiagnostics
 import com.example.domain.ModelSpec
 import com.example.domain.TtsStreamChunk
 import com.example.domain.TtsSynthesisResult
 import com.example.domain.WordTimestampRange
-import com.example.models.ModelCatalog
-import com.example.models.ModelStorageManager
 import com.google.mediapipe.tasks.audio.texttospeech.SynthesisOptions
 import com.google.mediapipe.tasks.audio.texttospeech.TextToSpeech
 import com.google.mediapipe.tasks.audio.texttospeech.TextToSpeechOptions
@@ -137,13 +139,19 @@ private object DefaultKokoroSessionFactory : KokoroSessionFactory {
 
 class KokoroLiteRtTtsEngine internal constructor(
     private val context: Context,
-    private val storageManager: ModelStorageManager,
+    private val storageManager: ModelStorageGateway,
+    private val modelCatalog: ModelCatalogProvider,
     private val sessionFactory: KokoroSessionFactory
 ) : TtsEngine {
 
-    constructor(context: Context, storageManager: ModelStorageManager) : this(
+    constructor(
+        context: Context,
+        storageManager: ModelStorageGateway,
+        modelCatalog: ModelCatalogProvider
+    ) : this(
         context = context,
         storageManager = storageManager,
+        modelCatalog = modelCatalog,
         sessionFactory = DefaultKokoroSessionFactory
     )
 
@@ -247,7 +255,7 @@ class KokoroLiteRtTtsEngine internal constructor(
     }
 
     private fun resolveCpuFallbackModelFile(primaryDir: File): Pair<File, Boolean> {
-        val cpuSpec = ModelCatalog.findById("kokoro-82m-cpu-fp16")
+        val cpuSpec = modelCatalog.findById("kokoro-82m-cpu-fp16")
         if (cpuSpec != null &&
             MemoryDiagnostics.evaluateRuntimeMemoryForLoad(cpuSpec, context).isSupported &&
             storageManager.verifyInstalledPackage(cpuSpec, verifyIntegrity = true)

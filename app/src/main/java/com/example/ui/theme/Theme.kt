@@ -25,7 +25,17 @@ data class EcouteAtelierColors(
     val ambientGlowBottom: Color,
     val wordHighlightBg: Color,
     val warmGoldAccent: Color,
-    val activeParagraphStripe: Color
+    val activeParagraphStripe: Color,
+    val readerSageAccent: Color,
+    val onReaderSageAccent: Color,
+    val readerMetaText: Color,
+    val readerTranslationText: Color,
+    val readerDivider: Color,
+    val readerSentenceHighlightBg: Color,
+    val readerActiveParagraphBg: Color,
+    val readerSelectedParagraphBg: Color,
+    val readerReturnChipBg: Color,
+    val readerReturnChipContent: Color
 )
 
 private val LightAtelierColors = EcouteAtelierColors(
@@ -35,7 +45,17 @@ private val LightAtelierColors = EcouteAtelierColors(
     ambientGlowBottom = Color(0x14162B49),
     wordHighlightBg = WordHighlightBgLight,
     warmGoldAccent = AtelierWarmGoldLight,
-    activeParagraphStripe = TerracottaSecondaryLight
+    activeParagraphStripe = ReaderSageAccentLight,
+    readerSageAccent = ReaderSageAccentLight,
+    onReaderSageAccent = OnReaderSageAccentLight,
+    readerMetaText = OnPaperVariantLight,
+    readerTranslationText = ReaderTranslationTextLight,
+    readerDivider = OutlineVariantLight,
+    readerSentenceHighlightBg = ReaderSentenceHighlightBgLight,
+    readerActiveParagraphBg = ReaderActiveParagraphBgLight,
+    readerSelectedParagraphBg = ReaderSelectedParagraphBgLight,
+    readerReturnChipBg = ReaderReturnChipBgLight,
+    readerReturnChipContent = ReaderReturnChipContentLight
 )
 
 private val DarkAtelierColors = EcouteAtelierColors(
@@ -45,7 +65,17 @@ private val DarkAtelierColors = EcouteAtelierColors(
     ambientGlowBottom = Color.Transparent,
     wordHighlightBg = WordHighlightBgDark,
     warmGoldAccent = AtelierWarmGoldDark,
-    activeParagraphStripe = TerracottaSecondaryDark
+    activeParagraphStripe = ReaderSageAccentDark,
+    readerSageAccent = ReaderSageAccentDark,
+    onReaderSageAccent = OnReaderSageAccentDark,
+    readerMetaText = OnInkVariantDark,
+    readerTranslationText = ReaderTranslationTextDark,
+    readerDivider = OutlineDark,
+    readerSentenceHighlightBg = ReaderSentenceHighlightBgDark,
+    readerActiveParagraphBg = ReaderActiveParagraphBgDark,
+    readerSelectedParagraphBg = ReaderSelectedParagraphBgDark,
+    readerReturnChipBg = ReaderReturnChipBgDark,
+    readerReturnChipContent = ReaderReturnChipContentDark
 )
 
 val LocalEcouteAtelierColors = staticCompositionLocalOf { LightAtelierColors }

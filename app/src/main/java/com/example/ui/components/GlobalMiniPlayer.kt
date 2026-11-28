@@ -51,7 +51,7 @@ import com.example.audio.PlaybackStatus
 import com.example.audio.PlaybackUiState
 import com.example.ui.theme.FrenchSerifFamily
 import com.example.ui.theme.LocalEcouteAtelierColors
-import com.example.ui.theme.StudioMonoFamily
+import com.example.ui.theme.withTabularNumbers
 
 @Composable
 fun GlobalMiniPlayer(
@@ -94,11 +94,11 @@ fun GlobalMiniPlayer(
         contentColor = MaterialTheme.colorScheme.onSurface,
         border = BorderStroke(
             width = 1.dp,
-            color = if (isPlaying) MaterialTheme.colorScheme.secondary.copy(alpha = 0.45f) else atelier.cardBorder
+            color = if (isPlaying) atelier.readerSageAccent.copy(alpha = 0.42f) else atelier.cardBorder
         ),
-        tonalElevation = 2.dp,
-        shadowElevation = 4.dp,
-        shape = MaterialTheme.shapes.extraLarge
+        tonalElevation = 1.dp,
+        shadowElevation = 3.dp,
+        shape = RoundedCornerShape(20.dp)
     ) {
         BoxWithConstraints {
             val showSeekButtons = maxWidth >= 430.dp
@@ -114,7 +114,7 @@ fun GlobalMiniPlayer(
                             .clip(RoundedCornerShape(12.dp))
                             .background(
                                 if (isPlaying || isBuffering) {
-                                    MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.85f)
+                                    atelier.readerSageAccent.copy(alpha = 0.16f)
                                 } else {
                                     MaterialTheme.colorScheme.surfaceVariant
                                 }
@@ -124,7 +124,7 @@ fun GlobalMiniPlayer(
                         AcousticWaveIndicator(
                             isPlaying = isPlaying,
                             isBuffering = isBuffering,
-                            barColor = MaterialTheme.colorScheme.secondary,
+                            barColor = atelier.readerSageAccent,
                             barCount = 4,
                             modifier = Modifier
                                 .width(20.dp)
@@ -154,14 +154,14 @@ fun GlobalMiniPlayer(
                                 val sec = playbackState.sleepTimerRemainingSec % 60
                                 Text(
                                     text = "%d:%02d".format(min, sec),
-                                    style = MaterialTheme.typography.labelSmall.copy(fontFamily = StudioMonoFamily),
-                                    color = MaterialTheme.colorScheme.secondary
+                                    style = MaterialTheme.typography.labelSmall.withTabularNumbers(),
+                                    color = atelier.readerSageAccent
                                 )
                             } else if (playbackState.sleepTimerEndOfChapter) {
                                 Text(
                                     text = stringResource(R.string.player_sleep_timer_eoc),
                                     style = MaterialTheme.typography.labelSmall,
-                                    color = MaterialTheme.colorScheme.secondary
+                                    color = atelier.readerSageAccent
                                 )
                             }
                         }
@@ -176,81 +176,88 @@ fun GlobalMiniPlayer(
                         }
                     }
 
-                    if (showSeekButtons) {
-                        IconButton(
-                            onClick = onSeekBack,
-                            enabled = !isBuffering,
-                            modifier = Modifier.minimumInteractiveComponentSize()
+                    CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Ltr) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(2.dp)
                         ) {
-                            Icon(
-                                Icons.Rounded.Replay10,
-                                contentDescription = stringResource(R.string.player_seek_back_15_cd),
-                                tint = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                        }
-                    }
+                            if (showSeekButtons) {
+                                IconButton(
+                                    onClick = onSeekBack,
+                                    enabled = !isBuffering,
+                                    modifier = Modifier.minimumInteractiveComponentSize()
+                                ) {
+                                    Icon(
+                                        Icons.Rounded.Replay10,
+                                        contentDescription = stringResource(R.string.player_seek_back_15_cd),
+                                        tint = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                }
+                            }
 
-                    IconButton(
-                        onClick = onPrevious,
-                        enabled = !isBuffering,
-                        modifier = Modifier.minimumInteractiveComponentSize()
-                    ) {
-                        Icon(
-                            Icons.Rounded.SkipPrevious,
-                            contentDescription = stringResource(R.string.mini_player_previous),
-                            tint = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                    }
-
-                    FilledIconButton(
-                        onClick = onTogglePlayPause,
-                        enabled = !isBuffering,
-                        shape = CircleShape,
-                        colors = IconButtonDefaults.filledIconButtonColors(
-                            containerColor = MaterialTheme.colorScheme.secondary,
-                            contentColor = MaterialTheme.colorScheme.onSecondary
-                        ),
-                        modifier = Modifier.minimumInteractiveComponentSize()
-                    ) {
-                        if (isBuffering) {
-                            CircularProgressIndicator(
-                                modifier = Modifier.size(18.dp),
-                                strokeWidth = 2.dp,
-                                color = MaterialTheme.colorScheme.onSecondary
-                            )
-                        } else {
-                            Icon(
-                                if (isPlaying) Icons.Rounded.Pause else Icons.Rounded.PlayArrow,
-                                contentDescription = stringResource(
-                                    if (isPlaying) R.string.mini_player_pause else R.string.mini_player_play
+                            IconButton(
+                                onClick = onPrevious,
+                                enabled = !isBuffering,
+                                modifier = Modifier.minimumInteractiveComponentSize()
+                            ) {
+                                Icon(
+                                    Icons.Rounded.SkipPrevious,
+                                    contentDescription = stringResource(R.string.mini_player_previous),
+                                    tint = MaterialTheme.colorScheme.onSurfaceVariant
                                 )
-                            )
-                        }
-                    }
+                            }
 
-                    IconButton(
-                        onClick = onNext,
-                        enabled = !isBuffering,
-                        modifier = Modifier.minimumInteractiveComponentSize()
-                    ) {
-                        Icon(
-                            Icons.Rounded.SkipNext,
-                            contentDescription = stringResource(R.string.mini_player_next),
-                            tint = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                    }
+                            FilledIconButton(
+                                onClick = onTogglePlayPause,
+                                enabled = !isBuffering,
+                                shape = CircleShape,
+                                colors = IconButtonDefaults.filledIconButtonColors(
+                                    containerColor = atelier.readerSageAccent,
+                                    contentColor = atelier.onReaderSageAccent
+                                ),
+                                modifier = Modifier.minimumInteractiveComponentSize()
+                            ) {
+                                if (isBuffering) {
+                                    CircularProgressIndicator(
+                                        modifier = Modifier.size(18.dp),
+                                        strokeWidth = 2.dp,
+                                        color = atelier.onReaderSageAccent
+                                    )
+                                } else {
+                                    Icon(
+                                        if (isPlaying) Icons.Rounded.Pause else Icons.Rounded.PlayArrow,
+                                        contentDescription = stringResource(
+                                            if (isPlaying) R.string.mini_player_pause else R.string.mini_player_play
+                                        )
+                                    )
+                                }
+                            }
 
-                    if (showSeekButtons) {
-                        IconButton(
-                            onClick = onSeekForward,
-                            enabled = !isBuffering,
-                            modifier = Modifier.minimumInteractiveComponentSize()
-                        ) {
-                            Icon(
-                                Icons.Rounded.Forward10,
-                                contentDescription = stringResource(R.string.player_seek_forward_15_cd),
-                                tint = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
+                            IconButton(
+                                onClick = onNext,
+                                enabled = !isBuffering,
+                                modifier = Modifier.minimumInteractiveComponentSize()
+                            ) {
+                                Icon(
+                                    Icons.Rounded.SkipNext,
+                                    contentDescription = stringResource(R.string.mini_player_next),
+                                    tint = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+
+                            if (showSeekButtons) {
+                                IconButton(
+                                    onClick = onSeekForward,
+                                    enabled = !isBuffering,
+                                    modifier = Modifier.minimumInteractiveComponentSize()
+                                ) {
+                                    Icon(
+                                        Icons.Rounded.Forward10,
+                                        contentDescription = stringResource(R.string.player_seek_forward_15_cd),
+                                        tint = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                }
+                            }
                         }
                     }
                 }
@@ -258,7 +265,7 @@ fun GlobalMiniPlayer(
                 if (chapterProgress > 0f) {
                     LinearProgressIndicator(
                         progress = { chapterProgress },
-                        color = MaterialTheme.colorScheme.secondary,
+                        color = atelier.readerSageAccent,
                         trackColor = MaterialTheme.colorScheme.surfaceVariant,
                         modifier = Modifier
                             .fillMaxWidth()

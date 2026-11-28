@@ -1,14 +1,15 @@
 package com.example.models
 
+import com.example.contracts.ModelCatalogProvider
 import com.example.domain.ArchiveType
 import com.example.domain.EngineType
 import com.example.domain.LicenseRecord
 import com.example.domain.ModelRole
 import com.example.domain.ModelSpec
 
-object ModelCatalog {
+object ModelCatalog : ModelCatalogProvider {
 
-    val espeakNgDataSpec = ModelSpec(
+    override val espeakNgDataSpec = ModelSpec(
         id = "espeak-ng-data",
         displayName = "eSpeak-ng Phonemizer Data",
         language = "fr-FR (Multilingual)",
@@ -29,7 +30,7 @@ object ModelCatalog {
         attributionNotes = "Required by Piper/VITS phonemizer when not bundled inside archive; GPL-3.0 copyleft applies if redistributed."
     )
 
-    val ttsModels: List<ModelSpec> = listOf(
+    override val ttsModels: List<ModelSpec> = listOf(
         ModelSpec(
             id = "kokoro-82m-gpu-fp16",
             displayName = "Kokoro-82M (GPU FP16 + CPU Fallback)",
@@ -159,7 +160,7 @@ object ModelCatalog {
         )
     )
 
-    val asrModels: List<ModelSpec> = listOf(
+    override val asrModels: List<ModelSpec> = listOf(
         ModelSpec(
             id = "sherpa-asr-nemo-fast-conformer-fr-en",
             displayName = "التعرف السريع على الكلام (فرنسي / إنجليزي)",
@@ -226,12 +227,12 @@ object ModelCatalog {
         )
     )
 
-    val allModels: List<ModelSpec>
+    override val allModels: List<ModelSpec>
         get() = ttsModels + asrModels
 
-    fun findById(id: String): ModelSpec? = allModels.firstOrNull { it.id == id }
+    override fun findById(id: String): ModelSpec? = allModels.firstOrNull { it.id == id }
 
-    val licenseLedger: List<LicenseRecord> = listOf(
+    override val licenseLedger: List<LicenseRecord> = listOf(
         LicenseRecord(
             componentName = "Kokoro-82M (.litertlm)",
             role = "Primary French Neural TTS Model (ff_siwis)",

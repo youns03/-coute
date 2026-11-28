@@ -75,12 +75,16 @@ import androidx.compose.ui.unit.dp
 import com.example.R
 import com.example.data.TranslationChunkEntity
 import com.example.data.TranslationJobEntity
+import com.example.data.importengine.LanguageDetector
+import com.example.data.importengine.PdfExtractionMode
+import com.example.data.importengine.SupportedImportFormat
 import com.example.translation.ExportMode
 import com.example.translation.SourceLanguage
 import com.example.translation.TranslationDirection
 import com.example.translation.TranslationManagerUiState
 import com.example.translation.TranslationPackStatus
 import com.example.ui.components.AtelierCard
+import com.example.ui.components.DocumentImportQueueSheet
 import com.example.ui.components.EditorialSectionHeader
 import com.example.ui.components.MonospaceMetricPill
 import com.example.ui.theme.ArabicSansFamily
@@ -88,6 +92,7 @@ import com.example.ui.theme.EditorialDisplayFamily
 import com.example.ui.theme.FrenchSerifFamily
 import com.example.ui.theme.LocalEcouteAtelierColors
 import com.example.ui.theme.StudioMonoFamily
+import com.example.ui.viewmodel.DocumentImportQueueState
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -111,7 +116,13 @@ fun FileTranslatorScreen(
     onExportJob: (String, Uri, ExportMode) -> Unit,
     onDownloadPack: (TranslationDirection) -> Unit,
     onDismissBanner: () -> Unit,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    importQueueState: DocumentImportQueueState = DocumentImportQueueState(),
+    onInspectImportUris: (List<Uri>) -> Unit = { uris -> uris.firstOrNull()?.let(onImportFile) },
+    onSelectPdfMode: (PdfExtractionMode) -> Unit = {},
+    onRemoveQueuedFile: (Uri) -> Unit = {},
+    onConfirmQueuedImport: () -> Unit = {},
+    onCancelQueuedImport: () -> Unit = {}
 ) {
     val atelier = LocalEcouteAtelierColors.current
     var pendingExportRequest by remember { mutableStateOf<Pair<TranslationJobEntity, ExportMode>?>(null) }
@@ -124,9 +135,9 @@ fun FileTranslatorScreen(
     ) { _ -> }
 
     val openDocumentLauncher = rememberLauncherForActivityResult(
-        contract = ActivityResultContracts.OpenDocument()
-    ) { uri: Uri? ->
-        if (uri != null) onImportFile(uri)
+        contract = ActivityResultContracts.OpenMultipleDocuments()
+    ) { uris: List<Uri> ->
+        if (uris.isNotEmpty()) onInspectImportUris(uris)
     }
 
     val createDocumentLauncher = rememberLauncherForActivityResult(
@@ -327,14 +338,7 @@ fun FileTranslatorScreen(
                         // Import File Button (TXT / EPUB)
                         Button(
                             onClick = {
-                                openDocumentLauncher.launch(
-                                    arrayOf(
-                                        "text/plain",
-                                        "application/epub+zip",
-                                        "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-                                        "application/octet-stream"
-                                    )
-                                )
+                                openDocumentLauncher.launch(SupportedImportFormat.safPickerMimeTypes())
                             },
                             enabled = !isImporting,
                             colors = ButtonDefaults.buttonColors(
@@ -517,11 +521,14 @@ fun FileTranslatorScreen(
                                     style = MaterialTheme.typography.labelSmall,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant
                                 )
-                                CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Ltr) {
+                                val origIsArabic = LanguageDetector.isArabicText(chunk.originalText)
+                                CompositionLocalProvider(
+                                    LocalLayoutDirection provides if (origIsArabic) LayoutDirection.Rtl else LayoutDirection.Ltr
+                                ) {
                                     Text(
                                         text = chunk.originalText,
                                         style = MaterialTheme.typography.bodyMedium.copy(
-                                            fontFamily = FrenchSerifFamily,
+                                            fontFamily = if (origIsArabic) ArabicSansFamily else FrenchSerifFamily,
                                             fontWeight = if (chunk.isHeading) FontWeight.SemiBold else FontWeight.Normal
                                         )
                                     )
@@ -655,6 +662,16 @@ fun FileTranslatorScreen(
             }
         )
     }
+
+    DocumentImportQueueSheet(
+        state = importQueueState,
+        title = stringResource(R.string.translator_import_button),
+        confirmLabel = stringResource(R.string.import_queue_start),
+        onSelectPdfMode = onSelectPdfMode,
+        onRemoveFile = onRemoveQueuedFile,
+        onConfirmImport = onConfirmQueuedImport,
+        onCancelOrDismiss = onCancelQueuedImport
+    )
 }
 
 @Composable
@@ -698,10 +715,15 @@ private fun TranslationJobCard(
                 verticalAlignment = Alignment.Top
             ) {
                 Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                    CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Ltr) {
+                    val titleIsArabic = LanguageDetector.isArabicText(job.title)
+                    CompositionLocalProvider(
+                        LocalLayoutDirection provides if (titleIsArabic) LayoutDirection.Rtl else LayoutDirection.Ltr
+                    ) {
                         Text(
                             text = job.title,
-                            style = MaterialTheme.typography.titleMedium.copy(fontFamily = FrenchSerifFamily),
+                            style = MaterialTheme.typography.titleMedium.copy(
+                                fontFamily = if (titleIsArabic) ArabicSansFamily else FrenchSerifFamily
+                            ),
                             maxLines = 2,
                             overflow = TextOverflow.Ellipsis
                         )

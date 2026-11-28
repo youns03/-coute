@@ -10,29 +10,34 @@ import android.media.AudioTrack
 import android.media.PlaybackParams
 import android.os.Build
 import androidx.core.content.ContextCompat
-import com.example.data.BookDao
-import com.example.data.RecentActivityDao
-import com.example.data.RecentActivityEntity
-import com.example.data.SentenceEntity
-import com.example.data.SettingsRepository
-import com.example.data.UserSettings
+import androidx.media3.common.util.UnstableApi
+import com.example.contracts.AudioCacheGateway
+import com.example.contracts.CachedAudioEntry
+import com.example.contracts.PlaybackGateway
+import com.example.contracts.PlaybackPersistenceGateway
+import com.example.contracts.PlaybackServiceStarter
+import com.example.contracts.RecentActivityGateway
+import com.example.contracts.SettingsGateway
+import com.example.contracts.TaskControls
+import com.example.contracts.TaskCoordinatorGateway
+import com.example.contracts.TtsRuntimeGateway
+import com.example.domain.LocalTaskEntry
+import com.example.domain.LocalTaskPriority
+import com.example.domain.LocalTaskStatus
+import com.example.domain.LocalTaskType
 import com.example.domain.ModelSpec
+import com.example.domain.PlaybackStatus
+import com.example.domain.PlaybackUiState
+import com.example.domain.RecentActivity
+import com.example.domain.Sentence
 import com.example.domain.SpeechTextProcessor
 import com.example.domain.SpeechTimestampAligner
 import com.example.domain.SpeedControlMode
+import com.example.domain.UserSettings
 import com.example.domain.WordTimestampRange
-import com.example.models.ModelStorageManager
-import com.example.runtime.LocalTaskCoordinator
-import com.example.runtime.LocalTaskEntry
-import com.example.runtime.LocalTaskPriority
-import com.example.runtime.LocalTaskStatus
-import com.example.runtime.LocalTaskType
-import com.example.runtime.TaskControls
-import androidx.media3.common.util.UnstableApi
-import com.example.tts.TtsEngineManager
 import kotlinx.coroutines.CancellationException
-import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.CoroutineDispatcher
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -48,37 +53,6 @@ import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.util.concurrent.atomic.AtomicLong
-
-enum class PlaybackStatus {
-    IDLE,
-    BUFFERING,
-    PLAYING,
-    PAUSED,
-    ERROR
-}
-
-data class PlaybackUiState(
-    val status: PlaybackStatus = PlaybackStatus.IDLE,
-    val bookId: String? = null,
-    val bookTitle: String = "",
-    val chapterIndex: Int = 0,
-    val chapterTitle: String = "",
-    val sentenceIndex: Int = 0,
-    val paragraphIndex: Int = 0,
-    val totalSentencesInChapter: Int = 0,
-    val currentSentenceText: String = "",
-    val activeWordStartChar: Int = -1,
-    val activeWordEndChar: Int = -1,
-    val playbackSpeed: Float = 1.0f,
-    val repeatCurrentSentence: Boolean = false,
-    val bufferedAheadCount: Int = 0,
-    val activeModelName: String = "",
-    val activeVoiceId: String = "",
-    val activeLanguageCode: String = "fr",
-    val sleepTimerRemainingSec: Int = 0,
-    val sleepTimerEndOfChapter: Boolean = false,
-    val errorMessage: String? = null
-)
 
 internal interface AudioTrackHandle {
     val isInitialized: Boolean
@@ -205,34 +179,37 @@ private object DefaultAudioTrackHandleFactory : AudioTrackHandleFactory {
 
 class AudioPlaybackController internal constructor(
     private val context: Context,
-    private val bookDao: BookDao,
-    private val settingsRepository: SettingsRepository,
-    private val storageManager: ModelStorageManager,
-    private val ttsEngineManager: TtsEngineManager,
+    private val persistenceGateway: PlaybackPersistenceGateway,
+    private val settingsGateway: SettingsGateway,
+    private val audioCacheGateway: AudioCacheGateway,
+    private val ttsRuntimeGateway: TtsRuntimeGateway,
     private val trackFactory: AudioTrackHandleFactory,
     private val playbackDispatcher: CoroutineDispatcher = Dispatchers.Default,
-    private val recentActivityDao: RecentActivityDao? = null,
-    private val taskCoordinator: LocalTaskCoordinator? = null
-) {
+    private val recentActivityGateway: RecentActivityGateway? = null,
+    private val taskCoordinator: TaskCoordinatorGateway? = null,
+    private val playbackServiceStarter: PlaybackServiceStarter? = null
+) : PlaybackGateway {
     constructor(
         context: Context,
-        bookDao: BookDao,
-        settingsRepository: SettingsRepository,
-        storageManager: ModelStorageManager,
-        ttsEngineManager: TtsEngineManager,
+        persistenceGateway: PlaybackPersistenceGateway,
+        settingsGateway: SettingsGateway,
+        audioCacheGateway: AudioCacheGateway,
+        ttsRuntimeGateway: TtsRuntimeGateway,
         playbackDispatcher: CoroutineDispatcher = Dispatchers.Default,
-        recentActivityDao: RecentActivityDao? = null,
-        taskCoordinator: LocalTaskCoordinator? = null
+        recentActivityGateway: RecentActivityGateway? = null,
+        taskCoordinator: TaskCoordinatorGateway? = null,
+        playbackServiceStarter: PlaybackServiceStarter? = null
     ) : this(
         context = context,
-        bookDao = bookDao,
-        settingsRepository = settingsRepository,
-        storageManager = storageManager,
-        ttsEngineManager = ttsEngineManager,
+        persistenceGateway = persistenceGateway,
+        settingsGateway = settingsGateway,
+        audioCacheGateway = audioCacheGateway,
+        ttsRuntimeGateway = ttsRuntimeGateway,
         trackFactory = DefaultAudioTrackHandleFactory,
         playbackDispatcher = playbackDispatcher,
-        recentActivityDao = recentActivityDao,
-        taskCoordinator = taskCoordinator
+        recentActivityGateway = recentActivityGateway,
+        taskCoordinator = taskCoordinator,
+        playbackServiceStarter = playbackServiceStarter
     )
 
     private val scope = CoroutineScope(SupervisorJob() + playbackDispatcher)
@@ -242,7 +219,7 @@ class AudioPlaybackController internal constructor(
     private val sessionSeq = AtomicLong(0L)
 
     private val _state = MutableStateFlow(PlaybackUiState())
-    val state: StateFlow<PlaybackUiState> = _state.asStateFlow()
+    override val state: StateFlow<PlaybackUiState> = _state.asStateFlow()
 
     @Volatile
     private var activeSessionId: Long = 0L
@@ -266,7 +243,7 @@ class AudioPlaybackController internal constructor(
     private var isStoppingFlag: Boolean = false
 
     @Volatile
-    private var queueSentences: List<SentenceEntity> = emptyList()
+    private var queueSentences: List<Sentence> = emptyList()
 
     @Volatile
     private var currentQueuePosition: Int = 0
@@ -320,7 +297,7 @@ class AudioPlaybackController internal constructor(
             prepareJob = null
             playbackJob = null
         }
-        ttsEngineManager.cancelActiveSynthesis()
+        ttsRuntimeGateway.cancelActiveSynthesis()
         prevPrepare?.cancel()
         prevPlayback?.cancel()
         releaseAudioTrackUnconditionally()
@@ -328,18 +305,18 @@ class AudioPlaybackController internal constructor(
         return newId
     }
 
-    fun playChapterFrom(
+    override fun playChapterFrom(
         bookId: String,
         bookTitle: String,
         chapterIndex: Int,
         chapterTitle: String,
-        startSentenceIndex: Int = 0,
-        languageCode: String? = null
+        startSentenceIndex: Int,
+        languageCode: String?
     ) {
         val sessionId = claimNewSession(stoppingOnly = false)
         val job = scope.launch {
             try {
-                val sentences = bookDao.getChapterSentences(bookId, chapterIndex)
+                val sentences = persistenceGateway.getChapterSentences(bookId, chapterIndex)
                 if (!isSessionValid(sessionId)) return@launch
                 if (sentences.isEmpty()) {
                     updateStateIfSessionValid(sessionId) {
@@ -351,11 +328,11 @@ class AudioPlaybackController internal constructor(
                     return@launch
                 }
                 val resolvedLang = SpeechTextProcessor.normalizeLangCode(
-                    languageCode ?: bookDao.getBook(bookId)?.sourceLanguage
+                    languageCode ?: persistenceGateway.getBook(bookId)?.sourceLanguage
                 )
                 if (!isSessionValid(sessionId)) return@launch
                 val safeIndex = startSentenceIndex.coerceIn(0, sentences.lastIndex)
-                settingsRepository.setActiveBookId(bookId)
+                settingsGateway.setActiveBookId(bookId)
                 if (!isSessionValid(sessionId)) return@launch
                 startQueuePlaybackForSession(
                     sessionId = sessionId,
@@ -390,15 +367,15 @@ class AudioPlaybackController internal constructor(
     /**
      * Synthesizes and plays a single word or phrase in French or English.
      */
-    fun pronounceStandalone(
+    override fun pronounceStandalone(
         frenchText: String,
-        title: String = "نطق المفردة",
-        languageCode: String = "fr"
+        title: String,
+        languageCode: String
     ) {
         val cleaned = frenchText.trim()
         if (cleaned.isEmpty()) return
         val normLang = SpeechTextProcessor.normalizeLangCode(languageCode)
-        val singleSentence = SentenceEntity(
+        val singleSentence = Sentence(
             id = -1L,
             bookId = "_standalone_",
             chapterIndex = 0,
@@ -426,7 +403,7 @@ class AudioPlaybackController internal constructor(
         bookTitle: String,
         chapterIndex: Int,
         chapterTitle: String,
-        sentences: List<SentenceEntity>,
+        sentences: List<Sentence>,
         startIndex: Int,
         languageCode: String
     ) {
@@ -453,14 +430,14 @@ class AudioPlaybackController internal constructor(
         }
 
         val launchedJob = scope.launch {
-            var prefetchedDeferred: Deferred<Result<CachedAudioPayload>>? = null
+            var prefetchedDeferred: Deferred<Result<CachedAudioEntry>>? = null
             var prefetchedIndex = -1
             try {
-                val settings = settingsRepository.settingsFlow.first()
+                val settings = settingsGateway.settingsFlow.first()
                 if (!isSessionValid(sessionId)) return@launch
                 currentSpeed = settings.playbackSpeed
 
-                val modelResolution = ttsEngineManager.resolveModelForLanguage(
+                val modelResolution = ttsRuntimeGateway.resolveModelForLanguage(
                     preferredModelId = settings.activeModelId,
                     languageCode = normLang
                 )
@@ -510,8 +487,8 @@ class AudioPlaybackController internal constructor(
                 }
 
                 if (bookId != "_standalone_") {
-                    recentActivityDao?.upsert(
-                        RecentActivityEntity(
+                    recentActivityGateway?.upsert(
+                        RecentActivity(
                             id = "act_book_$bookId",
                             kind = "READ",
                             title = bookTitle,
@@ -559,7 +536,7 @@ class AudioPlaybackController internal constructor(
                     currentQueuePosition = idx
 
                     if (bookId != "_standalone_") {
-                        bookDao.updateReadingPosition(bookId, chapterIndex, currentSentence.sentenceIndex)
+                        persistenceGateway.updateReadingPosition(bookId, chapterIndex, currentSentence.sentenceIndex)
                     }
                     if (!isSessionValid(sessionId)) break
 
@@ -593,23 +570,22 @@ class AudioPlaybackController internal constructor(
                     val voiceId = resolvePreferredVoice(
                         resolvedSpec,
                         normLang,
-                        settingsRepository.settingsFlow.first().activeVoiceId
+                        settingsGateway.settingsFlow.first().activeVoiceId
                     )
                     val synthSpeed = if (settings.speedControlMode == SpeedControlMode.MODEL_SYNTHESIS_RATE) {
                         currentSpeed
                     } else {
                         1.0f
                     }
-                    val cacheKey = AudioChunkCache.buildCacheKey(
+                    val cacheKey = audioCacheGateway.buildCacheKey(
                         modelId = resolvedSpec.id,
                         languageCode = normLang,
                         voiceId = voiceId,
                         speed = synthSpeed,
                         spokenText = spokenText
                     )
-                    val cacheFile = AudioChunkCache.cacheFileFor(storageManager.audioCacheRoot, cacheKey)
 
-                    val cachedHit: CachedAudioPayload? = if (prefetchedIndex == idx && prefetchedDeferred != null) {
+                    val cachedHit: CachedAudioEntry? = if (prefetchedIndex == idx && prefetchedDeferred != null) {
                         val res = prefetchedDeferred.await()
                         prefetchedDeferred = null
                         prefetchedIndex = -1
@@ -618,7 +594,7 @@ class AudioPlaybackController internal constructor(
                         prefetchedDeferred?.cancel()
                         prefetchedDeferred = null
                         prefetchedIndex = -1
-                        withContext(Dispatchers.IO) { AudioChunkCache.readValidated(cacheFile) }
+                        withContext(Dispatchers.IO) { audioCacheGateway.readValidated(cacheKey) }
                     }
 
                     if (!isSessionValid(sessionId)) break
@@ -667,7 +643,7 @@ class AudioPlaybackController internal constructor(
                             synthSpeed = synthSpeed,
                             acceleratorMode = settings.acceleratorMode,
                             speedMode = settings.speedControlMode,
-                            cacheFile = cacheFile,
+                            cacheKey = cacheKey,
                             onStreamFinishedBeforeDrain = scheduleLookahead
                         )
                     }
@@ -680,9 +656,9 @@ class AudioPlaybackController internal constructor(
 
                 if (isActive && isSessionValid(sessionId) && _state.value.status != PlaybackStatus.ERROR) {
                     if (bookId != "_standalone_") {
-                        val book = bookDao.getBook(bookId)
+                        val book = persistenceGateway.getBook(bookId)
                         if (book != null && chapterIndex >= book.totalChapters - 1) {
-                            bookDao.setBookCompleted(bookId, true)
+                            persistenceGateway.setBookCompleted(bookId, true)
                         }
                     }
                     if (sleepTimerEndOfChapter) {
@@ -738,23 +714,22 @@ class AudioPlaybackController internal constructor(
 
     private suspend fun synthesizeAndCacheSentence(
         sessionId: Long,
-        sentence: SentenceEntity,
+        sentence: Sentence,
         spec: ModelSpec,
         languageCode: String,
         settings: UserSettings,
         synthSpeed: Float
-    ): Result<CachedAudioPayload> = withContext(Dispatchers.IO) {
+    ): Result<CachedAudioEntry> = withContext(Dispatchers.IO) {
         if (!isSessionValid(sessionId)) {
             return@withContext Result.failure(CancellationException("Session expired"))
         }
         val spokenText = SpeechTextProcessor.prepareForSpeech(sentence.originalText, languageCode)
         val voiceId = spec.defaultVoiceFor(languageCode)
-        val cacheKey = AudioChunkCache.buildCacheKey(spec.id, languageCode, voiceId, synthSpeed, spokenText)
-        val cacheFile = AudioChunkCache.cacheFileFor(storageManager.audioCacheRoot, cacheKey)
+        val cacheKey = audioCacheGateway.buildCacheKey(spec.id, languageCode, voiceId, synthSpeed, spokenText)
 
-        AudioChunkCache.readValidated(cacheFile)?.let { return@withContext Result.success(it) }
+        audioCacheGateway.readValidated(cacheKey)?.let { return@withContext Result.success(it) }
 
-        val res = ttsEngineManager.synthesizeSentence(
+        val res = ttsRuntimeGateway.synthesizeSentence(
             modelId = spec.id,
             acceleratorMode = settings.acceleratorMode,
             spokenText = spokenText,
@@ -763,13 +738,13 @@ class AudioPlaybackController internal constructor(
             languageCode = languageCode
         )
         res.map { synth ->
-            val payload = CachedAudioPayload(
+            val payload = CachedAudioEntry(
                 samples = AudioChunkCache.sanitizeSamples(synth.samples),
                 sampleRateHz = synth.sampleRateHz.coerceIn(AudioChunkCache.MIN_SAMPLE_RATE, AudioChunkCache.MAX_SAMPLE_RATE),
                 wordTimestamps = synth.wordTimestamps
             )
-            AudioChunkCache.write(cacheFile, payload)
-            AudioChunkCache.pruneIfOversized(storageManager.audioCacheRoot)
+            audioCacheGateway.write(cacheKey, payload)
+            audioCacheGateway.pruneIfOversized()
             payload
         }
     }
@@ -780,7 +755,7 @@ class AudioPlaybackController internal constructor(
      */
     private suspend fun playSentenceLiveStreaming(
         sessionId: Long,
-        sentence: SentenceEntity,
+        sentence: Sentence,
         spokenText: String,
         spec: ModelSpec,
         languageCode: String,
@@ -788,7 +763,7 @@ class AudioPlaybackController internal constructor(
         synthSpeed: Float,
         acceleratorMode: com.example.domain.AcceleratorMode,
         speedMode: SpeedControlMode,
-        cacheFile: java.io.File,
+        cacheKey: String,
         onStreamFinishedBeforeDrain: () -> Unit
     ) = withContext(Dispatchers.IO) {
         var activeTrack: AudioTrackHandle? = null
@@ -800,7 +775,7 @@ class AudioPlaybackController internal constructor(
         val collectedTimestamps = mutableListOf<WordTimestampRange>()
 
         try {
-            ttsEngineManager.synthesizeSentenceStream(
+            ttsRuntimeGateway.synthesizeSentenceStream(
                 modelId = spec.id,
                 acceleratorMode = acceleratorMode,
                 spokenText = spokenText,
@@ -871,11 +846,11 @@ class AudioPlaybackController internal constructor(
                     seg.copyInto(merged, pos)
                     pos += seg.size
                 }
-                AudioChunkCache.write(
-                    cacheFile,
-                    CachedAudioPayload(merged, activeSampleRate, collectedTimestamps)
+                audioCacheGateway.write(
+                    cacheKey,
+                    CachedAudioEntry(merged, activeSampleRate, collectedTimestamps)
                 )
-                AudioChunkCache.pruneIfOversized(storageManager.audioCacheRoot)
+                audioCacheGateway.pruneIfOversized()
             }
 
             onStreamFinishedBeforeDrain()
@@ -897,9 +872,9 @@ class AudioPlaybackController internal constructor(
 
     private suspend fun playCachedPayloadWithTracking(
         sessionId: Long,
-        sentence: SentenceEntity,
+        sentence: Sentence,
         spokenText: String,
-        payload: CachedAudioPayload,
+        payload: CachedAudioEntry,
         speedMode: SpeedControlMode
     ) = withContext(Dispatchers.IO) {
         if (payload.samples.isEmpty() || !isSessionValid(sessionId)) return@withContext
@@ -1131,7 +1106,7 @@ class AudioPlaybackController internal constructor(
         track.setSpeed(targetRate)
     }
 
-    fun pause() {
+    override fun pause() {
         val pausedSessionId = synchronized(sessionLock) {
             if (activeSessionId == 0L || isStoppingFlag) return
             isPausedFlag = true
@@ -1145,7 +1120,7 @@ class AudioPlaybackController internal constructor(
         updateStateIfSessionValid(pausedSessionId) { it.copy(status = PlaybackStatus.PAUSED) }
     }
 
-    fun resume() {
+    override fun resume() {
         val st = _state.value
         val resumingSession = synchronized(sessionLock) {
             if (st.status == PlaybackStatus.PAUSED && activeSessionId != 0L && !isStoppingFlag) {
@@ -1177,18 +1152,18 @@ class AudioPlaybackController internal constructor(
         }
     }
 
-    fun togglePlayPause() {
+    override fun togglePlayPause() {
         when (_state.value.status) {
             PlaybackStatus.PLAYING, PlaybackStatus.BUFFERING -> pause()
             PlaybackStatus.PAUSED, PlaybackStatus.IDLE, PlaybackStatus.ERROR -> resume()
         }
     }
 
-    fun stop() {
+    override fun stop() {
         stopPlaybackInternal(resetPositionState = true)
     }
 
-    fun nextSentence() {
+    override fun nextSentence() {
         val st = _state.value
         val bId = st.bookId ?: return
         if (bId == "_standalone_" || queueSentences.isEmpty()) return
@@ -1196,7 +1171,7 @@ class AudioPlaybackController internal constructor(
         jumpToQueuePosition(nextPos)
     }
 
-    fun previousSentence() {
+    override fun previousSentence() {
         val st = _state.value
         val bId = st.bookId ?: return
         if (bId == "_standalone_" || queueSentences.isEmpty()) return
@@ -1204,7 +1179,7 @@ class AudioPlaybackController internal constructor(
         jumpToQueuePosition(prevPos)
     }
 
-    fun nextParagraph() {
+    override fun nextParagraph() {
         val st = _state.value
         val bId = st.bookId ?: return
         if (bId == "_standalone_" || queueSentences.isEmpty()) return
@@ -1215,7 +1190,7 @@ class AudioPlaybackController internal constructor(
         jumpToQueuePosition(target)
     }
 
-    fun previousParagraph() {
+    override fun previousParagraph() {
         val st = _state.value
         val bId = st.bookId ?: return
         if (bId == "_standalone_" || queueSentences.isEmpty()) return
@@ -1237,7 +1212,7 @@ class AudioPlaybackController internal constructor(
     /**
      * Relative seek across sentences (~5 seconds estimated per spoken sentence).
      */
-    fun seekRelativeSeconds(deltaSeconds: Int) {
+    override fun seekRelativeSeconds(deltaSeconds: Int) {
         val st = _state.value
         val bId = st.bookId ?: return
         if (bId == "_standalone_" || queueSentences.isEmpty()) return
@@ -1268,7 +1243,7 @@ class AudioPlaybackController internal constructor(
         )
     }
 
-    fun replayCurrentSentence() {
+    override fun replayCurrentSentence() {
         val st = _state.value
         val bId = st.bookId ?: return
         if (queueSentences.isEmpty()) return
@@ -1285,16 +1260,16 @@ class AudioPlaybackController internal constructor(
         )
     }
 
-    fun setPlaybackSpeed(speed: Float) {
+    override fun setPlaybackSpeed(speed: Float) {
         val bounded = speed.coerceIn(0.65f, 2.0f)
         currentSpeed = bounded
-        scope.launch { settingsRepository.setPlaybackSpeed(bounded) }
+        scope.launch { settingsGateway.setPlaybackSpeed(bounded) }
         _state.value = _state.value.copy(playbackSpeed = bounded)
         val trackSnapshot = synchronized(trackLock) { currentTrackHandle to activeTrackSessionId }
         val track = trackSnapshot.first ?: return
         val ownerSession = trackSnapshot.second
         scope.launch {
-            val mode = settingsRepository.settingsFlow.first().speedControlMode
+            val mode = settingsGateway.settingsFlow.first().speedControlMode
             if (mode == SpeedControlMode.AUDIO_TRACK_TIME_STRETCH) {
                 synchronized(trackLock) {
                     if (isSessionValid(ownerSession) &&
@@ -1308,12 +1283,12 @@ class AudioPlaybackController internal constructor(
         }
     }
 
-    fun setActiveVoice(voiceId: String) {
-        scope.launch { settingsRepository.setActiveVoiceId(voiceId) }
+    override fun setActiveVoice(voiceId: String) {
+        scope.launch { settingsGateway.setActiveVoiceId(voiceId) }
         _state.value = _state.value.copy(activeVoiceId = voiceId)
     }
 
-    fun startSleepTimerMinutes(minutes: Int) {
+    override fun startSleepTimerMinutes(minutes: Int) {
         val totalSec = (minutes.coerceIn(1, 240)) * 60
         sleepTimerJob?.cancel()
         sleepTimerEndOfChapter = false
@@ -1336,7 +1311,7 @@ class AudioPlaybackController internal constructor(
         }
     }
 
-    fun startEndOfChapterSleepTimer() {
+    override fun startEndOfChapterSleepTimer() {
         sleepTimerJob?.cancel()
         sleepTimerRemainingSec = 0
         sleepTimerEndOfChapter = true
@@ -1346,7 +1321,7 @@ class AudioPlaybackController internal constructor(
         )
     }
 
-    fun cancelSleepTimer() {
+    override fun cancelSleepTimer() {
         sleepTimerJob?.cancel()
         sleepTimerJob = null
         sleepTimerRemainingSec = 0
@@ -1366,7 +1341,7 @@ class AudioPlaybackController internal constructor(
         }
     }
 
-    fun toggleRepeatCurrentSentence() {
+    override fun toggleRepeatCurrentSentence() {
         repeatSingle = !repeatSingle
         _state.value = _state.value.copy(repeatCurrentSentence = repeatSingle)
     }
@@ -1520,8 +1495,12 @@ class AudioPlaybackController internal constructor(
     @androidx.annotation.OptIn(markerClass = [UnstableApi::class])
     private fun ensureServiceStarted() {
         runCatching {
-            val intent = Intent(context, PlaybackService::class.java)
-            ContextCompat.startForegroundService(context, intent)
+            if (playbackServiceStarter != null) {
+                playbackServiceStarter.ensureStarted()
+            } else {
+                val intent = Intent(context, PlaybackService::class.java)
+                ContextCompat.startForegroundService(context, intent)
+            }
         }
     }
 }

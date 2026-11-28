@@ -2,20 +2,16 @@ package com.example.translation
 
 import android.content.Context
 import android.net.Uri
-import com.example.data.ParsedSourceDocument
-import com.example.data.TranslationChunkEntity
 import com.example.domain.ArabicTextPreprocessor
 import com.example.domain.EnglishTextPreprocessor
+import com.example.domain.ExportMode
 import com.example.domain.FrenchTextPreprocessor
+import com.example.domain.ParsedSourceDocument
+import com.example.domain.TranslationChunk
+import com.example.domain.TranslationDirection
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.io.OutputStreamWriter
-
-enum class ExportMode(val labelAr: String, val fileSuffix: String) {
-    ARABIC_COMPLETED_ONLY("الترجمة العربية (الأجزاء المنجزة فقط)", "_ar_completed.txt"),
-    BILINGUAL_COMPLETED_ONLY("ثنائي اللغة (الأجزاء المنجزة فقط)", "_bilingual_completed.txt"),
-    BILINGUAL_WITH_PLACEHOLDERS("مسودة كاملة (تشمل غير المترجم بوسم توضيحي)", "_bilingual_draft.txt")
-}
 
 object DocumentChunker {
 
@@ -28,16 +24,16 @@ object DocumentChunker {
         jobId: String,
         doc: ParsedSourceDocument,
         maxCharsPerChunk: Int = 650
-    ): List<TranslationChunkEntity> {
+    ): List<TranslationChunk> {
         val effectiveLimit = maxCharsPerChunk.coerceAtLeast(1)
-        val chunks = mutableListOf<TranslationChunkEntity>()
+        val chunks = mutableListOf<TranslationChunk>()
         var chunkIdx = 0
 
         doc.sections.forEach { section ->
             val cleanSectionTitle = section.title.trim()
             if (cleanSectionTitle.isNotBlank()) {
                 chunks.add(
-                    TranslationChunkEntity(
+                    TranslationChunk(
                         jobId = jobId,
                         chunkIndex = chunkIdx++,
                         chapterTitle = cleanSectionTitle,
@@ -57,7 +53,7 @@ object DocumentChunker {
             paragraphs.forEachIndexed { pIdx, para ->
                 if (para.length <= effectiveLimit) {
                     chunks.add(
-                        TranslationChunkEntity(
+                        TranslationChunk(
                             jobId = jobId,
                             chunkIndex = chunkIdx++,
                             chapterTitle = cleanSectionTitle,
@@ -77,7 +73,7 @@ object DocumentChunker {
                     for (segment in expandedSegments) {
                         if (batch.isNotEmpty() && batch.length + segment.length + 1 > effectiveLimit) {
                             chunks.add(
-                                TranslationChunkEntity(
+                                TranslationChunk(
                                     jobId = jobId,
                                     chunkIndex = chunkIdx++,
                                     chapterTitle = cleanSectionTitle,
@@ -93,7 +89,7 @@ object DocumentChunker {
                     }
                     if (batch.isNotEmpty()) {
                         chunks.add(
-                            TranslationChunkEntity(
+                            TranslationChunk(
                                 jobId = jobId,
                                 chunkIndex = chunkIdx++,
                                 chapterTitle = cleanSectionTitle,
@@ -125,7 +121,6 @@ object DocumentChunker {
                 break
             }
             val hardEnd = start + maxChars
-            // Prefer breaking at the last whitespace in the upper half of the window
             val minWordBreak = start + (maxChars / 2)
             var splitAt = -1
             for (i in hardEnd downTo minWordBreak) {
@@ -148,7 +143,7 @@ object DocumentChunker {
     fun formatForExport(
         title: String,
         direction: TranslationDirection,
-        chunks: List<TranslationChunkEntity>,
+        chunks: List<TranslationChunk>,
         mode: ExportMode
     ): String {
         val completedOnly = mode != ExportMode.BILINGUAL_WITH_PLACEHOLDERS
@@ -211,7 +206,7 @@ object DocumentChunker {
         runCatching {
             context.contentResolver.openOutputStream(targetUri)?.use { os ->
                 OutputStreamWriter(os, Charsets.UTF_8).use { writer ->
-                    writer.write("\uFEFF") // UTF-8 BOM for universal compatibility with Arabic readers
+                    writer.write("\uFEFF")
                     writer.write(content)
                     writer.flush()
                 }

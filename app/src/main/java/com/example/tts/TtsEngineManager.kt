@@ -2,16 +2,22 @@ package com.example.tts
 
 import android.content.Context
 import android.os.SystemClock
-import com.example.data.BenchmarkReportEntity
+import com.example.contracts.ModelCatalogProvider
+import com.example.contracts.ModelStorageGateway
+import com.example.contracts.TtsEngine
+import com.example.contracts.TtsEngineFactory
+import com.example.contracts.TtsRuntimeGateway
 import com.example.domain.AcceleratorMode
 import com.example.domain.BenchmarkItem
+import com.example.domain.BenchmarkReport
+import com.example.domain.EngineRuntimeState
 import com.example.domain.EngineType
+import com.example.domain.MemoryDiagnostics
+import com.example.domain.ModelRole
 import com.example.domain.ModelSpec
 import com.example.domain.SpeechTextProcessor
 import com.example.domain.TtsStreamChunk
 import com.example.domain.TtsSynthesisResult
-import com.example.models.ModelCatalog
-import com.example.models.ModelStorageManager
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -27,48 +33,58 @@ import java.io.FileOutputStream
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
 
-data class EngineRuntimeState(
-    val loadedModelId: String? = null,
-    val loadedModelName: String? = null,
-    val engineType: EngineType? = null,
-    val acceleratorLabel: String = "غير محمل",
-    val fellBackToCpu: Boolean = false,
-    val fallbackReason: String? = null,
-    val lastLoadTimeMs: Long = 0L,
-    val ramBeforeLoadMb: Float = 0f,
-    val ramAfterLoadMb: Float = 0f,
-    val ramPeakSynthesisMb: Float = 0f,
-    val isLoading: Boolean = false,
-    val lastError: String? = null
-)
-
 class TtsEngineManager internal constructor(
     private val context: Context,
-    private val storageManager: ModelStorageManager,
+    private val storageManager: ModelStorageGateway,
+    private val modelCatalog: ModelCatalogProvider,
+    private val engineFactories: Map<EngineType, TtsEngineFactory> = defaultFactories(context, storageManager, modelCatalog),
     private val engineFactory: ((ModelSpec) -> TtsEngine)? = null,
     private val packageVerifier: ((ModelSpec) -> Boolean)? = null
-) {
-    constructor(context: Context, storageManager: ModelStorageManager) : this(
+) : TtsRuntimeGateway {
+    constructor(
+        context: Context,
+        storageManager: ModelStorageGateway,
+        modelCatalog: ModelCatalogProvider
+    ) : this(
         context = context,
         storageManager = storageManager,
+        modelCatalog = modelCatalog,
+        engineFactories = defaultFactories(context, storageManager, modelCatalog),
         engineFactory = null,
         packageVerifier = null
     )
+
+    companion object {
+        fun defaultFactories(
+            context: Context,
+            storageManager: ModelStorageGateway,
+            modelCatalog: ModelCatalogProvider
+        ): Map<EngineType, TtsEngineFactory> = mapOf(
+            EngineType.KOKORO_LITERT to TtsEngineFactory {
+                KokoroLiteRtTtsEngine(context, storageManager, modelCatalog)
+            },
+            EngineType.PIPER_SHERPA_ONNX to TtsEngineFactory {
+                PiperSherpaTtsEngine(storageManager)
+            }
+        )
+    }
 
     private val mutex = Mutex()
     @Volatile
     private var activeEngine: TtsEngine? = null
 
     private val _runtimeState = MutableStateFlow(EngineRuntimeState())
-    val runtimeState: StateFlow<EngineRuntimeState> = _runtimeState.asStateFlow()
+    override val runtimeState: StateFlow<EngineRuntimeState> = _runtimeState.asStateFlow()
 
     @Volatile
     private var onTtsActivityCallback: (() -> Unit)? = null
 
-    val isEngineLoaded: Boolean
+    override val isEngineLoaded: Boolean
         get() = activeEngine?.isLoaded == true
 
-    fun setOnActivityCallback(callback: () -> Unit) {
+    override fun supportsRole(role: ModelRole): Boolean = role == ModelRole.TTS
+
+    override fun setOnActivityCallback(callback: () -> Unit) {
         onTtsActivityCallback = callback
     }
 
@@ -78,11 +94,9 @@ class TtsEngineManager internal constructor(
     }
 
     private fun createEngine(spec: ModelSpec): TtsEngine {
-        return engineFactory?.invoke(spec) ?: when (spec.engineType) {
-            EngineType.KOKORO_LITERT -> KokoroLiteRtTtsEngine(context, storageManager)
-            EngineType.PIPER_SHERPA_ONNX -> PiperSherpaTtsEngine(storageManager)
-            EngineType.SHERPA_ASR -> error("نموذج ${spec.displayName} مخصص للتعرف على الكلام وليس للنطق الصوتي.")
-        }
+        return engineFactory?.invoke(spec)
+            ?: engineFactories[spec.engineType]?.create(spec)
+            ?: error("نموذج ${spec.displayName} مخصص للتعرف على الكلام وليس للنطق الصوتي.")
     }
 
     private fun releaseActiveLocked(errorMessage: String? = null) {
@@ -99,19 +113,19 @@ class TtsEngineManager internal constructor(
      * Prefers [preferredModelId]; if it only supports another language (e.g. Piper on an English book)
      * or temporarily lacks free RAM, automatically selects another compatible ready model or fails clearly.
      */
-    fun resolveModelForLanguage(
+    override fun resolveModelForLanguage(
         preferredModelId: String,
         languageCode: String
     ): Result<ModelSpec> {
         val normLang = SpeechTextProcessor.normalizeLangCode(languageCode)
         val hw = MemoryDiagnostics.getDeviceHardwareInfo(context)
-        val preferred = ModelCatalog.findById(preferredModelId)
+        val preferred = modelCatalog.findById(preferredModelId)
 
         fun isReadyAndCompatible(spec: ModelSpec): Boolean {
             if (!MemoryDiagnostics.evaluateRuntimeMemoryForLoad(spec, hw).isSupported) return false
             if (!verifyPackageReady(spec)) return false
             if (spec.requiresEspeakData && packageVerifier == null &&
-                !storageManager.verifyInstalledPackage(ModelCatalog.espeakNgDataSpec, verifyIntegrity = true)
+                !storageManager.verifyInstalledPackage(modelCatalog.espeakNgDataSpec, verifyIntegrity = true)
             ) {
                 return false
             }
@@ -122,7 +136,7 @@ class TtsEngineManager internal constructor(
             return Result.success(preferred)
         }
 
-        val alternate = ModelCatalog.ttsModels.firstOrNull { candidate ->
+        val alternate = modelCatalog.ttsModels.firstOrNull { candidate ->
             candidate.id != preferredModelId &&
                 candidate.supportsLanguage(normLang) &&
                 isReadyAndCompatible(candidate)
@@ -151,7 +165,7 @@ class TtsEngineManager internal constructor(
         }
     }
 
-    suspend fun ensureLoaded(
+    override suspend fun ensureLoaded(
         modelId: String,
         acceleratorMode: AcceleratorMode
     ): Result<TtsEngine> = mutex.withLock {
@@ -162,7 +176,7 @@ class TtsEngineManager internal constructor(
         loadModelLocked(modelId, acceleratorMode)
     }
 
-    suspend fun switchModel(
+    override suspend fun switchModel(
         modelId: String,
         acceleratorMode: AcceleratorMode
     ): Result<TtsEngine> = mutex.withLock {
@@ -177,7 +191,7 @@ class TtsEngineManager internal constructor(
         // and immediately clear runtimeState so UI never displays a released model as still active.
         releaseActiveLocked()
 
-        val spec = ModelCatalog.findById(modelId)
+        val spec = modelCatalog.findById(modelId)
             ?: return Result.failure(IllegalArgumentException("نموذج غير معروف: $modelId").also {
                 _runtimeState.value = EngineRuntimeState(lastError = it.message)
             })
@@ -196,7 +210,7 @@ class TtsEngineManager internal constructor(
             return Result.failure(IllegalStateException(msg))
         }
         if (spec.requiresEspeakData && packageVerifier == null &&
-            !storageManager.verifyInstalledPackage(ModelCatalog.espeakNgDataSpec, verifyIntegrity = true)
+            !storageManager.verifyInstalledPackage(modelCatalog.espeakNgDataSpec, verifyIntegrity = true)
         ) {
             val msg = "بيانات eSpeak-ng المرافقة مفقودة أو تالفة. أعد تنزيل النموذج من شاشة النماذج."
             _runtimeState.value = EngineRuntimeState(lastError = msg)
@@ -260,13 +274,13 @@ class TtsEngineManager internal constructor(
         }
     }
 
-    suspend fun synthesizeSentence(
+    override suspend fun synthesizeSentence(
         modelId: String,
         acceleratorMode: AcceleratorMode,
         spokenText: String,
         voiceId: String,
         speed: Float,
-        languageCode: String = "fr"
+        languageCode: String
     ): Result<TtsSynthesisResult> = mutex.withLock {
         val engine = if (activeEngine != null && activeEngine!!.isLoaded && activeEngine!!.modelId == modelId) {
             activeEngine!!
@@ -276,7 +290,7 @@ class TtsEngineManager internal constructor(
             loaded.getOrThrow()
         }
 
-        val spec = ModelCatalog.findById(modelId)
+        val spec = modelCatalog.findById(modelId)
         val locale = spec?.localeFor(languageCode) ?: "fr-FR"
         val resolvedVoice = voiceId.ifBlank { spec?.defaultVoiceFor(languageCode) ?: "ff_siwis" }
 
@@ -304,13 +318,13 @@ class TtsEngineManager internal constructor(
     /**
      * True chunk-by-chunk audio streaming flow serialized safely per engine instance.
      */
-    fun synthesizeSentenceStream(
+    override fun synthesizeSentenceStream(
         modelId: String,
         acceleratorMode: AcceleratorMode,
         spokenText: String,
-        languageCode: String = "fr",
-        voiceId: String = "",
-        speed: Float = 1.0f
+        languageCode: String,
+        voiceId: String,
+        speed: Float
     ): Flow<TtsStreamChunk> = channelFlow {
         mutex.withLock {
             val engine = if (activeEngine != null && activeEngine!!.isLoaded && activeEngine!!.modelId == modelId) {
@@ -319,7 +333,7 @@ class TtsEngineManager internal constructor(
                 loadModelLocked(modelId, acceleratorMode).getOrThrow()
             }
 
-            val spec = ModelCatalog.findById(modelId)
+            val spec = modelCatalog.findById(modelId)
             val locale = spec?.localeFor(languageCode) ?: "fr-FR"
             val resolvedVoice = voiceId.ifBlank { spec?.defaultVoiceFor(languageCode) ?: "ff_siwis" }
 
@@ -355,7 +369,7 @@ class TtsEngineManager internal constructor(
      * Runs a real load + short synthesis verification test right after download/extraction
      * before marking a model as permanently installed.
      */
-    suspend fun verifyModelLoadable(spec: ModelSpec, extractedDir: File): Result<Unit> = withContext(Dispatchers.IO) {
+    override suspend fun verifyModelLoadable(spec: ModelSpec, extractedDir: File): Result<Unit> = withContext(Dispatchers.IO) {
         mutex.withLock {
             runCatching {
                 val compat = MemoryDiagnostics.evaluateRuntimeMemoryForLoad(spec, context)
@@ -398,12 +412,12 @@ class TtsEngineManager internal constructor(
         }
     }
 
-    suspend fun runBenchmarkItem(
+    override suspend fun runBenchmarkItem(
         spec: ModelSpec,
         item: BenchmarkItem,
         acceleratorMode: AcceleratorMode,
         speedFactor: Float
-    ): Result<BenchmarkReportEntity> = mutex.withLock {
+    ): Result<BenchmarkReport> = mutex.withLock {
         runCatching {
             val ramBefore = MemoryDiagnostics.getProcessPssMb(context)
             val loadRes = loadModelLocked(spec.id, acceleratorMode)
@@ -457,7 +471,7 @@ class TtsEngineManager internal constructor(
                 }
             }
 
-            BenchmarkReportEntity(
+            BenchmarkReport(
                 modelId = spec.id,
                 modelDisplayName = spec.displayName,
                 engineType = spec.engineType.displayName,
@@ -484,11 +498,11 @@ class TtsEngineManager internal constructor(
         }
     }
 
-    fun cancelActiveSynthesis() {
+    override fun cancelActiveSynthesis() {
         activeEngine?.cancel()
     }
 
-    suspend fun releaseActiveEngine() {
+    override suspend fun releaseActiveEngine() {
         mutex.withLock {
             releaseActiveLocked()
         }

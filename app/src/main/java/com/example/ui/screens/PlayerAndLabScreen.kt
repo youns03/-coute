@@ -362,55 +362,57 @@ private fun PlayerTabContent(
                         )
                     }
 
-                    // Primary Transport Controls (-15s, Prev, Play/Pause, Next, +15s)
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceEvenly,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        IconButton(
-                            onClick = { onSeekRelativeSeconds(-15) },
-                            modifier = Modifier
-                                .minimumInteractiveComponentSize()
-                                .testTag("player_seek_back_15")
+                    // Primary Transport Controls (-15s, Prev, Play/Pause, Next, +15s) in consistent LTR timeline order
+                    CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Ltr) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceEvenly,
+                            verticalAlignment = Alignment.CenterVertically
                         ) {
-                            Icon(Icons.Rounded.Replay10, contentDescription = stringResource(R.string.player_seek_back_15_cd))
-                        }
-                        IconButton(onClick = onPrev, modifier = Modifier.minimumInteractiveComponentSize()) {
-                            Icon(Icons.Rounded.SkipPrevious, contentDescription = stringResource(R.string.player_prev_cd))
-                        }
-                        Button(
-                            onClick = onTogglePlayPause,
-                            colors = ButtonDefaults.buttonColors(
-                                containerColor = if (isPlaying) MaterialTheme.colorScheme.secondary else MaterialTheme.colorScheme.primary,
-                                contentColor = if (isPlaying) MaterialTheme.colorScheme.onSecondary else MaterialTheme.colorScheme.onPrimary
-                            ),
-                            shape = RoundedCornerShape(16.dp),
-                            contentPadding = PaddingValues(horizontal = 20.dp, vertical = 12.dp),
-                            modifier = Modifier
-                                .minimumInteractiveComponentSize()
-                                .testTag("player_play_pause_button")
-                        ) {
-                            Icon(
-                                if (isPlaying) Icons.Rounded.Pause else Icons.Rounded.PlayArrow,
-                                contentDescription = stringResource(R.string.player_play_pause_cd)
-                            )
-                            Spacer(Modifier.width(6.dp))
-                            Text(
-                                if (isPlaying) stringResource(R.string.player_pause_label)
-                                else stringResource(R.string.player_play_label)
-                            )
-                        }
-                        IconButton(onClick = onNext, modifier = Modifier.minimumInteractiveComponentSize()) {
-                            Icon(Icons.Rounded.SkipNext, contentDescription = stringResource(R.string.player_next_cd))
-                        }
-                        IconButton(
-                            onClick = { onSeekRelativeSeconds(15) },
-                            modifier = Modifier
-                                .minimumInteractiveComponentSize()
-                                .testTag("player_seek_forward_15")
-                        ) {
-                            Icon(Icons.Rounded.Forward10, contentDescription = stringResource(R.string.player_seek_forward_15_cd))
+                            IconButton(
+                                onClick = { onSeekRelativeSeconds(-15) },
+                                modifier = Modifier
+                                    .minimumInteractiveComponentSize()
+                                    .testTag("player_seek_back_15")
+                            ) {
+                                Icon(Icons.Rounded.Replay10, contentDescription = stringResource(R.string.player_seek_back_15_cd))
+                            }
+                            IconButton(onClick = onPrev, modifier = Modifier.minimumInteractiveComponentSize()) {
+                                Icon(Icons.Rounded.SkipPrevious, contentDescription = stringResource(R.string.player_prev_cd))
+                            }
+                            Button(
+                                onClick = onTogglePlayPause,
+                                colors = ButtonDefaults.buttonColors(
+                                    containerColor = atelier.readerSageAccent,
+                                    contentColor = atelier.onReaderSageAccent
+                                ),
+                                shape = RoundedCornerShape(16.dp),
+                                contentPadding = PaddingValues(horizontal = 20.dp, vertical = 12.dp),
+                                modifier = Modifier
+                                    .minimumInteractiveComponentSize()
+                                    .testTag("player_play_pause_button")
+                            ) {
+                                Icon(
+                                    if (isPlaying) Icons.Rounded.Pause else Icons.Rounded.PlayArrow,
+                                    contentDescription = stringResource(R.string.player_play_pause_cd)
+                                )
+                                Spacer(Modifier.width(6.dp))
+                                Text(
+                                    if (isPlaying) stringResource(R.string.player_pause_label)
+                                    else stringResource(R.string.player_play_label)
+                                )
+                            }
+                            IconButton(onClick = onNext, modifier = Modifier.minimumInteractiveComponentSize()) {
+                                Icon(Icons.Rounded.SkipNext, contentDescription = stringResource(R.string.player_next_cd))
+                            }
+                            IconButton(
+                                onClick = { onSeekRelativeSeconds(15) },
+                                modifier = Modifier
+                                    .minimumInteractiveComponentSize()
+                                    .testTag("player_seek_forward_15")
+                            ) {
+                                Icon(Icons.Rounded.Forward10, contentDescription = stringResource(R.string.player_seek_forward_15_cd))
+                            }
                         }
                     }
 

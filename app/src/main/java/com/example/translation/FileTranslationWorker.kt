@@ -9,13 +9,15 @@ import androidx.core.app.NotificationCompat
 import androidx.work.CoroutineWorker
 import androidx.work.ForegroundInfo
 import androidx.work.WorkerParameters
-import com.example.EcouteApplication
 import com.example.R
+import com.example.contracts.AppContainerProvider
+import com.example.domain.SourceLanguage
+import com.example.domain.TranslationDirection
 import kotlinx.coroutines.CancellationException
 
 /**
  * Independent WorkManager foreground worker for translating long documents in resumable chunks.
- * Persists every completed chunk in Room so leaving the screen or backgrounding the app preserves progress.
+ * Persists every completed chunk via [TranslationJobStore] so leaving the screen or backgrounding preserves progress.
  */
 class FileTranslationWorker(
     appContext: Context,
@@ -30,11 +32,11 @@ class FileTranslationWorker(
 
     override suspend fun doWork(): Result {
         val jobId = inputData.getString(KEY_JOB_ID) ?: return Result.failure()
-        val app = applicationContext as EcouteApplication
-        val jobDao = app.database.translationJobDao()
-        val engineManager = app.translationEngineManager
+        val container = (applicationContext as AppContainerProvider).container
+        val jobStore = container.translationJobStore
+        val engineManager = container.translationEngineManager
 
-        val job = jobDao.getJob(jobId) ?: return Result.failure()
+        val job = jobStore.getJob(jobId) ?: return Result.failure()
         val expectedEpoch = job.jobEpoch
         val sourceLang = SourceLanguage.fromCode(job.sourceLanguage)
         val direction = TranslationDirection.forSource(sourceLang)
@@ -43,10 +45,10 @@ class FileTranslationWorker(
 
         if (!engineManager.isDirectionReady(direction)) {
             val msg = "حزمة الترجمة المحلية (${direction.shortBadge}) غير مثبّتة. نزّلها أولاً ثم استأنف."
-            jobDao.updateJobProgressIfEpochMatches(
+            jobStore.updateJobProgressIfEpochMatches(
                 jobId = jobId,
                 expectedEpoch = expectedEpoch,
-                completedChunks = jobDao.countCompletedChunks(jobId),
+                completedChunks = jobStore.countCompletedChunks(jobId),
                 status = "FAILED",
                 lastError = msg
             )
@@ -54,44 +56,43 @@ class FileTranslationWorker(
         }
 
         return try {
-            var completed = jobDao.countCompletedChunks(jobId)
-            val started = jobDao.updateJobProgressIfEpochMatches(jobId, expectedEpoch, completed, "RUNNING", null)
+            var completed = jobStore.countCompletedChunks(jobId)
+            val started = jobStore.updateJobProgressIfEpochMatches(jobId, expectedEpoch, completed, "RUNNING", null)
             if (started == 0) return Result.success()
 
-            val pending = jobDao.getPendingChunks(jobId)
+            val pending = jobStore.getPendingChunks(jobId)
             for (chunk in pending) {
                 if (isStopped) {
-                    jobDao.updateJobProgressIfEpochMatches(jobId, expectedEpoch, completed, "PAUSED", null)
+                    jobStore.updateJobProgressIfEpochMatches(jobId, expectedEpoch, completed, "PAUSED", null)
                     return Result.success()
                 }
 
                 val translated = engineManager.translateRaw(direction, chunk.originalText).getOrThrow()
-                val updatedRows = jobDao.markChunkTranslatedIfEpochMatches(
+                val updatedRows = jobStore.markChunkTranslatedIfEpochMatches(
                     chunkId = chunk.id,
                     jobId = jobId,
                     expectedEpoch = expectedEpoch,
                     translatedText = translated
                 )
                 if (updatedRows == 0) {
-                    // Job was reset or language changed concurrently; abort immediately without overwriting new state
                     return Result.success()
                 }
                 completed++
 
-                val progRows = jobDao.updateJobProgressIfEpochMatches(jobId, expectedEpoch, completed, "RUNNING", null)
+                val progRows = jobStore.updateJobProgressIfEpochMatches(jobId, expectedEpoch, completed, "RUNNING", null)
                 if (progRows == 0) return Result.success()
                 setForeground(createForegroundInfo(job.title, completed, job.totalChunks))
             }
 
-            jobDao.updateJobProgressIfEpochMatches(jobId, expectedEpoch, completed, "COMPLETED", null)
+            jobStore.updateJobProgressIfEpochMatches(jobId, expectedEpoch, completed, "COMPLETED", null)
             Result.success()
         } catch (ce: CancellationException) {
-            val done = jobDao.countCompletedChunks(jobId)
-            jobDao.updateJobProgressIfEpochMatches(jobId, expectedEpoch, done, "PAUSED", null)
+            val done = jobStore.countCompletedChunks(jobId)
+            jobStore.updateJobProgressIfEpochMatches(jobId, expectedEpoch, done, "PAUSED", null)
             throw ce
         } catch (t: Throwable) {
-            val done = jobDao.countCompletedChunks(jobId)
-            jobDao.updateJobProgressIfEpochMatches(
+            val done = jobStore.countCompletedChunks(jobId)
+            jobStore.updateJobProgressIfEpochMatches(
                 jobId = jobId,
                 expectedEpoch = expectedEpoch,
                 completedChunks = done,

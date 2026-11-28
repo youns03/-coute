@@ -1,7 +1,6 @@
-package com.example.data.importengine
+package com.example.domain
 
 import android.net.Uri
-import com.example.translation.SourceLanguage
 
 enum class ImportFormatCategory(val labelAr: String) {
     DOCUMENTS("الكتب والمستندات"),
@@ -160,3 +159,42 @@ data class ExtractionDiagnostics(
     val warningMessageAr: String? = null,
     val subtitleCues: List<SubtitleCue> = emptyList()
 )
+
+data class ExtractedDocumentSection(
+    val title: String,
+    val body: String,
+    val sourceAnchor: String? = null
+)
+
+data class ParsedSourceDocument(
+    val fileName: String,
+    val title: String,
+    val author: String,
+    val sourceType: String,
+    val detectedLanguage: SourceLanguage,
+    val sections: List<ExtractedDocumentSection>,
+    val sourceContentHash: String = "",
+    val fileSizeBytes: Long = 0L,
+    val detectedLanguageCode: String = detectedLanguage.code,
+    val diagnostics: ExtractionDiagnostics? = null
+)
+
+data class DocumentImportQueueState(
+    val isVisible: Boolean = false,
+    val isInspecting: Boolean = false,
+    val isImporting: Boolean = false,
+    val inspectedFiles: List<FileInspectionPreview> = emptyList(),
+    val pdfMode: PdfExtractionMode = PdfExtractionMode.AUTO_PREFER_TEXT,
+    val activeFileName: String = "",
+    val activeStageLabel: String = "",
+    val currentFileProgress: Float = 0f,
+    val currentIndex: Int = 0,
+    val totalCount: Int = 0,
+    val errorMessage: String? = null
+) {
+    val supportedFiles: List<FileInspectionPreview>
+        get() = inspectedFiles.filter { it.isSupported }
+
+    val hasValidPdf: Boolean
+        get() = supportedFiles.any { it.detectedFormat == SupportedImportFormat.PDF }
+}

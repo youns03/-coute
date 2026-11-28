@@ -1,7 +1,9 @@
 package com.example.runtime
 
 import android.content.Context
-import com.example.tts.MemoryDiagnostics
+import com.example.contracts.MemoryGovernorGateway
+import com.example.domain.MemoryDiagnostics
+import com.example.domain.MemoryGovernorSnapshot
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -12,15 +14,6 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
-
-data class MemoryGovernorSnapshot(
-    val processPssMb: Float = 0f,
-    val availableRamMb: Long = 0L,
-    val isTtsEngineLoaded: Boolean = false,
-    val isAsrEngineLoaded: Boolean = false,
-    val lastCleanupReason: String? = null,
-    val lastCleanupAtMs: Long = 0L
-)
 
 /**
  * Monitors local runtime memory footprint and automatically unloads idle TTS/ASR models
@@ -39,7 +32,7 @@ class RuntimeMemoryGovernor(
     private val isAsrBusyProvider: () -> Boolean,
     private val isAsrLoadedProvider: () -> Boolean,
     private val releaseAsrEngine: suspend () -> Unit
-) {
+) : MemoryGovernorGateway {
     companion object {
         const val DEFAULT_IDLE_TIMEOUT_MS = 120_000L
         const val DEFAULT_CHECK_INTERVAL_MS = 20_000L
@@ -47,7 +40,7 @@ class RuntimeMemoryGovernor(
     }
 
     private val _snapshot = MutableStateFlow(MemoryGovernorSnapshot())
-    val snapshot: StateFlow<MemoryGovernorSnapshot> = _snapshot.asStateFlow()
+    override val snapshot: StateFlow<MemoryGovernorSnapshot> = _snapshot.asStateFlow()
 
     @Volatile
     private var lastTtsActivityAt: Long = nowProvider()
@@ -57,7 +50,7 @@ class RuntimeMemoryGovernor(
 
     private var monitorJob: Job? = null
 
-    fun startMonitoring() {
+    override fun startMonitoring() {
         if (monitorJob?.isActive == true) return
         monitorJob = scope.launch {
             while (isActive) {
@@ -67,20 +60,20 @@ class RuntimeMemoryGovernor(
         }
     }
 
-    fun stopMonitoring() {
+    override fun stopMonitoring() {
         monitorJob?.cancel()
         monitorJob = null
     }
 
-    fun markTtsActivity() {
+    override fun markTtsActivity() {
         lastTtsActivityAt = nowProvider()
     }
 
-    fun markAsrActivity() {
+    override fun markAsrActivity() {
         lastAsrActivityAt = nowProvider()
     }
 
-    suspend fun evaluateAndEnforce() {
+    override suspend fun evaluateAndEnforce() {
         val now = nowProvider()
         val hw = runCatching { MemoryDiagnostics.getDeviceHardwareInfo(context) }.getOrNull()
         val pssMb = runCatching { MemoryDiagnostics.getProcessPssMb(context) }.getOrDefault(0f)
@@ -132,7 +125,7 @@ class RuntimeMemoryGovernor(
         )
     }
 
-    suspend fun onTrimMemory(level: Int) {
+    override suspend fun onTrimMemory(level: Int) {
         if (level >= android.content.ComponentCallbacks2.TRIM_MEMORY_RUNNING_LOW) {
             if (isAsrLoadedProvider() && !isAsrBusyProvider()) {
                 runCatching { releaseAsrEngine() }

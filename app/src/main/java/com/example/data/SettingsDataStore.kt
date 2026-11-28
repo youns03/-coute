@@ -6,34 +6,18 @@ import androidx.datastore.preferences.core.Preferences
 import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.floatPreferencesKey
-import androidx.datastore.preferences.core.intPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
+import com.example.contracts.SettingsGateway
 import com.example.domain.AcceleratorMode
 import com.example.domain.SpeedControlMode
+import com.example.domain.UserSettings
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
 
 private val Context.settingsDataStore: DataStore<Preferences> by preferencesDataStore(name = "ecoute_settings")
 
-data class UserSettings(
-    val activeModelId: String = "kokoro-82m-gpu-fp16",
-    val activeVoiceId: String = "",
-    val activeAsrModelId: String = "sherpa-asr-nemo-fast-conformer-fr-en",
-    val acceleratorMode: AcceleratorMode = AcceleratorMode.AUTO_GPU_WITH_CPU_FALLBACK,
-    val playbackSpeed: Float = 1.0f,
-    val speedControlMode: SpeedControlMode = SpeedControlMode.AUDIO_TRACK_TIME_STRETCH,
-    val readerFontSizeSp: Float = 20f,
-    val readerLineHeightMultiplier: Float = 1.65f,
-    val nightMode: Boolean = true,
-    val showInlineTranslations: Boolean = false,
-    val activeBookId: String? = null,
-    val libraryViewMode: String = "GRID", // "GRID" or "LIST"
-    val librarySortOrder: String = "RECENT", // "RECENT", "ADDED", "NAME"
-    val lastRouteName: String = "Home"
-)
-
-class SettingsRepository(private val context: Context) {
+class SettingsRepository(private val context: Context) : SettingsGateway {
 
     private object Keys {
         val ACTIVE_MODEL_ID = stringPreferencesKey("active_model_id")
@@ -52,7 +36,7 @@ class SettingsRepository(private val context: Context) {
         val LAST_ROUTE_NAME = stringPreferencesKey("last_route_name")
     }
 
-    val settingsFlow: Flow<UserSettings> = context.settingsDataStore.data.map { prefs ->
+    override val settingsFlow: Flow<UserSettings> = context.settingsDataStore.data.map { prefs ->
         val accelName = prefs[Keys.ACCELERATOR_MODE]
         val speedModeName = prefs[Keys.SPEED_CONTROL_MODE]
         UserSettings(
@@ -75,60 +59,59 @@ class SettingsRepository(private val context: Context) {
         )
     }
 
-    suspend fun setActiveModelId(modelId: String) {
+    override suspend fun setActiveModelId(modelId: String) {
         context.settingsDataStore.edit { it[Keys.ACTIVE_MODEL_ID] = modelId }
     }
 
-    suspend fun setActiveVoiceId(voiceId: String) {
+    override suspend fun setActiveVoiceId(voiceId: String) {
         context.settingsDataStore.edit { it[Keys.ACTIVE_VOICE_ID] = voiceId }
     }
 
-    suspend fun setActiveAsrModelId(modelId: String) {
+    override suspend fun setActiveAsrModelId(modelId: String) {
         context.settingsDataStore.edit { it[Keys.ACTIVE_ASR_MODEL_ID] = modelId }
     }
 
-    suspend fun setAcceleratorMode(mode: AcceleratorMode) {
+    override suspend fun setAcceleratorMode(mode: AcceleratorMode) {
         context.settingsDataStore.edit { it[Keys.ACCELERATOR_MODE] = mode.name }
     }
 
-    suspend fun setPlaybackSpeed(speed: Float) {
+    override suspend fun setPlaybackSpeed(speed: Float) {
         context.settingsDataStore.edit { it[Keys.PLAYBACK_SPEED] = speed }
     }
 
-    suspend fun setSpeedControlMode(mode: SpeedControlMode) {
+    override suspend fun setSpeedControlMode(mode: SpeedControlMode) {
         context.settingsDataStore.edit { it[Keys.SPEED_CONTROL_MODE] = mode.name }
     }
 
-    suspend fun setReaderFontSize(sizeSp: Float) {
+    override suspend fun setReaderFontSize(sizeSp: Float) {
         context.settingsDataStore.edit { it[Keys.READER_FONT_SIZE] = sizeSp.coerceIn(15f, 30f) }
     }
 
-    suspend fun setReaderLineHeight(multiplier: Float) {
+    override suspend fun setReaderLineHeight(multiplier: Float) {
         context.settingsDataStore.edit { it[Keys.READER_LINE_HEIGHT] = multiplier.coerceIn(1.3f, 2.2f) }
     }
 
-    suspend fun setNightMode(enabled: Boolean) {
+    override suspend fun setNightMode(enabled: Boolean) {
         context.settingsDataStore.edit { it[Keys.NIGHT_MODE] = enabled }
     }
 
-    suspend fun setShowInlineTranslations(show: Boolean) {
+    override suspend fun setShowInlineTranslations(show: Boolean) {
         context.settingsDataStore.edit { it[Keys.SHOW_INLINE_TRANSLATIONS] = show }
     }
 
-    suspend fun setActiveBookId(bookId: String) {
+    override suspend fun setActiveBookId(bookId: String) {
         context.settingsDataStore.edit { it[Keys.ACTIVE_BOOK_ID] = bookId }
     }
 
-    suspend fun setLibraryViewMode(mode: String) {
+    override suspend fun setLibraryViewMode(mode: String) {
         context.settingsDataStore.edit { it[Keys.LIBRARY_VIEW_MODE] = mode }
     }
 
-    suspend fun setLibrarySortOrder(order: String) {
+    override suspend fun setLibrarySortOrder(order: String) {
         context.settingsDataStore.edit { it[Keys.LIBRARY_SORT_ORDER] = order }
     }
 
-    suspend fun setLastRouteName(routeName: String) {
+    override suspend fun setLastRouteName(routeName: String) {
         context.settingsDataStore.edit { it[Keys.LAST_ROUTE_NAME] = routeName }
     }
 }
-

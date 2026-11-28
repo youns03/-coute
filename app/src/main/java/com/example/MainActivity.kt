@@ -100,10 +100,12 @@ import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
 import androidx.navigation.toRoute
 import com.example.audio.PlaybackStatus
+import com.example.data.importengine.SupportedImportFormat
 import com.example.domain.BenchmarkCorpus
 import com.example.ui.components.AsrModelMissingDialog
 import com.example.ui.components.AudioTranscriptionLanguageDialog
 import com.example.ui.components.DirectTextInputDialog
+import com.example.ui.components.DocumentImportQueueSheet
 import com.example.ui.components.EcouteAtelierBackdrop
 import com.example.ui.components.GlobalMiniPlayer
 import com.example.ui.components.QuickAddModalSheet
@@ -188,13 +190,13 @@ fun EcouteAppRoot(isExpandedNav: Boolean) {
     var homeSearchQuery by remember { mutableStateOf("") }
     var pendingAudioLang by remember { mutableStateOf("fr") }
 
+    val libraryImportQueue by libraryVm.importQueueState.collectAsStateWithLifecycle()
+
     val quickDocPickerLauncher = rememberLauncherForActivityResult(
-        contract = ActivityResultContracts.OpenDocument()
-    ) { uri: Uri? ->
-        if (uri != null) {
-            libraryVm.importBook(uri) { importedId ->
-                navController.navigate(AppRoute.Reader(importedId))
-            }
+        contract = ActivityResultContracts.OpenMultipleDocuments()
+    ) { uris: List<Uri> ->
+        if (uris.isNotEmpty()) {
+            libraryVm.inspectFiles(uris)
         }
     }
 
@@ -310,7 +312,7 @@ fun EcouteAppRoot(isExpandedNav: Boolean) {
                         }
                     },
                     topBar = {
-                        if (!hideAppChrome) {
+                        if (!hideAppChrome && !isReaderDestination) {
                             if (isHomeDestination) {
                                 TopAppBar(
                                     title = {
@@ -696,6 +698,7 @@ fun EcouteAppRoot(isExpandedNav: Boolean) {
                                             navController.navigate(AppRoute.Reader(importedId))
                                         }
                                     },
+                                    onInspectImportUris = libraryVm::inspectFiles,
                                     onOpenBook = { bookId ->
                                         navController.navigate(AppRoute.Reader(bookId))
                                     },
@@ -764,6 +767,7 @@ fun EcouteAppRoot(isExpandedNav: Boolean) {
                                 val previewChunks by translatorVm.previewChunks.collectAsStateWithLifecycle()
                                 val isImporting by translatorVm.isImporting.collectAsStateWithLifecycle()
                                 val banner by translatorVm.statusBanner.collectAsStateWithLifecycle()
+                                val translatorQueue by translatorVm.importQueueState.collectAsStateWithLifecycle()
 
                                 FileTranslatorScreen(
                                     selectedSourceLanguage = selectedLang,
@@ -784,7 +788,13 @@ fun EcouteAppRoot(isExpandedNav: Boolean) {
                                     onClosePreview = translatorVm::closePreview,
                                     onExportJob = translatorVm::exportJob,
                                     onDownloadPack = translatorVm::downloadPack,
-                                    onDismissBanner = translatorVm::dismissBanner
+                                    onDismissBanner = translatorVm::dismissBanner,
+                                    importQueueState = translatorQueue,
+                                    onInspectImportUris = translatorVm::inspectFiles,
+                                    onSelectPdfMode = translatorVm::setPdfExtractionMode,
+                                    onRemoveQueuedFile = translatorVm::removeQueuedFile,
+                                    onConfirmQueuedImport = { translatorVm.startQueuedTranslationImports(useAutoDetect = false) },
+                                    onCancelQueuedImport = translatorVm::dismissImportQueue
                                 )
                             }
 
@@ -972,14 +982,7 @@ fun EcouteAppRoot(isExpandedNav: Boolean) {
                 if (showQuickAddSheet) {
                     QuickAddModalSheet(
                         onPickDocument = {
-                            quickDocPickerLauncher.launch(
-                                arrayOf(
-                                    "text/plain",
-                                    "application/epub+zip",
-                                    "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-                                    "application/octet-stream"
-                                )
-                            )
+                            quickDocPickerLauncher.launch(SupportedImportFormat.safPickerMimeTypes())
                         },
                         onPickAudio = {
                             if (homeState.readyAsrAvailable) {
@@ -992,6 +995,18 @@ fun EcouteAppRoot(isExpandedNav: Boolean) {
                         onDismiss = { showQuickAddSheet = false }
                     )
                 }
+
+                DocumentImportQueueSheet(
+                    state = libraryImportQueue,
+                    onSelectPdfMode = libraryVm::setPdfExtractionMode,
+                    onRemoveFile = libraryVm::removeQueuedFile,
+                    onConfirmImport = {
+                        libraryVm.startQueuedImports { importedId ->
+                            navController.navigate(AppRoute.Reader(importedId))
+                        }
+                    },
+                    onCancelOrDismiss = libraryVm::dismissImportQueue
+                )
 
                 if (showDirectTextDialog) {
                     DirectTextInputDialog(

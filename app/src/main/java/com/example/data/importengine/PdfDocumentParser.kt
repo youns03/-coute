@@ -6,8 +6,12 @@ import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.pdf.PdfRenderer
 import android.os.ParcelFileDescriptor
-import com.example.data.ExtractedDocumentSection
-import com.example.data.ParsedSourceDocument
+import com.example.domain.DocumentExtractionOptions
+import com.example.domain.ExtractedDocumentSection
+import com.example.domain.ExtractionDiagnostics
+import com.example.domain.ParsedSourceDocument
+import com.example.domain.PdfExtractionMode
+import com.example.domain.PdfPageClassification
 import com.google.mlkit.vision.common.InputImage
 import com.google.mlkit.vision.text.TextRecognition
 import com.google.mlkit.vision.text.latin.TextRecognizerOptions

@@ -3,14 +3,11 @@ package com.example.data
 import android.content.Context
 import android.net.Uri
 import android.provider.OpenableColumns
+import com.example.contracts.DocumentImportGateway
 import com.example.data.importengine.DocxParser
-import com.example.data.importengine.DocumentExtractionOptions
 import com.example.data.importengine.EpubParser
-import com.example.data.importengine.ExtractionDiagnostics
-import com.example.data.importengine.FileInspectionPreview
 import com.example.data.importengine.FormatDetector
 import com.example.data.importengine.HtmlDocumentParser
-import com.example.data.importengine.ImportProgressEvent
 import com.example.data.importengine.LanguageDetector
 import com.example.data.importengine.MarkdownParser
 import com.example.data.importengine.MlKitPdfPageOcrEngine
@@ -18,9 +15,19 @@ import com.example.data.importengine.PdfDocumentParser
 import com.example.data.importengine.PdfPageOcrEngine
 import com.example.data.importengine.PlainTextParser
 import com.example.data.importengine.SubtitleTranscriptParser
-import com.example.data.importengine.SupportedImportFormat
+import com.example.domain.Book
+import com.example.domain.Chapter
+import com.example.domain.DocumentExtractionOptions
+import com.example.domain.ExtractedDocumentSection
+import com.example.domain.ExtractionDiagnostics
+import com.example.domain.FileInspectionPreview
+import com.example.domain.ImportProgressEvent
+import com.example.domain.ImportedBookDraft
+import com.example.domain.ParsedSourceDocument
+import com.example.domain.Sentence
+import com.example.domain.SourceLanguage
 import com.example.domain.SpeechTextProcessor
-import com.example.translation.SourceLanguage
+import com.example.domain.SupportedImportFormat
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
@@ -32,32 +39,6 @@ import java.io.InputStream
 import java.security.MessageDigest
 import java.util.UUID
 
-data class ExtractedDocumentSection(
-    val title: String,
-    val body: String,
-    val sourceAnchor: String? = null
-)
-
-data class ParsedSourceDocument(
-    val fileName: String,
-    val title: String,
-    val author: String,
-    val sourceType: String, // "PDF", "EPUB", "DOCX", "TXT", "MD", "HTML", "SRT", "VTT", "TEXT"
-    val detectedLanguage: SourceLanguage,
-    val sections: List<ExtractedDocumentSection>,
-    val sourceContentHash: String = "",
-    val fileSizeBytes: Long = 0L,
-    val detectedLanguageCode: String = detectedLanguage.code,
-    val diagnostics: ExtractionDiagnostics? = null
-)
-
-data class ImportedBookPayload(
-    val book: BookEntity,
-    val chapters: List<ChapterEntity>,
-    val sentences: List<SentenceEntity>,
-    val diagnostics: ExtractionDiagnostics? = null
-)
-
 class BookImporter internal constructor(
     private val context: Context,
     private val maxImportFileBytes: Long = MAX_IMPORT_FILE_BYTES,
@@ -65,7 +46,8 @@ class BookImporter internal constructor(
     private val maxLineChars: Int = MAX_TXT_LINE_CHARS,
     private val maxEpubTotalUncompressedBytes: Long = MAX_EPUB_TOTAL_UNCOMPRESSED_BYTES,
     private val pdfOcrEngine: PdfPageOcrEngine = MlKitPdfPageOcrEngine()
-) {
+) : DocumentImportGateway {
+
     constructor(context: Context) : this(
         context = context,
         maxImportFileBytes = MAX_IMPORT_FILE_BYTES,
@@ -75,7 +57,7 @@ class BookImporter internal constructor(
         pdfOcrEngine = MlKitPdfPageOcrEngine()
     )
 
-    suspend fun inspectUri(uri: Uri): FileInspectionPreview = withContext(Dispatchers.IO) {
+    override suspend fun inspectUri(uri: Uri): FileInspectionPreview = withContext(Dispatchers.IO) {
         val (rawName, declaredSize) = resolveFileMeta(uri)
         val fileName = rawName ?: "Document"
         val mimeType = context.contentResolver.getType(uri).orEmpty()
@@ -107,7 +89,6 @@ class BookImporter internal constructor(
             )
         }
 
-        // Fast bounded header inspection without duplicating massive files
         val tempPeek = File(context.cacheDir, "peek_${UUID.randomUUID()}.tmp")
         return@withContext try {
             val actualPeekBytes = context.contentResolver.openInputStream(uri)?.use { stream ->
@@ -159,17 +140,17 @@ class BookImporter internal constructor(
         }
     }
 
-    suspend fun inspectUris(uris: List<Uri>): List<FileInspectionPreview> = withContext(Dispatchers.IO) {
+    override suspend fun inspectUris(uris: List<Uri>): List<FileInspectionPreview> = withContext(Dispatchers.IO) {
         uris.map { uri ->
             currentCoroutineContext().ensureActive()
             inspectUri(uri)
         }
     }
 
-    suspend fun parseDocumentFromUri(
+    override suspend fun parseDocumentFromUri(
         uri: Uri,
-        options: DocumentExtractionOptions = DocumentExtractionOptions(),
-        onProgress: (ImportProgressEvent) -> Unit = {}
+        options: DocumentExtractionOptions,
+        onProgress: (ImportProgressEvent) -> Unit
     ): Result<ParsedSourceDocument> = withContext(Dispatchers.IO) {
         runCatching {
             val meta = resolveFileMeta(uri)
@@ -280,16 +261,16 @@ class BookImporter internal constructor(
         }
     }
 
-    suspend fun importFromUri(
+    override suspend fun importFromUri(
         uri: Uri,
-        options: DocumentExtractionOptions = DocumentExtractionOptions(),
-        onProgress: (ImportProgressEvent) -> Unit = {}
-    ): Result<ImportedBookPayload> = withContext(Dispatchers.IO) {
+        options: DocumentExtractionOptions,
+        onProgress: (ImportProgressEvent) -> Unit
+    ): Result<ImportedBookDraft> = withContext(Dispatchers.IO) {
         parseDocumentFromUri(uri, options, onProgress).mapCatching { doc ->
             currentCoroutineContext().ensureActive()
             onProgress(ImportProgressEvent(doc.fileName, "جاري تقسيم الجمل والحفظ...", 0.96f))
             val bookId = "${doc.sourceType.lowercase()}_${UUID.randomUUID().toString().take(8)}"
-            buildBookPayload(
+            buildBookDraft(
                 bookId = bookId,
                 title = doc.title,
                 author = doc.author,
@@ -303,11 +284,11 @@ class BookImporter internal constructor(
         }
     }
 
-    suspend fun importDirectText(
+    override suspend fun importDirectText(
         title: String,
         rawBody: String,
-        languageCode: String? = null
-    ): Result<ImportedBookPayload> = withContext(Dispatchers.IO) {
+        languageCode: String?
+    ): Result<ImportedBookDraft> = withContext(Dispatchers.IO) {
         runCatching {
             val cleanedBody = rawBody.replace("\r\n", "\n").replace('\r', '\n').trim()
             require(cleanedBody.isNotEmpty()) { "النص المدخل فارغ." }
@@ -325,7 +306,7 @@ class BookImporter internal constructor(
             }
             val hash = computeSha256Bytes(cleanedBody.toByteArray(Charsets.UTF_8))
             val bookId = "txt_${UUID.randomUUID().toString().take(8)}"
-            buildBookPayload(
+            buildBookDraft(
                 bookId = bookId,
                 title = cleanTitle,
                 author = "نص مضاف يدوياً",
@@ -392,7 +373,7 @@ class BookImporter internal constructor(
         return digest.digest(bytes).joinToString("") { "%02x".format(it) }
     }
 
-    private fun buildBookPayload(
+    private fun buildBookDraft(
         bookId: String,
         title: String,
         author: String,
@@ -402,9 +383,9 @@ class BookImporter internal constructor(
         sourceContentHash: String = "",
         fileSizeBytes: Long = 0L,
         diagnostics: ExtractionDiagnostics? = null
-    ): ImportedBookPayload {
-        val chapters = mutableListOf<ChapterEntity>()
-        val sentences = mutableListOf<SentenceEntity>()
+    ): ImportedBookDraft {
+        val chapters = mutableListOf<Chapter>()
+        val sentences = mutableListOf<Sentence>()
         var totalSentences = 0
 
         sections.forEachIndexed { idx, section ->
@@ -415,7 +396,7 @@ class BookImporter internal constructor(
                     section.sourceAnchor?.takeIf { it.isNotBlank() } ?: "Section ${idx + 1}"
                 }
                 chapters.add(
-                    ChapterEntity(
+                    Chapter(
                         bookId = bookId,
                         chapterIndex = realChIndex,
                         title = chTitle,
@@ -424,7 +405,7 @@ class BookImporter internal constructor(
                 )
                 processed.forEach { s ->
                     sentences.add(
-                        SentenceEntity(
+                        Sentence(
                             bookId = bookId,
                             chapterIndex = realChIndex,
                             sentenceIndex = s.index,
@@ -446,7 +427,7 @@ class BookImporter internal constructor(
             "PDF", "DOCX" -> "botanical_parchment"
             else -> "auto"
         }
-        val book = BookEntity(
+        val book = Book(
             id = bookId,
             title = title,
             author = author,
@@ -459,7 +440,7 @@ class BookImporter internal constructor(
             sourceContentHash = sourceContentHash.ifBlank { null },
             fileSizeBytes = fileSizeBytes
         )
-        return ImportedBookPayload(book, chapters, sentences, diagnostics)
+        return ImportedBookDraft(book, chapters, sentences, diagnostics)
     }
 
     private fun resolveFileMeta(uri: Uri): Pair<String?, Long> {

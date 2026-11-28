@@ -1,7 +1,8 @@
 package com.example.data.importengine
 
-import com.example.data.ExtractedDocumentSection
-import com.example.data.ParsedSourceDocument
+import com.example.domain.ExtractedDocumentSection
+import com.example.domain.ExtractionDiagnostics
+import com.example.domain.ParsedSourceDocument
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
 import org.jsoup.Jsoup

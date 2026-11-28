@@ -4,6 +4,9 @@ import android.content.Context
 import android.net.ConnectivityManager
 import android.net.NetworkCapabilities
 import android.os.StatFs
+import com.example.contracts.AsrResolvedFiles
+import com.example.contracts.ModelCatalogProvider
+import com.example.contracts.ModelStorageGateway
 import com.example.domain.ArchiveType
 import com.example.domain.EngineType
 import com.example.domain.ModelSpec
@@ -21,7 +24,10 @@ import java.security.MessageDigest
 import java.util.concurrent.ConcurrentHashMap
 import java.util.zip.ZipInputStream
 
-class ModelStorageManager(private val context: Context) {
+class ModelStorageManager(
+    private val context: Context,
+    private val modelCatalog: ModelCatalogProvider = ModelCatalog
+) : ModelStorageGateway {
 
     private val installLocks = ConcurrentHashMap<String, Any>()
     private val sharedEspeakInstallMutex = Mutex()
@@ -30,7 +36,7 @@ class ModelStorageManager(private val context: Context) {
      * Serializes installation of the shared eSpeak-ng payload across model workers.
      * The lock is suspend-aware so a waiting worker does not block a WorkManager thread.
      */
-    suspend fun <T> withSharedEspeakInstallLock(block: suspend () -> T): T {
+    override suspend fun <T> withSharedEspeakInstallLock(block: suspend () -> T): T {
         sharedEspeakInstallMutex.lock()
         return try {
             block()
@@ -39,16 +45,16 @@ class ModelStorageManager(private val context: Context) {
         }
     }
 
-    val permanentModelsRoot: File
+    override val permanentModelsRoot: File
         get() = File(context.filesDir, "models").apply { mkdirs() }
 
-    val tempDownloadsRoot: File
+    override val tempDownloadsRoot: File
         get() = File(context.cacheDir, "model_downloads").apply { mkdirs() }
 
-    val audioCacheRoot: File
+    override val audioCacheRoot: File
         get() = File(context.cacheDir, "audio_cache").apply { mkdirs() }
 
-    val savedSamplesRoot: File
+    override val savedSamplesRoot: File
         get() = File(context.filesDir, "benchmark_samples").apply { mkdirs() }
 
     private fun requireValidModelId(modelId: String) {
@@ -60,19 +66,19 @@ class ModelStorageManager(private val context: Context) {
         }
     }
 
-    fun getInstalledModelDir(modelId: String): File {
+    override fun getInstalledModelDir(modelId: String): File {
         requireValidModelId(modelId)
         return File(permanentModelsRoot, modelId)
     }
 
-    fun getTempPartFile(modelId: String): File {
+    override fun getTempPartFile(modelId: String): File {
         requireValidModelId(modelId)
         return File(tempDownloadsRoot, "$modelId.part")
     }
 
-    fun getSharedEspeakDir(): File = File(permanentModelsRoot, "espeak-ng-data")
+    override fun getSharedEspeakDir(): File = File(permanentModelsRoot, "espeak-ng-data")
 
-    fun hasNetworkConnection(): Boolean {
+    override fun hasNetworkConnection(): Boolean {
         val cm = context.getSystemService(Context.CONNECTIVITY_SERVICE) as? ConnectivityManager
             ?: return false
         val network = cm.activeNetwork ?: return false
@@ -81,17 +87,17 @@ class ModelStorageManager(private val context: Context) {
             caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED)
     }
 
-    fun getFreeInternalBytes(): Long {
+    override fun getFreeInternalBytes(): Long {
         val stat = StatFs(context.filesDir.absolutePath)
         return stat.availableBytes
     }
 
-    fun requiredPeakBytes(
+    override fun requiredPeakBytes(
         spec: ModelSpec,
         includeEspeakDependency: Boolean,
-        alreadyDownloadedBytes: Long = 0L
+        alreadyDownloadedBytes: Long
     ): Long {
-        val depBytes = if (includeEspeakDependency) ModelCatalog.espeakNgDataSpec.expectedSizeBytes * 3L else 0L
+        val depBytes = if (includeEspeakDependency) modelCatalog.espeakNgDataSpec.expectedSizeBytes * 3L else 0L
         val safetyMargin = 100L * 1024L * 1024L
         val remainingDownload = (spec.expectedSizeBytes - alreadyDownloadedBytes).coerceAtLeast(0L)
         val installStagePeak = when (spec.archiveType) {
@@ -102,17 +108,17 @@ class ModelStorageManager(private val context: Context) {
         return remainingDownload + installStagePeak + depBytes + safetyMargin
     }
 
-    fun hasEnoughDiskSpace(spec: ModelSpec, includeEspeakDependency: Boolean = false): Boolean {
+    override fun hasEnoughDiskSpace(spec: ModelSpec, includeEspeakDependency: Boolean): Boolean {
         val partBytes = getTempPartFile(spec.id).takeIf { it.exists() }?.length() ?: 0L
         return getFreeInternalBytes() >= requiredPeakBytes(spec, includeEspeakDependency, partBytes)
     }
 
-    fun hasEnoughDiskSpace(requiredBytes: Long): Boolean {
+    override fun hasEnoughDiskSpace(requiredBytes: Long): Boolean {
         val needed = (requiredBytes * 1.5).toLong() + 100L * 1024L * 1024L
         return getFreeInternalBytes() >= needed
     }
 
-    fun computeSha256(file: File): String {
+    override fun computeSha256(file: File): String {
         val digest = MessageDigest.getInstance("SHA-256")
         FileInputStream(file).use { fis ->
             val buffer = ByteArray(64 * 1024)
@@ -125,10 +131,10 @@ class ModelStorageManager(private val context: Context) {
         return digest.digest().joinToString("") { "%02x".format(it) }
     }
 
-    suspend fun installVerifiedPackage(
+    override suspend fun installVerifiedPackage(
         spec: ModelSpec,
         downloadedFile: File,
-        deferCommitConfirmation: Boolean = false
+        deferCommitConfirmation: Boolean
     ): Result<File> = withContext(Dispatchers.IO) {
         synchronized(installLocks.getOrPut(spec.id) { Any() }) {
             runCatching {
@@ -218,7 +224,7 @@ class ModelStorageManager(private val context: Context) {
      * Confirms an installed model only after the caller's engine-load check succeeds.
      * Until confirmation, startup recovery rolls the transaction back to the previous model.
      */
-    fun confirmInstalledPackage(spec: ModelSpec): Result<Unit> =
+    override fun confirmInstalledPackage(spec: ModelSpec): Result<Unit> =
         synchronized(installLocks.getOrPut(spec.id) { Any() }) {
             runCatching {
                 requireValidModelId(spec.id)
@@ -240,7 +246,7 @@ class ModelStorageManager(private val context: Context) {
         }
 
     /** Roll back a pending install when the native engine cannot load the verified files. */
-    fun rollbackInstalledPackage(modelId: String): Boolean =
+    override fun rollbackInstalledPackage(modelId: String): Boolean =
         synchronized(installLocks.getOrPut(modelId) { Any() }) {
             runCatching {
                 requireValidModelId(modelId)
@@ -249,7 +255,7 @@ class ModelStorageManager(private val context: Context) {
         }
 
     /** Repairs interrupted commits before normal database reconciliation. */
-    fun recoverPendingInstalls() {
+    override fun recoverPendingInstalls() {
         val modelIds = context.cacheDir.listFiles()
             ?.filter {
                 it.name.startsWith("backup_") || it.name.startsWith("staging_") ||
@@ -347,8 +353,8 @@ class ModelStorageManager(private val context: Context) {
     }
 
     private fun recoverySpec(modelId: String): ModelSpec? =
-        ModelCatalog.findById(modelId)
-            ?: ModelCatalog.espeakNgDataSpec.takeIf { it.id == modelId }
+        modelCatalog.findById(modelId)
+            ?: modelCatalog.espeakNgDataSpec.takeIf { it.id == modelId }
 
     private fun isValidInstalledPackageForRecovery(modelId: String, dir: File): Boolean {
         val spec = recoverySpec(modelId) ?: return false
@@ -493,7 +499,7 @@ class ModelStorageManager(private val context: Context) {
         }
     }.getOrDefault(false)
 
-    fun verifyInstalledPackage(spec: ModelSpec, verifyIntegrity: Boolean = false): Boolean =
+    override fun verifyInstalledPackage(spec: ModelSpec, verifyIntegrity: Boolean): Boolean =
         verifyInstalledPackageAt(spec, getInstalledModelDir(spec.id), verifyIntegrity)
 
     private fun verifyInstalledPackageAt(
@@ -619,7 +625,7 @@ class ModelStorageManager(private val context: Context) {
                 }
             }
             EngineType.PIPER_SHERPA_ONNX -> {
-                if (spec.id == ModelCatalog.espeakNgDataSpec.id) {
+                if (spec.id == modelCatalog.espeakNgDataSpec.id) {
                     val phontab = File(dir, "phontab")
                     if (!phontab.exists()) error("بيانات eSpeak-ng تالفة (phontab مفقود).")
                     return
@@ -647,10 +653,10 @@ class ModelStorageManager(private val context: Context) {
         const val INTEGRITY_MANIFEST_FILE = ".integrity.sha256"
     }
 
-    fun resolveKokoroModelFile(modelDir: File): File? =
+    override fun resolveKokoroModelFile(modelDir: File): File? =
         modelDir.walkTopDown().firstOrNull { it.isFile && it.extension == "litertlm" }
 
-    fun resolvePiperPaths(modelDir: File): Triple<File, File, File>? {
+    override fun resolvePiperPaths(modelDir: File): Triple<File, File, File>? {
         val onnx = modelDir.walkTopDown().firstOrNull { it.isFile && it.extension == "onnx" } ?: return null
         val tokens = modelDir.walkTopDown().firstOrNull { it.isFile && it.name == "tokens.txt" } ?: return null
         val localEspeak = modelDir.walkTopDown().firstOrNull { it.isDirectory && it.name == "espeak-ng-data" }
@@ -659,14 +665,7 @@ class ModelStorageManager(private val context: Context) {
         return Triple(onnx, tokens, espeak)
     }
 
-    data class AsrResolvedFiles(
-        val tokensFile: File,
-        val ctcModelFile: File? = null,
-        val encoderFile: File? = null,
-        val decoderFile: File? = null
-    )
-
-    fun resolveAsrPaths(modelDir: File): AsrResolvedFiles? {
+    override fun resolveAsrPaths(modelDir: File): AsrResolvedFiles? {
         if (!modelDir.isDirectory) return null
         val allFiles = modelDir.walkTopDown().filter { it.isFile }.toList()
         val tokens = allFiles.firstOrNull { it.name == "tokens.txt" } ?: return null
@@ -682,7 +681,7 @@ class ModelStorageManager(private val context: Context) {
         return AsrResolvedFiles(tokensFile = tokens, ctcModelFile = singleCtc)
     }
 
-    fun deleteModelFiles(modelId: String): Boolean =
+    override fun deleteModelFiles(modelId: String): Boolean =
         synchronized(installLocks.getOrPut(modelId) { Any() }) {
             val dir = getInstalledModelDir(modelId)
             val artifacts = listOf(
@@ -698,12 +697,12 @@ class ModelStorageManager(private val context: Context) {
             success
         }
 
-    fun clearAudioCache() {
+    override fun clearAudioCache() {
         audioCacheRoot.deleteRecursively()
         audioCacheRoot.mkdirs()
     }
 
-    fun getStorageBreakdown(): StorageBreakdown {
+    override fun getStorageBreakdown(): StorageBreakdown {
         val appInfo = context.applicationInfo
         val apkBytes = runCatching { File(appInfo.sourceDir).length() }.getOrDefault(0L)
         val nativeLibsBytes = runCatching {

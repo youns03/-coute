@@ -1,52 +1,9 @@
-package com.example.tts
+package com.example.domain
 
 import android.app.ActivityManager
 import android.content.Context
 import android.os.Build
 import android.os.Debug
-import com.example.domain.AcceleratorMode
-import com.example.domain.EngineType
-import com.example.domain.ModelCompatibilityReport
-import com.example.domain.ModelCompatibilityStatus
-import com.example.domain.ModelSpec
-import com.example.domain.TtsStreamChunk
-import com.example.domain.TtsSynthesisResult
-import kotlinx.coroutines.flow.Flow
-import java.io.File
-
-interface TtsEngine {
-    val engineType: EngineType
-    val modelId: String
-    val sampleRateHz: Int
-    val isLoaded: Boolean
-    val activeAccelerator: String
-    val fellBackToCpu: Boolean
-    val fallbackReason: String?
-
-    suspend fun initialize(
-        spec: ModelSpec,
-        modelDir: File,
-        acceleratorMode: AcceleratorMode
-    ): Result<Long> // Returns model load time in ms
-
-    suspend fun synthesize(
-        spokenText: String,
-        voiceId: String,
-        speed: Float = 1.0f,
-        locale: String = "fr-FR"
-    ): Result<TtsSynthesisResult>
-
-    fun synthesizeStream(
-        spokenText: String,
-        voiceId: String,
-        speed: Float = 1.0f,
-        locale: String = "fr-FR"
-    ): Flow<TtsStreamChunk>
-
-    fun cancel()
-
-    fun release()
-}
 
 data class DeviceHardwareInfo(
     val deviceModel: String,
@@ -144,11 +101,6 @@ object MemoryDiagnostics {
         )
     }
 
-    /**
-     * Checks live available RAM right before allocating native engine buffers so devices with
-     * enough total RAM but temporary background memory pressure fail cleanly instead of OOM/LMKD kills.
-     * Devices reporting availableRamMb == 0L (unpopulated sensor / test host) are never false-blocked.
-     */
     fun evaluateRuntimeMemoryForLoad(spec: ModelSpec, context: Context): ModelCompatibilityReport =
         evaluateRuntimeMemoryForLoad(spec, getDeviceHardwareInfo(context))
 

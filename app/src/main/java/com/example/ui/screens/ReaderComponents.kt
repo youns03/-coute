@@ -5,12 +5,13 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -28,6 +29,9 @@ import androidx.compose.material.icons.rounded.DarkMode
 import androidx.compose.material.icons.rounded.FormatSize
 import androidx.compose.material.icons.rounded.Fullscreen
 import androidx.compose.material.icons.rounded.FullscreenExit
+import androidx.compose.material.icons.rounded.KeyboardArrowDown
+import androidx.compose.material.icons.rounded.MoreVert
+import androidx.compose.material.icons.rounded.OpenInFull
 import androidx.compose.material.icons.rounded.Pause
 import androidx.compose.material.icons.rounded.PlayArrow
 import androidx.compose.material.icons.rounded.Search
@@ -35,22 +39,23 @@ import androidx.compose.material.icons.rounded.SkipNext
 import androidx.compose.material.icons.rounded.SkipPrevious
 import androidx.compose.material.icons.rounded.Translate
 import androidx.compose.material.icons.rounded.VisibilityOff
-import androidx.compose.material3.AssistChip
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilledTonalButton
-import androidx.compose.material3.FilterChip
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
-import androidx.compose.material3.IconButtonDefaults
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
+import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Slider
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
@@ -59,13 +64,23 @@ import androidx.compose.material3.TextButton
 import androidx.compose.material3.minimumInteractiveComponentSize
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.role
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.LayoutDirection
@@ -83,12 +98,13 @@ import com.example.translation.TranslationDirection
 import com.example.translation.TranslationPackStatus
 import com.example.ui.components.AcousticWaveIndicator
 import com.example.ui.components.AtelierCard
-import com.example.ui.components.MonospaceMetricPill
 import com.example.ui.theme.ArabicSansFamily
 import com.example.ui.theme.FrenchSerifFamily
 import com.example.ui.theme.LocalEcouteAtelierColors
-import com.example.ui.theme.StudioMonoFamily
+import com.example.ui.theme.UiSansFamily
+import com.example.ui.theme.withTabularNumbers
 import com.example.ui.viewmodel.WordLookupSheetState
+import kotlin.math.abs
 
 @Composable
 internal fun ReaderToolbar(
@@ -101,153 +117,384 @@ internal fun ReaderToolbar(
     showInlineTranslations: Boolean,
     isImmersive: Boolean,
     onOpenChapters: () -> Unit,
-    onToggleBookLanguage: () -> Unit,
+    onOpenLanguagePicker: () -> Unit,
     onToggleSearch: () -> Unit,
     onToggleInlineTranslations: () -> Unit,
     onOpenAppearance: () -> Unit,
-    onToggleImmersive: () -> Unit
+    onToggleImmersive: () -> Unit,
+    modifier: Modifier = Modifier
 ) {
     val atelier = LocalEcouteAtelierColors.current
+    var showOverflowMenu by remember { mutableStateOf(false) }
+    val resolvedBookTitle = bookTitle ?: stringResource(R.string.reader_choose_book)
+    val openChaptersDesc = stringResource(R.string.reader_open_chapters_cd, resolvedBookTitle)
+    val fontScale = LocalDensity.current.fontScale
+
     Surface(
         tonalElevation = 0.dp,
-        color = MaterialTheme.colorScheme.surface.copy(alpha = 0.94f)
+        color = MaterialTheme.colorScheme.background.copy(alpha = 0.96f),
+        modifier = modifier.fillMaxWidth()
     ) {
         Column {
-            Row(
+            BoxWithConstraints(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(horizontal = 8.dp, vertical = 6.dp),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.SpaceBetween
+                    .heightIn(min = 56.dp)
+                    .padding(horizontal = 12.dp)
             ) {
+                val isCompact = maxWidth < 375.dp
                 Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .heightIn(min = 56.dp),
                     verticalAlignment = Alignment.CenterVertically,
-                    modifier = Modifier.weight(1f)
+                    horizontalArrangement = Arrangement.spacedBy(4.dp)
                 ) {
-                    IconButton(
-                        onClick = onOpenChapters,
+                    // Book + Chapter clickable area (no heavy pill, generous flexible space)
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(4.dp),
                         modifier = Modifier
-                            .minimumInteractiveComponentSize()
+                            .weight(1f)
+                            .heightIn(min = 48.dp, max = 56.dp)
+                            .clip(RoundedCornerShape(12.dp))
+                            .clickable(onClick = onOpenChapters)
+                            .padding(horizontal = 4.dp, vertical = 4.dp)
+                            .semantics {
+                                role = Role.Button
+                                contentDescription = openChaptersDesc
+                            }
                             .testTag("chapter_selector_button")
                     ) {
-                        Icon(
-                            Icons.AutoMirrored.Rounded.List,
-                            contentDescription = stringResource(R.string.reader_chapters_title)
-                        )
-                    }
-                    Column(modifier = Modifier.weight(1f)) {
-                        val resolvedBookTitle = bookTitle ?: stringResource(R.string.reader_choose_book)
-                        val titleIsArabic = isArabicSource || LanguageDetector.isArabicText(resolvedBookTitle)
-                        CompositionLocalProvider(
-                            LocalLayoutDirection provides if (titleIsArabic) LayoutDirection.Rtl else LayoutDirection.Ltr
+                        Column(
+                            modifier = Modifier.weight(1f, fill = false),
+                            verticalArrangement = Arrangement.spacedBy(2.dp)
                         ) {
-                            Text(
-                                text = resolvedBookTitle,
-                                style = MaterialTheme.typography.titleSmall.copy(
-                                    fontFamily = if (titleIsArabic) ArabicSansFamily else FrenchSerifFamily,
-                                    fontWeight = FontWeight.SemiBold
-                                ),
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis
-                            )
-                            if (chapterTitle.isNotEmpty()) {
-                                val chapterIsArabic = isArabicSource || LanguageDetector.isArabicText(chapterTitle)
+                            val titleIsArabic = isArabicSource || LanguageDetector.isArabicText(resolvedBookTitle)
+                            CompositionLocalProvider(
+                                LocalLayoutDirection provides if (titleIsArabic) LayoutDirection.Rtl else LayoutDirection.Ltr
+                            ) {
                                 Text(
-                                    text = chapterTitle,
-                                    style = MaterialTheme.typography.labelSmall.copy(
-                                        fontFamily = if (chapterIsArabic) ArabicSansFamily else FrenchSerifFamily
+                                    text = resolvedBookTitle,
+                                    style = MaterialTheme.typography.titleSmall.copy(
+                                        fontFamily = if (titleIsArabic) ArabicSansFamily else FrenchSerifFamily,
+                                        fontSize = 15.sp,
+                                        fontWeight = FontWeight.Medium
                                     ),
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    color = MaterialTheme.colorScheme.onBackground,
                                     maxLines = 1,
                                     overflow = TextOverflow.Ellipsis
+                                )
+                            }
+                            if (chapterTitle.isNotEmpty()) {
+                                val chapterIsArabic = isArabicSource || LanguageDetector.isArabicText(chapterTitle)
+                                CompositionLocalProvider(
+                                    LocalLayoutDirection provides if (chapterIsArabic) LayoutDirection.Rtl else LayoutDirection.Ltr
+                                ) {
+                                    Text(
+                                        text = chapterTitle,
+                                        style = MaterialTheme.typography.labelSmall.copy(
+                                            fontFamily = if (chapterIsArabic) ArabicSansFamily else FrenchSerifFamily,
+                                            fontSize = 12.sp,
+                                            fontWeight = FontWeight.Normal
+                                        ),
+                                        color = atelier.readerMetaText,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis
+                                    )
+                                }
+                            }
+                        }
+                        Icon(
+                            imageVector = Icons.Rounded.KeyboardArrowDown,
+                            contentDescription = null,
+                            tint = atelier.readerMetaText,
+                            modifier = Modifier.size(18.dp)
+                        )
+                    }
+
+                    // At most 3 primary controls: Language selector chip, Search, More overflow menu
+                    if (hasBook) {
+                        val langDesc = stringResource(R.string.reader_language_chip_cd, languageBadge)
+                        val chipHorizontalPad = if (isCompact && fontScale > 1.15f) 8.dp else 10.dp
+                        Surface(
+                            onClick = onOpenLanguagePicker,
+                            shape = RoundedCornerShape(14.dp),
+                            color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.72f),
+                            border = BorderStroke(1.dp, atelier.readerDivider),
+                            modifier = Modifier
+                                .heightIn(min = 40.dp)
+                                .minimumInteractiveComponentSize()
+                                .semantics {
+                                    contentDescription = langDesc
+                                }
+                                .testTag("reader_language_chip")
+                        ) {
+                            Box(
+                                contentAlignment = Alignment.Center,
+                                modifier = Modifier.padding(horizontal = chipHorizontalPad, vertical = 6.dp)
+                            ) {
+                                CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Ltr) {
+                                    Text(
+                                        text = languageBadge,
+                                        style = MaterialTheme.typography.labelMedium.copy(
+                                            fontFamily = UiSansFamily,
+                                            fontSize = if (isCompact && fontScale > 1.2f) 13.sp else 14.sp,
+                                            fontWeight = FontWeight.Medium
+                                        ).withTabularNumbers(),
+                                        color = MaterialTheme.colorScheme.onSurface,
+                                        maxLines = 1
+                                    )
+                                }
+                            }
+                        }
+                    }
+
+                    // Search transparent 48x48 button
+                    val searchDesc = stringResource(R.string.reader_search_content_description)
+                    Box(
+                        modifier = Modifier
+                            .size(48.dp)
+                            .clip(RoundedCornerShape(12.dp))
+                            .background(
+                                if (isSearchOpen) atelier.readerSageAccent.copy(alpha = 0.14f)
+                                else Color.Transparent
+                            )
+                            .clickable(onClick = onToggleSearch)
+                            .semantics {
+                                role = Role.Button
+                                contentDescription = searchDesc
+                            }
+                            .testTag("reader_search_button"),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Icon(
+                            imageVector = Icons.Rounded.Search,
+                            contentDescription = null,
+                            tint = if (isSearchOpen) atelier.readerSageAccent else atelier.readerMetaText,
+                            modifier = Modifier.size(23.dp)
+                        )
+                    }
+
+                    // More options overflow transparent 48x48 button -> 16dp themed DropdownMenu
+                    Box {
+                        val moreDesc = stringResource(R.string.reader_more_options_cd)
+                        Box(
+                            modifier = Modifier
+                                .size(48.dp)
+                                .clip(RoundedCornerShape(12.dp))
+                                .clickable { showOverflowMenu = true }
+                                .semantics {
+                                    role = Role.Button
+                                    contentDescription = moreDesc
+                                }
+                                .testTag("reader_more_menu_button"),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Icon(
+                                imageVector = Icons.Rounded.MoreVert,
+                                contentDescription = null,
+                                tint = atelier.readerMetaText,
+                                modifier = Modifier.size(23.dp)
+                            )
+                        }
+
+                        MaterialTheme(
+                            shapes = MaterialTheme.shapes.copy(extraSmall = RoundedCornerShape(16.dp))
+                        ) {
+                            DropdownMenu(
+                                expanded = showOverflowMenu,
+                                onDismissRequest = { showOverflowMenu = false },
+                                containerColor = MaterialTheme.colorScheme.surface,
+                                tonalElevation = 2.dp
+                            ) {
+                                if (!isArabicSource) {
+                                    DropdownMenuItem(
+                                        text = {
+                                            Text(
+                                                text = stringResource(
+                                                    if (showInlineTranslations) R.string.reader_hide_all_translations
+                                                    else R.string.reader_show_all_translations
+                                                ),
+                                                style = MaterialTheme.typography.bodyMedium
+                                            )
+                                        },
+                                        leadingIcon = {
+                                            Icon(
+                                                imageVector = if (showInlineTranslations) Icons.Rounded.VisibilityOff else Icons.Rounded.Translate,
+                                                contentDescription = null,
+                                                tint = if (showInlineTranslations) atelier.readerSageAccent else atelier.readerMetaText
+                                            )
+                                        },
+                                        onClick = {
+                                            showOverflowMenu = false
+                                            onToggleInlineTranslations()
+                                        },
+                                        modifier = Modifier.testTag("toggle_translation_button")
+                                    )
+                                }
+                                DropdownMenuItem(
+                                    text = {
+                                        Text(
+                                            text = stringResource(R.string.reader_appearance_content_description),
+                                            style = MaterialTheme.typography.bodyMedium
+                                        )
+                                    },
+                                    leadingIcon = {
+                                        Icon(
+                                            imageVector = Icons.Rounded.FormatSize,
+                                            contentDescription = null,
+                                            tint = atelier.readerMetaText
+                                        )
+                                    },
+                                    onClick = {
+                                        showOverflowMenu = false
+                                        onOpenAppearance()
+                                    },
+                                    modifier = Modifier.testTag("reader_appearance_button")
+                                )
+                                DropdownMenuItem(
+                                    text = {
+                                        Text(
+                                            text = stringResource(
+                                                if (isImmersive) R.string.reader_exit_immersive
+                                                else R.string.reader_enter_immersive
+                                            ),
+                                            style = MaterialTheme.typography.bodyMedium
+                                        )
+                                    },
+                                    leadingIcon = {
+                                        Icon(
+                                            imageVector = if (isImmersive) Icons.Rounded.FullscreenExit else Icons.Rounded.Fullscreen,
+                                            contentDescription = null,
+                                            tint = atelier.readerMetaText
+                                        )
+                                    },
+                                    onClick = {
+                                        showOverflowMenu = false
+                                        onToggleImmersive()
+                                    },
+                                    modifier = Modifier.testTag("reader_immersive_button")
+                                )
+                                DropdownMenuItem(
+                                    text = {
+                                        Text(
+                                            text = stringResource(R.string.reader_chapters_title),
+                                            style = MaterialTheme.typography.bodyMedium
+                                        )
+                                    },
+                                    leadingIcon = {
+                                        Icon(
+                                            imageVector = Icons.AutoMirrored.Rounded.List,
+                                            contentDescription = null,
+                                            tint = atelier.readerMetaText
+                                        )
+                                    },
+                                    onClick = {
+                                        showOverflowMenu = false
+                                        onOpenChapters()
+                                    },
+                                    modifier = Modifier.testTag("reader_chapters_menu_item")
                                 )
                             }
                         }
                     }
                 }
+            }
+            HorizontalDivider(thickness = 0.8.dp, color = atelier.readerDivider)
+        }
+    }
+}
 
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    if (hasBook) {
-                        AssistChip(
-                            onClick = onToggleBookLanguage,
-                            enabled = !isArabicSource,
-                            label = {
-                                Text(
-                                    languageBadge,
-                                    style = MaterialTheme.typography.labelSmall.copy(fontFamily = StudioMonoFamily)
-                                )
-                            },
-                            modifier = Modifier.testTag("reader_language_chip")
-                        )
-                    }
-                    IconButton(
-                        onClick = onToggleSearch,
-                        colors = if (isSearchOpen) {
-                            IconButtonDefaults.filledTonalIconButtonColors(
-                                containerColor = MaterialTheme.colorScheme.primaryContainer
-                            )
-                        } else {
-                            IconButtonDefaults.iconButtonColors()
-                        },
-                        modifier = Modifier
-                            .minimumInteractiveComponentSize()
-                            .testTag("reader_search_button")
+@Composable
+internal fun ReaderLanguagePickerDialog(
+    bookSourceLanguage: SourceLanguage,
+    isArabicSource: Boolean,
+    onSelectToggleLanguage: () -> Unit,
+    onDismiss: () -> Unit
+) {
+    val atelier = LocalEcouteAtelierColors.current
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        shape = RoundedCornerShape(20.dp),
+        containerColor = MaterialTheme.colorScheme.surface,
+        title = {
+            Text(
+                text = stringResource(R.string.reader_language_picker_title),
+                style = MaterialTheme.typography.titleMedium
+            )
+        },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                Text(
+                    text = stringResource(R.string.reader_language_picker_subtitle),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = atelier.readerMetaText
+                )
+                if (isArabicSource) {
+                    Surface(
+                        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f),
+                        shape = RoundedCornerShape(14.dp),
+                        modifier = Modifier.fillMaxWidth()
                     ) {
-                        Icon(
-                            Icons.Rounded.Search,
-                            contentDescription = stringResource(R.string.reader_search_content_description)
+                        Text(
+                            text = stringResource(R.string.reader_language_arabic_only),
+                            style = MaterialTheme.typography.bodyMedium,
+                            modifier = Modifier.padding(14.dp)
                         )
                     }
-                    if (!isArabicSource) {
-                        IconButton(
-                            onClick = onToggleInlineTranslations,
-                            colors = if (showInlineTranslations) {
-                                IconButtonDefaults.filledTonalIconButtonColors(
-                                    containerColor = MaterialTheme.colorScheme.secondaryContainer,
-                                    contentColor = MaterialTheme.colorScheme.secondary
-                                )
-                            } else {
-                                IconButtonDefaults.iconButtonColors()
+                } else {
+                    val isFrench = bookSourceLanguage == SourceLanguage.FRENCH
+                    listOf(
+                        SourceLanguage.FRENCH to stringResource(R.string.reader_language_french_option),
+                        SourceLanguage.ENGLISH to stringResource(R.string.reader_language_english_option)
+                    ).forEach { (lang, label) ->
+                        val selected = lang == bookSourceLanguage
+                        Surface(
+                            onClick = {
+                                if (!selected) onSelectToggleLanguage()
+                                onDismiss()
                             },
+                            color = if (selected) {
+                                atelier.readerSageAccent.copy(alpha = 0.14f)
+                            } else {
+                                MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f)
+                            },
+                            border = BorderStroke(
+                                1.dp,
+                                if (selected) atelier.readerSageAccent.copy(alpha = 0.45f) else atelier.readerDivider
+                            ),
+                            shape = RoundedCornerShape(14.dp),
                             modifier = Modifier
-                                .minimumInteractiveComponentSize()
-                                .testTag("toggle_translation_button")
+                                .fillMaxWidth()
+                                .heightIn(min = 48.dp)
                         ) {
-                            Icon(
-                                if (showInlineTranslations) Icons.Rounded.Translate else Icons.Rounded.VisibilityOff,
-                                contentDescription = stringResource(R.string.reader_toggle_translations_content_description)
-                            )
+                            Row(
+                                modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(10.dp)
+                            ) {
+                                RadioButton(selected = selected, onClick = null)
+                                Text(
+                                    text = label,
+                                    style = MaterialTheme.typography.bodyMedium.withTabularNumbers(),
+                                    color = MaterialTheme.colorScheme.onSurface
+                                )
+                            }
                         }
                     }
-                    IconButton(
-                        onClick = onOpenAppearance,
-                        modifier = Modifier
-                            .minimumInteractiveComponentSize()
-                            .testTag("reader_appearance_button")
-                    ) {
-                        Icon(
-                            Icons.Rounded.FormatSize,
-                            contentDescription = stringResource(R.string.reader_appearance_content_description)
-                        )
-                    }
-                    IconButton(
-                        onClick = onToggleImmersive,
-                        modifier = Modifier
-                            .minimumInteractiveComponentSize()
-                            .testTag("reader_immersive_button")
-                    ) {
-                        Icon(
-                            if (isImmersive) Icons.Rounded.FullscreenExit else Icons.Rounded.Fullscreen,
-                            contentDescription = stringResource(
-                                if (isImmersive) R.string.reader_exit_immersive else R.string.reader_enter_immersive
-                            )
-                        )
+                    if (!isFrench && bookSourceLanguage != SourceLanguage.ENGLISH) {
+                        Spacer(Modifier.height(2.dp))
                     }
                 }
             }
-            HorizontalDivider(thickness = 1.dp, color = atelier.cardBorder)
+        },
+        confirmButton = {
+            TextButton(onClick = onDismiss) {
+                Text(stringResource(R.string.common_close))
+            }
         }
-    }
+    )
 }
 
 @Composable
@@ -261,7 +508,7 @@ internal fun ReaderSearchPanel(
     val atelier = LocalEcouteAtelierColors.current
     Surface(
         color = MaterialTheme.colorScheme.surface,
-        border = BorderStroke(1.dp, atelier.cardBorder),
+        border = BorderStroke(1.dp, atelier.readerDivider),
         modifier = Modifier.fillMaxWidth()
     ) {
         Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -274,8 +521,8 @@ internal fun ReaderSearchPanel(
                     singleLine = true,
                     shape = RoundedCornerShape(14.dp),
                     colors = OutlinedTextFieldDefaults.colors(
-                        focusedBorderColor = MaterialTheme.colorScheme.secondary,
-                        unfocusedBorderColor = atelier.cardBorder
+                        focusedBorderColor = atelier.readerSageAccent,
+                        unfocusedBorderColor = atelier.readerDivider
                     ),
                     modifier = Modifier.weight(1f)
                 )
@@ -312,17 +559,25 @@ internal fun ReaderSearchPanel(
                                     overflow = TextOverflow.Ellipsis
                                 )
                             }
-                            MonospaceMetricPill(
-                                text = stringResource(
-                                    R.string.reader_search_result_position,
-                                    s.chapterIndex + 1,
-                                    s.sentenceIndex + 1
-                                ),
-                                containerColor = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.6f),
-                                contentColor = MaterialTheme.colorScheme.primary
-                            )
+                            Surface(
+                                color = MaterialTheme.colorScheme.surfaceVariant,
+                                shape = RoundedCornerShape(8.dp)
+                            ) {
+                                Text(
+                                    text = stringResource(
+                                        R.string.reader_search_result_position,
+                                        s.chapterIndex + 1,
+                                        s.sentenceIndex + 1
+                                    ),
+                                    style = MaterialTheme.typography.labelSmall.copy(
+                                        fontFamily = UiSansFamily
+                                    ).withTabularNumbers(),
+                                    color = atelier.readerMetaText,
+                                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp)
+                                )
+                            }
                         }
-                        HorizontalDivider(color = atelier.cardBorder.copy(alpha = 0.6f))
+                        HorizontalDivider(color = atelier.readerDivider.copy(alpha = 0.6f))
                     }
                 }
             }
@@ -333,198 +588,239 @@ internal fun ReaderSearchPanel(
 @Composable
 internal fun ReaderAudioBar(
     playbackState: PlaybackUiState,
-    bookSourceLanguage: SourceLanguage,
-    isArabicSource: Boolean = false,
     isPlayingThisChapter: Boolean,
     currentSpeed: Float,
     onTogglePlay: () -> Unit,
     onPrev: () -> Unit,
     onNext: () -> Unit,
     onSpeedSelected: (Float) -> Unit,
-    onOpenFullPlayer: () -> Unit
+    onOpenFullPlayer: () -> Unit,
+    modifier: Modifier = Modifier
 ) {
     val speeds = listOf(0.75f, 1.0f, 1.25f, 1.5f)
     val isBuffering = isPlayingThisChapter && playbackState.status == PlaybackStatus.BUFFERING
     val isPlaying = isPlayingThisChapter && playbackState.status == PlaybackStatus.PLAYING
+    val isPaused = isPlayingThisChapter && playbackState.status == PlaybackStatus.PAUSED
     val atelier = LocalEcouteAtelierColors.current
+    val fontScale = LocalDensity.current.fontScale
 
-    Surface(
-        tonalElevation = 2.dp,
-        shadowElevation = 6.dp,
-        color = MaterialTheme.colorScheme.surface,
-        border = BorderStroke(
-            width = 1.dp,
-            color = if (isPlaying) MaterialTheme.colorScheme.secondary.copy(alpha = 0.5f) else atelier.cardBorder
-        ),
-        shape = MaterialTheme.shapes.extraLarge,
-        modifier = Modifier
+    val statusText = when {
+        isBuffering -> stringResource(R.string.reader_audio_preparing)
+        isPlaying -> stringResource(R.string.reader_audio_now_reading)
+        isPaused -> stringResource(R.string.reader_audio_paused)
+        else -> stringResource(R.string.reader_audio_player)
+    }
+    val speedLabel = stringResource(R.string.reader_speed_multiplier, currentSpeed.toString())
+    val speedDesc = stringResource(R.string.reader_speed_chip_cd, currentSpeed.toString())
+    val prevDesc = stringResource(R.string.reader_previous_sentence_content_description)
+    val nextDesc = stringResource(R.string.reader_next_sentence_content_description)
+    val expandDesc = stringResource(R.string.reader_full_player_button)
+    val playPauseDesc = stringResource(
+        when {
+            isBuffering -> R.string.reader_audio_preparing
+            isPlaying -> R.string.reader_pause_label
+            else -> R.string.reader_play_content_description
+        }
+    )
+
+    Box(
+        modifier = modifier
             .fillMaxWidth()
             .padding(horizontal = 12.dp, vertical = 8.dp)
     ) {
-        Column(
-            modifier = Modifier.padding(horizontal = 14.dp, vertical = 12.dp),
-            verticalArrangement = Arrangement.spacedBy(8.dp)
+        Surface(
+            tonalElevation = 0.dp,
+            shadowElevation = 2.dp,
+            color = MaterialTheme.colorScheme.surface,
+            border = BorderStroke(
+                width = 1.dp,
+                color = if (isPlaying) atelier.readerSageAccent.copy(alpha = 0.42f) else atelier.readerDivider
+            ),
+            shape = RoundedCornerShape(20.dp),
+            modifier = Modifier.fillMaxWidth()
         ) {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.SpaceBetween
+            BoxWithConstraints(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .heightIn(min = 68.dp)
+                    .padding(horizontal = 8.dp, vertical = 8.dp)
             ) {
+                val isCompact = maxWidth < 365.dp
+                val secondaryControlSize = if (isCompact) 44.dp else 48.dp
+
                 Row(
-                    modifier = Modifier.weight(1f),
+                    modifier = Modifier.fillMaxWidth(),
                     verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(10.dp)
+                    horizontalArrangement = Arrangement.spacedBy(if (isCompact) 2.dp else 4.dp)
                 ) {
-                    Box(
-                        modifier = Modifier
-                            .size(34.dp)
-                            .clip(RoundedCornerShape(10.dp))
-                            .background(
-                                if (isPlaying || isBuffering) {
-                                    MaterialTheme.colorScheme.secondaryContainer
-                                } else {
-                                    MaterialTheme.colorScheme.surfaceVariant
-                                }
-                            ),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        AcousticWaveIndicator(
-                            isPlaying = isPlaying,
-                            isBuffering = isBuffering,
-                            barColor = MaterialTheme.colorScheme.secondary,
-                            barCount = 4,
-                            modifier = Modifier
-                                .width(18.dp)
-                                .height(16.dp)
-                        )
-                    }
-                    Column(modifier = Modifier.weight(1f)) {
-                        Text(
-                            text = when {
-                                isBuffering -> stringResource(R.string.reader_audio_preparing)
-                                isPlaying -> stringResource(R.string.reader_audio_now_reading)
-                                isPlayingThisChapter && playbackState.status == PlaybackStatus.PAUSED -> stringResource(R.string.reader_audio_paused)
-                                else -> stringResource(R.string.reader_audio_player)
-                            },
-                            style = MaterialTheme.typography.labelMedium,
-                            color = MaterialTheme.colorScheme.secondary
-                        )
-                        val barText = playbackState.currentSentenceText.takeIf {
-                            isPlayingThisChapter && it.isNotBlank()
-                        } ?: when {
-                            isArabicSource -> stringResource(R.string.reader_ready_to_listen_french)
-                            bookSourceLanguage == SourceLanguage.FRENCH -> stringResource(R.string.reader_ready_to_listen_french)
-                            else -> stringResource(R.string.reader_ready_to_listen_english)
-                        }
-                        val barIsArabic = isArabicSource || LanguageDetector.isArabicText(barText)
-                        CompositionLocalProvider(
-                            LocalLayoutDirection provides if (barIsArabic) LayoutDirection.Rtl else LayoutDirection.Ltr
+                    // Consistent LTR timeline transport cluster: [Prev (|<), Play (48dp Sage), Next (>|)]
+                    CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Ltr) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(if (isCompact) 0.dp else 2.dp)
                         ) {
-                            Text(
-                                text = barText,
-                                style = MaterialTheme.typography.bodySmall.copy(
-                                    fontFamily = if (barIsArabic) ArabicSansFamily else FrenchSerifFamily
-                                ),
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis
+                            Box(
+                                modifier = Modifier
+                                    .size(secondaryControlSize)
+                                    .clip(RoundedCornerShape(12.dp))
+                                    .clickable(enabled = isPlayingThisChapter && !isBuffering, onClick = onPrev)
+                                    .semantics {
+                                        role = Role.Button
+                                        contentDescription = prevDesc
+                                    }
+                                    .testTag("reader_previous_button"),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Rounded.SkipPrevious,
+                                    contentDescription = null,
+                                    tint = if (isPlayingThisChapter) atelier.readerMetaText else atelier.readerMetaText.copy(alpha = 0.45f),
+                                    modifier = Modifier.size(22.dp)
+                                )
+                            }
+
+                            Box(
+                                modifier = Modifier
+                                    .size(48.dp)
+                                    .clip(CircleShape)
+                                    .background(atelier.readerSageAccent)
+                                    .clickable(onClick = onTogglePlay)
+                                    .semantics {
+                                        role = Role.Button
+                                        contentDescription = playPauseDesc
+                                    }
+                                    .testTag("reader_play_pause_button"),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                when {
+                                    isBuffering -> CircularProgressIndicator(
+                                        modifier = Modifier.size(20.dp),
+                                        strokeWidth = 2.2.dp,
+                                        color = atelier.onReaderSageAccent
+                                    )
+                                    isPlaying -> Icon(
+                                        imageVector = Icons.Rounded.Pause,
+                                        contentDescription = null,
+                                        tint = atelier.onReaderSageAccent,
+                                        modifier = Modifier.size(25.dp)
+                                    )
+                                    else -> Icon(
+                                        imageVector = Icons.Rounded.PlayArrow,
+                                        contentDescription = null,
+                                        tint = atelier.onReaderSageAccent,
+                                        modifier = Modifier.size(25.dp)
+                                    )
+                                }
+                            }
+
+                            Box(
+                                modifier = Modifier
+                                    .size(secondaryControlSize)
+                                    .clip(RoundedCornerShape(12.dp))
+                                    .clickable(enabled = isPlayingThisChapter && !isBuffering, onClick = onNext)
+                                    .semantics {
+                                        role = Role.Button
+                                        contentDescription = nextDesc
+                                    }
+                                    .testTag("reader_next_button"),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Rounded.SkipNext,
+                                    contentDescription = null,
+                                    tint = if (isPlayingThisChapter) atelier.readerMetaText else atelier.readerMetaText.copy(alpha = 0.45f),
+                                    modifier = Modifier.size(22.dp)
+                                )
+                            }
+                        }
+                    }
+
+                    // Concise Arabic playback status + small acoustic indicator when active
+                    Row(
+                        modifier = Modifier
+                            .weight(1f)
+                            .padding(horizontal = if (isCompact) 2.dp else 6.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        if (isPlaying || isBuffering) {
+                            AcousticWaveIndicator(
+                                isPlaying = isPlaying,
+                                isBuffering = isBuffering,
+                                barColor = atelier.readerSageAccent,
+                                barCount = 3,
+                                modifier = Modifier
+                                    .width(14.dp)
+                                    .height(14.dp)
                             )
                         }
-                    }
-                }
-                Spacer(Modifier.width(6.dp))
-                FilterChip(
-                    selected = true,
-                    onClick = {
-                        val current = speeds.indexOfFirst { kotlin.math.abs(it - currentSpeed) < 0.01f }
-                            .takeIf { it >= 0 } ?: 1
-                        onSpeedSelected(speeds[(current + 1) % speeds.size])
-                    },
-                    label = {
                         Text(
-                            stringResource(R.string.reader_speed_multiplier, currentSpeed.toString()),
-                            style = MaterialTheme.typography.labelMedium.copy(fontFamily = StudioMonoFamily)
-                        )
-                    },
-                    modifier = Modifier.testTag("reader_speed_chip")
-                )
-            }
-
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.Center
-            ) {
-                IconButton(
-                    onClick = onPrev,
-                    enabled = isPlayingThisChapter,
-                    modifier = Modifier
-                        .minimumInteractiveComponentSize()
-                        .testTag("reader_previous_button")
-                ) {
-                    Icon(
-                        Icons.Rounded.SkipPrevious,
-                        contentDescription = stringResource(R.string.reader_previous_sentence_content_description),
-                        tint = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                }
-                Spacer(Modifier.width(4.dp))
-                Button(
-                    onClick = onTogglePlay,
-                    colors = ButtonDefaults.buttonColors(
-                        containerColor = if (isPlaying) MaterialTheme.colorScheme.secondary else MaterialTheme.colorScheme.primary,
-                        contentColor = if (isPlaying) MaterialTheme.colorScheme.onSecondary else MaterialTheme.colorScheme.onPrimary
-                    ),
-                    shape = RoundedCornerShape(16.dp),
-                    modifier = Modifier
-                        .minimumInteractiveComponentSize()
-                        .testTag("reader_play_pause_button"),
-                    contentPadding = PaddingValues(horizontal = 24.dp, vertical = 12.dp)
-                ) {
-                    when {
-                        isBuffering -> CircularProgressIndicator(
-                            modifier = Modifier.size(18.dp),
-                            strokeWidth = 2.dp,
-                            color = MaterialTheme.colorScheme.onPrimary
-                        )
-                        isPlaying -> Icon(
-                            Icons.Rounded.Pause,
-                            contentDescription = stringResource(R.string.reader_pause_label)
-                        )
-                        else -> Icon(
-                            Icons.Rounded.PlayArrow,
-                            contentDescription = stringResource(R.string.reader_play_content_description)
+                            text = statusText,
+                            style = MaterialTheme.typography.labelMedium.copy(
+                                fontFamily = UiSansFamily,
+                                fontSize = if (isCompact && fontScale > 1.2f) 11.5.sp else 12.5.sp,
+                                lineHeight = 15.sp,
+                                fontWeight = FontWeight.Medium
+                            ),
+                            color = if (isPlaying || isBuffering) atelier.readerSageAccent else atelier.readerMetaText,
+                            maxLines = if (isCompact && fontScale > 1.15f) 2 else 1,
+                            overflow = TextOverflow.Ellipsis
                         )
                     }
-                    Spacer(Modifier.width(8.dp))
-                    Text(
-                        if (isPlaying) stringResource(R.string.reader_pause_label)
-                        else stringResource(R.string.reader_listen_button),
-                        style = MaterialTheme.typography.labelLarge
-                    )
-                }
-                Spacer(Modifier.width(4.dp))
-                IconButton(
-                    onClick = onNext,
-                    enabled = isPlayingThisChapter,
-                    modifier = Modifier
-                        .minimumInteractiveComponentSize()
-                        .testTag("reader_next_button")
-                ) {
-                    Icon(
-                        Icons.Rounded.SkipNext,
-                        contentDescription = stringResource(R.string.reader_next_sentence_content_description),
-                        tint = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                }
-                Spacer(Modifier.width(4.dp))
-                TextButton(
-                    onClick = onOpenFullPlayer,
-                    modifier = Modifier
-                        .minimumInteractiveComponentSize()
-                        .testTag("reader_full_player_button")
-                ) {
-                    Text(stringResource(R.string.reader_full_player_button))
+
+                    // Speed capsule: height 40dp, corner 14dp, 14sp Medium UiSansFamily + tnum
+                    Surface(
+                        onClick = {
+                            val current = speeds.indexOfFirst { abs(it - currentSpeed) < 0.01f }
+                                .takeIf { it >= 0 } ?: 1
+                            onSpeedSelected(speeds[(current + 1) % speeds.size])
+                        },
+                        shape = RoundedCornerShape(14.dp),
+                        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.78f),
+                        modifier = Modifier
+                            .heightIn(min = 40.dp)
+                            .semantics { contentDescription = speedDesc }
+                            .testTag("reader_speed_chip")
+                    ) {
+                        Box(
+                            contentAlignment = Alignment.Center,
+                            modifier = Modifier.padding(horizontal = if (isCompact) 9.dp else 12.dp, vertical = 6.dp)
+                        ) {
+                            CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Ltr) {
+                                Text(
+                                    text = speedLabel,
+                                    style = MaterialTheme.typography.labelLarge.copy(
+                                        fontFamily = UiSansFamily,
+                                        fontSize = 14.sp,
+                                        fontWeight = FontWeight.Medium
+                                    ).withTabularNumbers(),
+                                    color = MaterialTheme.colorScheme.onSurface,
+                                    maxLines = 1
+                                )
+                            }
+                        }
+                    }
+
+                    // Expand to Full Player icon button
+                    Box(
+                        modifier = Modifier
+                            .size(secondaryControlSize)
+                            .clip(RoundedCornerShape(12.dp))
+                            .clickable(onClick = onOpenFullPlayer)
+                            .semantics {
+                                role = Role.Button
+                                contentDescription = expandDesc
+                            }
+                            .testTag("reader_full_player_button"),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Icon(
+                            imageVector = Icons.Rounded.OpenInFull,
+                            contentDescription = null,
+                            tint = atelier.readerMetaText,
+                            modifier = Modifier.size(21.dp)
+                        )
+                    }
                 }
             }
         }
@@ -534,6 +830,7 @@ internal fun ReaderAudioBar(
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 internal fun ReaderChaptersBottomSheet(
+    bookTitle: String?,
     chapters: List<ChapterEntity>,
     activeChapterIndex: Int,
     onSelectChapter: (Int) -> Unit,
@@ -548,49 +845,78 @@ internal fun ReaderChaptersBottomSheet(
             verticalArrangement = Arrangement.spacedBy(10.dp)
         ) {
             Text(stringResource(R.string.reader_chapters_title), style = MaterialTheme.typography.titleLarge)
-            chapters.forEach { ch ->
-                val selected = ch.chapterIndex == activeChapterIndex
-                Surface(
-                    color = if (selected) MaterialTheme.colorScheme.secondaryContainer else MaterialTheme.colorScheme.surface,
-                    border = BorderStroke(
-                        1.dp,
-                        if (selected) MaterialTheme.colorScheme.secondary.copy(alpha = 0.45f) else atelier.cardBorder
-                    ),
-                    shape = MaterialTheme.shapes.medium,
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .clickable {
-                            onSelectChapter(ch.chapterIndex)
-                            onDismiss()
-                        }
+            if (!bookTitle.isNullOrBlank()) {
+                val titleIsArabic = LanguageDetector.isArabicText(bookTitle)
+                CompositionLocalProvider(
+                    LocalLayoutDirection provides if (titleIsArabic) LayoutDirection.Rtl else LayoutDirection.Ltr
                 ) {
-                    Row(
-                        modifier = Modifier.padding(14.dp),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
+                    Text(
+                        text = bookTitle,
+                        style = MaterialTheme.typography.bodyMedium.copy(
+                            fontFamily = if (titleIsArabic) ArabicSansFamily else FrenchSerifFamily
+                        ),
+                        color = atelier.readerMetaText
+                    )
+                }
+            }
+            LazyColumn(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .heightIn(max = 420.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                items(chapters, key = { it.id }) { ch ->
+                    val selected = ch.chapterIndex == activeChapterIndex
+                    Surface(
+                        color = if (selected) atelier.readerSageAccent.copy(alpha = 0.14f) else MaterialTheme.colorScheme.surface,
+                        border = BorderStroke(
+                            1.dp,
+                            if (selected) atelier.readerSageAccent.copy(alpha = 0.5f) else atelier.readerDivider
+                        ),
+                        shape = RoundedCornerShape(16.dp),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable {
+                                onSelectChapter(ch.chapterIndex)
+                                onDismiss()
+                            }
                     ) {
-                        val chIsArabic = LanguageDetector.isArabicText(ch.title)
-                        CompositionLocalProvider(
-                            LocalLayoutDirection provides if (chIsArabic) LayoutDirection.Rtl else LayoutDirection.Ltr
+                        Row(
+                            modifier = Modifier.padding(14.dp),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
                         ) {
-                            Text(
-                                text = ch.title,
-                                style = MaterialTheme.typography.titleSmall.copy(
-                                    fontFamily = if (chIsArabic) ArabicSansFamily else FrenchSerifFamily
-                                ),
-                                modifier = Modifier.weight(1f)
-                            )
+                            val chIsArabic = LanguageDetector.isArabicText(ch.title)
+                            CompositionLocalProvider(
+                                LocalLayoutDirection provides if (chIsArabic) LayoutDirection.Rtl else LayoutDirection.Ltr
+                            ) {
+                                Text(
+                                    text = ch.title,
+                                    style = MaterialTheme.typography.titleSmall.copy(
+                                        fontFamily = if (chIsArabic) ArabicSansFamily else FrenchSerifFamily,
+                                        fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Medium
+                                    ),
+                                    color = if (selected) atelier.readerSageAccent else MaterialTheme.colorScheme.onSurface,
+                                    modifier = Modifier.weight(1f)
+                                )
+                            }
+                            Spacer(Modifier.width(8.dp))
+                            Surface(
+                                color = MaterialTheme.colorScheme.surfaceVariant,
+                                shape = RoundedCornerShape(8.dp)
+                            ) {
+                                Text(
+                                    text = pluralStringResource(R.plurals.reader_sentence_count, ch.sentenceCount, ch.sentenceCount),
+                                    style = MaterialTheme.typography.labelSmall.copy(fontFamily = UiSansFamily).withTabularNumbers(),
+                                    color = atelier.readerMetaText,
+                                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
+                                )
+                            }
                         }
-                        Spacer(Modifier.width(8.dp))
-                        MonospaceMetricPill(
-                            text = pluralStringResource(R.plurals.reader_sentence_count, ch.sentenceCount, ch.sentenceCount),
-                            containerColor = MaterialTheme.colorScheme.surfaceVariant,
-                            contentColor = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
                     }
                 }
             }
-            Spacer(Modifier.height(24.dp))
+            Spacer(Modifier.height(20.dp))
         }
     }
 }
@@ -608,6 +934,10 @@ internal fun ReaderAppearanceBottomSheet(
     onLineHeightChange: (Float) -> Unit,
     onDismiss: () -> Unit
 ) {
+    val atelier = LocalEcouteAtelierColors.current
+    val clampedFontSize = settings.readerFontSizeSp.coerceIn(18f, 30f)
+    val clampedLineHeight = settings.readerLineHeightMultiplier.coerceIn(1.3f, 2.2f)
+
     ModalBottomSheet(onDismissRequest = onDismiss) {
         Column(
             modifier = Modifier
@@ -624,7 +954,7 @@ internal fun ReaderAppearanceBottomSheet(
                 ) {
                     Text(
                         stringResource(R.string.reader_language_for_translation, languageBadge),
-                        style = MaterialTheme.typography.bodyMedium
+                        style = MaterialTheme.typography.bodyMedium.withTabularNumbers()
                     )
                     OutlinedButton(onClick = onToggleBookLanguage) {
                         Text(
@@ -640,29 +970,33 @@ internal fun ReaderAppearanceBottomSheet(
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    Icon(Icons.Rounded.DarkMode, contentDescription = null, tint = MaterialTheme.colorScheme.secondary)
+                    Icon(Icons.Rounded.DarkMode, contentDescription = null, tint = atelier.readerSageAccent)
                     Spacer(Modifier.width(8.dp))
                     Text(stringResource(R.string.reader_night_mode), style = MaterialTheme.typography.bodyLarge)
                 }
                 Switch(checked = settings.nightMode, onCheckedChange = onNightModeChange)
             }
             Column {
-                Text(stringResource(R.string.reader_font_size_label, settings.readerFontSizeSp.toInt()))
+                Text(
+                    stringResource(R.string.reader_font_size_label, clampedFontSize.toInt()),
+                    style = MaterialTheme.typography.bodyMedium.withTabularNumbers()
+                )
                 Slider(
-                    value = settings.readerFontSizeSp,
+                    value = clampedFontSize,
                     onValueChange = onFontSizeChange,
-                    valueRange = 15f..30f
+                    valueRange = 18f..30f
                 )
             }
             Column {
                 Text(
                     stringResource(
                         R.string.reader_line_spacing_label,
-                        "%.2f".format(settings.readerLineHeightMultiplier)
-                    )
+                        "%.2f".format(clampedLineHeight)
+                    ),
+                    style = MaterialTheme.typography.bodyMedium.withTabularNumbers()
                 )
                 Slider(
-                    value = settings.readerLineHeightMultiplier,
+                    value = clampedLineHeight,
                     onValueChange = onLineHeightChange,
                     valueRange = 1.3f..2.2f
                 )
@@ -676,8 +1010,8 @@ internal fun ReaderAppearanceBottomSheet(
                         Text(
                             text = "La lecture nourrit l'esprit et éclaire la pensée.",
                             fontFamily = FrenchSerifFamily,
-                            fontSize = settings.readerFontSizeSp.sp,
-                            lineHeight = (settings.readerFontSizeSp * settings.readerLineHeightMultiplier).sp,
+                            fontSize = clampedFontSize.sp,
+                            lineHeight = (clampedFontSize * clampedLineHeight).sp,
                             color = MaterialTheme.colorScheme.onSurface
                         )
                     }
@@ -698,6 +1032,7 @@ internal fun WordLookupModalSheet(
     onDownloadPack: () -> Unit,
     onDismiss: () -> Unit
 ) {
+    val atelier = LocalEcouteAtelierColors.current
     val direction = TranslationDirection.forSource(sheet.sourceLanguage)
     ModalBottomSheet(onDismissRequest = onDismiss) {
         Column(
@@ -737,12 +1072,16 @@ internal fun WordLookupModalSheet(
                 Column(modifier = Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                     Text(
                         stringResource(R.string.reader_offline_translation_label, direction.shortBadge),
-                        style = MaterialTheme.typography.labelMedium,
-                        color = MaterialTheme.colorScheme.secondary
+                        style = MaterialTheme.typography.labelMedium.withTabularNumbers(),
+                        color = atelier.readerSageAccent
                     )
                     when {
                         sheet.isLoading -> {
-                            CircularProgressIndicator(modifier = Modifier.size(20.dp), strokeWidth = 2.dp)
+                            CircularProgressIndicator(
+                                modifier = Modifier.size(20.dp),
+                                strokeWidth = 2.dp,
+                                color = atelier.readerSageAccent
+                            )
                         }
                         !sheet.translation.isNullOrBlank() -> {
                             CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Rtl) {
@@ -785,7 +1124,7 @@ internal fun WordLookupModalSheet(
                 Text(
                     text = sheet.contextSentence.originalText,
                     style = MaterialTheme.typography.bodyMedium.copy(fontFamily = FrenchSerifFamily),
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                    color = atelier.readerMetaText
                 )
             }
 
@@ -793,6 +1132,10 @@ internal fun WordLookupModalSheet(
                 Button(
                     onClick = onSave,
                     enabled = !sheet.savedToVocab,
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = atelier.readerSageAccent,
+                        contentColor = atelier.onReaderSageAccent
+                    ),
                     shape = RoundedCornerShape(14.dp),
                     modifier = Modifier
                         .fillMaxWidth()

@@ -1,5 +1,6 @@
 package com.example.data.importengine
 
+import com.example.domain.SupportedImportFormat
 import java.io.File
 import java.util.zip.ZipFile
 

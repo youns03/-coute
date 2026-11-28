@@ -1,5 +1,12 @@
 package com.example.runtime
 
+import com.example.contracts.TaskControls
+import com.example.contracts.TaskCoordinatorGateway
+import com.example.contracts.TaskProgressReporter
+import com.example.domain.LocalTaskEntry
+import com.example.domain.LocalTaskPriority
+import com.example.domain.LocalTaskStatus
+import com.example.domain.LocalTaskType
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -13,59 +20,6 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import java.util.concurrent.ConcurrentHashMap
 
-enum class LocalTaskType(val labelAr: String) {
-    TTS_PLAYBACK("استماع صوتي"),
-    FILE_TRANSLATION("ترجمة ملف"),
-    AUDIO_TRANSCRIPTION("تفريغ صوتي"),
-    MODEL_DOWNLOAD("تنزيل نموذج"),
-    BENCHMARK("اختبار الأداء")
-}
-
-enum class LocalTaskPriority(val rank: Int) {
-    INTERACTIVE(0),
-    HIGH(1),
-    NORMAL(2),
-    BACKGROUND(3)
-}
-
-enum class LocalTaskStatus {
-    QUEUED,
-    RUNNING,
-    PAUSED,
-    COMPLETED,
-    FAILED,
-    CANCELLED
-}
-
-data class LocalTaskEntry(
-    val id: String,
-    val type: LocalTaskType,
-    val title: String,
-    val subtitle: String = "",
-    val progress: Float = 0f,
-    val status: LocalTaskStatus = LocalTaskStatus.QUEUED,
-    val priority: LocalTaskPriority = LocalTaskPriority.NORMAL,
-    val errorMessage: String? = null,
-    val canPause: Boolean = false,
-    val canCancel: Boolean = true,
-    val updatedAt: Long = System.currentTimeMillis()
-) {
-    val isActive: Boolean
-        get() = status == LocalTaskStatus.QUEUED || status == LocalTaskStatus.RUNNING
-
-    val isTerminal: Boolean
-        get() = status == LocalTaskStatus.COMPLETED ||
-            status == LocalTaskStatus.FAILED ||
-            status == LocalTaskStatus.CANCELLED
-}
-
-data class TaskControls(
-    val onPause: (suspend () -> Unit)? = null,
-    val onResume: (suspend () -> Unit)? = null,
-    val onCancel: (suspend () -> Unit)? = null,
-    val onRetry: (suspend () -> Unit)? = null
-)
-
 /**
  * Unified local task orchestrator coordinating TTS playback, file translation,
  * offline ASR audio transcription, model downloads, and benchmarks.
@@ -75,33 +29,29 @@ data class TaskControls(
  */
 class LocalTaskCoordinator(
     private val scope: CoroutineScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
-) {
+) : TaskCoordinatorGateway {
     private val _tasks = MutableStateFlow<List<LocalTaskEntry>>(emptyList())
-    val tasks: StateFlow<List<LocalTaskEntry>> = _tasks.asStateFlow()
+    override val tasks: StateFlow<List<LocalTaskEntry>> = _tasks.asStateFlow()
 
     private val heavyInferenceMutex = Mutex()
     private val runningJobs = ConcurrentHashMap<String, Job>()
     private val taskControls = ConcurrentHashMap<String, TaskControls>()
     private val taskBlocks = ConcurrentHashMap<String, suspend (TaskProgressReporter) -> Unit>()
 
-    fun interface TaskProgressReporter {
-        fun report(progress: Float, subtitle: String)
-    }
-
     /**
      * Launches a coroutine-backed heavy or background task under centralized orchestration.
      * If [requiresHeavyInferenceLock] is true, it waits politely for other heavy native tasks
      * so Sherpa ASR + TTS benchmarks + heavy processing never double-allocate peak native RAM.
      */
-    fun launchManagedTask(
+    override fun launchManagedTask(
         id: String,
         type: LocalTaskType,
         title: String,
-        subtitle: String = "",
-        priority: LocalTaskPriority = LocalTaskPriority.NORMAL,
-        requiresHeavyInferenceLock: Boolean = true,
-        canCancel: Boolean = true,
-        controls: TaskControls = TaskControls(),
+        subtitle: String,
+        priority: LocalTaskPriority,
+        requiresHeavyInferenceLock: Boolean,
+        canCancel: Boolean,
+        controls: TaskControls,
         block: suspend (TaskProgressReporter) -> Unit
     ) {
         runningJobs[id]?.cancel()
@@ -192,9 +142,9 @@ class LocalTaskCoordinator(
      * Registers or updates an externally driven workflow (such as foreground AudioPlaybackController
      * or WorkManager-driven downloads/file translations) in the unified task ledger.
      */
-    fun upsertExternalTask(
+    override fun upsertExternalTask(
         entry: LocalTaskEntry,
-        controls: TaskControls? = null
+        controls: TaskControls?
     ) {
         if (controls != null) {
             taskControls[entry.id] = controls
@@ -202,12 +152,12 @@ class LocalTaskCoordinator(
         upsertEntry(entry.copy(updatedAt = System.currentTimeMillis()))
     }
 
-    fun updateTaskStatus(
+    override fun updateTaskStatus(
         id: String,
         status: LocalTaskStatus,
-        progress: Float? = null,
-        subtitle: String? = null,
-        errorMessage: String? = null
+        progress: Float?,
+        subtitle: String?,
+        errorMessage: String?
     ) {
         updateEntry(id) { existing ->
             existing.copy(
@@ -220,7 +170,7 @@ class LocalTaskCoordinator(
         }
     }
 
-    suspend fun pauseTask(id: String) {
+    override suspend fun pauseTask(id: String) {
         val ctrl = taskControls[id]
         if (ctrl?.onPause != null) {
             ctrl.onPause.invoke()
@@ -230,7 +180,7 @@ class LocalTaskCoordinator(
         }
     }
 
-    suspend fun resumeTask(id: String) {
+    override suspend fun resumeTask(id: String) {
         val ctrl = taskControls[id]
         if (ctrl?.onResume != null) {
             ctrl.onResume.invoke()
@@ -250,7 +200,7 @@ class LocalTaskCoordinator(
         )
     }
 
-    suspend fun cancelTask(id: String) {
+    override suspend fun cancelTask(id: String) {
         runningJobs[id]?.cancel()
         runningJobs.remove(id)
         val ctrl = taskControls[id]
@@ -260,7 +210,7 @@ class LocalTaskCoordinator(
         }
     }
 
-    suspend fun retryTask(id: String) {
+    override suspend fun retryTask(id: String) {
         val ctrl = taskControls[id]
         if (ctrl?.onRetry != null) {
             ctrl.onRetry.invoke()
@@ -280,13 +230,13 @@ class LocalTaskCoordinator(
         )
     }
 
-    fun dismissTask(id: String) {
+    override fun dismissTask(id: String) {
         taskControls.remove(id)
         taskBlocks.remove(id)
         _tasks.update { list -> list.filterNot { it.id == id } }
     }
 
-    fun clearFinished() {
+    override fun clearFinished() {
         val currentIdsToDrop = _tasks.value.filter { it.isTerminal }.map { it.id }.toSet()
         currentIdsToDrop.forEach { id ->
             taskControls.remove(id)
@@ -295,7 +245,7 @@ class LocalTaskCoordinator(
         _tasks.update { list -> list.filterNot { it.isTerminal } }
     }
 
-    fun hasActiveHeavyInference(): Boolean = heavyInferenceMutex.isLocked
+    override fun hasActiveHeavyInference(): Boolean = heavyInferenceMutex.isLocked
 
     private fun upsertEntry(entry: LocalTaskEntry) {
         _tasks.update { list ->

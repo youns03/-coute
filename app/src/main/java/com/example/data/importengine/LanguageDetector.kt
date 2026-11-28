@@ -1,6 +1,7 @@
 package com.example.data.importengine
 
-import com.example.translation.SourceLanguage
+import com.example.domain.ScriptDirectionDetector
+import com.example.domain.SourceLanguage
 
 data class DetectedLanguageResult(
     val languageCode: String, // "ar", "fr", "en"
@@ -17,13 +18,22 @@ object LanguageDetector {
 
     private val frenchMarkers = listOf(
         " le ", " la ", " les ", " des ", " une ", " un ", " est ", " sont ",
-        " pour ", " dans ", " avec ", " qui ", " que ", " nous ", " vous ", " pas ", " sur "
+        " pour ", " dans ", " avec ", " qui ", " que ", " nous ", " vous ", " pas ", " sur ",
+        " au ", " aux ", " du ", " ce ", " cette ", " ces ", " mais ", " ou ", " comme ",
+        " plus ", " très ", " tout ", " tous ", " par ", " sans ", " aussi ", " bien "
     )
 
     private val englishMarkers = listOf(
         " the ", " and ", " of ", " to ", " is ", " in ", " that ", " with ",
-        " for ", " are ", " was ", " were ", " this ", " from ", " have ", " you "
+        " for ", " are ", " was ", " were ", " this ", " from ", " have ", " you ",
+        " a ", " an ", " it ", " on ", " by ", " as ", " at ", " be ", " or ", " not ",
+        " without ", " about ", " into ", " has ", " had ", " been ", " can ", " will ",
+        " would ", " should ", " could ", " also ", " they ", " we ", " but ", " all ",
+        " when ", " what ", " which ", " how ", " their ", " there ", " these ", " those ",
+        " number "
     )
+
+    private val englishIngRegex = Regex("""\b[a-z]{3,}ing\b""")
 
     fun detect(sampleText: String, metadataLangHint: String? = null): DetectedLanguageResult {
         val hint = metadataLangHint.orEmpty().trim().lowercase()
@@ -56,8 +66,12 @@ object LanguageDetector {
 
         val lower = " ${sampleText.lowercase()} "
         val frenchDiacritics = lower.count { it in "éèêëàâùûüôîïçœ" }
-        val frenchScore = frenchMarkers.sumOf { countOccurrences(lower, it) } * 2 + frenchDiacritics
-        val englishScore = englishMarkers.sumOf { countOccurrences(lower, it) } * 2
+        val frenchElisions = countOccurrences(lower, " l'") + countOccurrences(lower, " d'") +
+            countOccurrences(lower, " qu'") + countOccurrences(lower, " c'")
+        val frenchScore = frenchMarkers.sumOf { countOccurrences(lower, it) } * 2 +
+            frenchDiacritics + frenchElisions * 2
+        val englishIngHits = englishIngRegex.findAll(lower).count()
+        val englishScore = englishMarkers.sumOf { countOccurrences(lower, it) } * 2 + englishIngHits
 
         return if (englishScore > frenchScore) {
             DetectedLanguageResult("en", SourceLanguage.ENGLISH, isRtl = false)
@@ -66,24 +80,9 @@ object LanguageDetector {
         }
     }
 
-    fun isArabicText(text: String): Boolean {
-        var arabic = 0
-        var latin = 0
-        for (ch in text) {
-            if (isArabicChar(ch)) arabic++
-            else if (ch in 'A'..'Z' || ch in 'a'..'z' || ch in 'À'..'ÿ') latin++
-        }
-        return arabic > 0 && arabic >= latin
-    }
+    fun isArabicText(text: String): Boolean = ScriptDirectionDetector.isArabicText(text)
 
-    fun isArabicChar(ch: Char): Boolean {
-        val code = ch.code
-        return code in 0x0600..0x06FF ||
-            code in 0x0750..0x077F ||
-            code in 0x08A0..0x08FF ||
-            code in 0xFB50..0xFDFF ||
-            code in 0xFE70..0xFEFF
-    }
+    fun isArabicChar(ch: Char): Boolean = ScriptDirectionDetector.isArabicChar(ch)
 
     private fun countOccurrences(haystack: String, needle: String): Int {
         var count = 0

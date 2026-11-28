@@ -3,29 +3,27 @@ package com.example.transcription
 import android.content.Context
 import android.net.Uri
 import android.provider.OpenableColumns
-import com.example.data.BookDao
-import com.example.data.BookEntity
-import com.example.data.ChapterEntity
-import com.example.data.RecentActivityDao
-import com.example.data.RecentActivityEntity
-import com.example.data.SentenceEntity
-import com.example.data.SettingsRepository
+import com.example.contracts.AudioTranscriptionGateway
+import com.example.contracts.LibraryContentGateway
+import com.example.contracts.ModelCatalogProvider
+import com.example.contracts.ModelStorageGateway
+import com.example.contracts.RecentActivityGateway
+import com.example.contracts.SettingsGateway
+import com.example.contracts.SpeechRecognitionEngine
+import com.example.contracts.TaskControls
+import com.example.contracts.TaskCoordinatorGateway
+import com.example.domain.Book
+import com.example.domain.Chapter
 import com.example.domain.EngineType
+import com.example.domain.LocalTaskPriority
+import com.example.domain.LocalTaskType
+import com.example.domain.MemoryDiagnostics
+import com.example.domain.ModelRole
 import com.example.domain.ModelSpec
+import com.example.domain.RecentActivity
+import com.example.domain.Sentence
 import com.example.domain.SpeechTextProcessor
-import com.example.models.ModelCatalog
-import com.example.models.ModelStorageManager
-import com.example.runtime.LocalTaskCoordinator
-import com.example.runtime.LocalTaskPriority
-import com.example.runtime.LocalTaskType
-import com.example.runtime.TaskControls
-import com.example.tts.MemoryDiagnostics
-import com.k2fsa.sherpa.onnx.FeatureConfig
-import com.k2fsa.sherpa.onnx.OfflineCanaryModelConfig
-import com.k2fsa.sherpa.onnx.OfflineModelConfig
-import com.k2fsa.sherpa.onnx.OfflineNemoEncDecCtcModelConfig
-import com.k2fsa.sherpa.onnx.OfflineRecognizer
-import com.k2fsa.sherpa.onnx.OfflineRecognizerConfig
+import com.example.domain.TranscriptionRuntimeState
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.currentCoroutineContext
@@ -42,74 +40,62 @@ import java.io.FileOutputStream
 import java.util.UUID
 import kotlin.math.abs
 
-interface OfflineAsrSession {
-    fun transcribeSegment(samples16k: FloatArray, sampleRateHz: Int): String
-    fun release()
-}
-
-data class TranscriptionRuntimeState(
-    val isTranscribing: Boolean = false,
-    val loadedAsrModelId: String? = null,
-    val activeFileTitle: String = "",
-    val progress: Float = 0f,
-    val statusMessage: String = "",
-    val lastError: String? = null,
-    val lastCompletedBookId: String? = null
-)
-
 /**
- * Real offline audio transcription engine using Sherpa-ONNX OfflineRecognizer.
- * Decodes imported audio files locally -> runs NeMo FastConformer / Canary ASR in bounded
- * segments -> stores the resulting transcript as a readable, translatable & playable BookEntity
- * (`mediaKind = "AUDIO"`). Never generates simulated or mock transcripts.
+ * Coordinates local audio import, WAV/MediaCodec decoding, silence-valley segmentation,
+ * and offline speech recognition via a swappable [SpeechRecognitionEngine].
  */
 class SpeechTranscriptionManager internal constructor(
     private val context: Context,
-    private val storageManager: ModelStorageManager,
-    private val bookDao: BookDao,
-    private val recentActivityDao: RecentActivityDao,
-    private val taskCoordinator: LocalTaskCoordinator,
-    private val settingsRepository: SettingsRepository,
-    private val sessionFactory: ((ModelSpec, ModelStorageManager.AsrResolvedFiles, String) -> OfflineAsrSession)? = null,
+    private val storageManager: ModelStorageGateway,
+    private val modelCatalog: ModelCatalogProvider,
+    private val libraryGateway: LibraryContentGateway,
+    private val recentActivityGateway: RecentActivityGateway,
+    private val taskCoordinator: TaskCoordinatorGateway,
+    private val settingsGateway: SettingsGateway,
+    private val recognitionEngine: SpeechRecognitionEngine,
     private val audioDecoder: (File) -> DecodedMonoAudio = AudioDecoder::decodeFileToMono16k,
     private val packageVerifier: ((ModelSpec) -> Boolean)? = null
-) {
+) : AudioTranscriptionGateway {
+
     constructor(
         context: Context,
-        storageManager: ModelStorageManager,
-        bookDao: BookDao,
-        recentActivityDao: RecentActivityDao,
-        taskCoordinator: LocalTaskCoordinator,
-        settingsRepository: SettingsRepository
+        storageManager: ModelStorageGateway,
+        modelCatalog: ModelCatalogProvider,
+        libraryGateway: LibraryContentGateway,
+        recentActivityGateway: RecentActivityGateway,
+        taskCoordinator: TaskCoordinatorGateway,
+        settingsGateway: SettingsGateway,
+        recognitionEngine: SpeechRecognitionEngine = SherpaSpeechRecognitionEngine(context, storageManager)
     ) : this(
         context = context,
         storageManager = storageManager,
-        bookDao = bookDao,
-        recentActivityDao = recentActivityDao,
+        modelCatalog = modelCatalog,
+        libraryGateway = libraryGateway,
+        recentActivityGateway = recentActivityGateway,
         taskCoordinator = taskCoordinator,
-        settingsRepository = settingsRepository,
-        sessionFactory = null
+        settingsGateway = settingsGateway,
+        recognitionEngine = recognitionEngine,
+        audioDecoder = AudioDecoder::decodeFileToMono16k,
+        packageVerifier = null
     )
 
     private val mutex = Mutex()
 
     @Volatile
-    private var activeSession: OfflineAsrSession? = null
-    @Volatile
-    private var loadedModelKey: String? = null
-    @Volatile
     private var activityCallback: (() -> Unit)? = null
 
     private val _state = MutableStateFlow(TranscriptionRuntimeState())
-    val state: StateFlow<TranscriptionRuntimeState> = _state.asStateFlow()
+    override val state: StateFlow<TranscriptionRuntimeState> = _state.asStateFlow()
 
-    val isAsrLoaded: Boolean
-        get() = activeSession != null
+    override val isAsrLoaded: Boolean
+        get() = recognitionEngine.isLoaded
 
-    val isTranscribing: Boolean
+    override val isTranscribing: Boolean
         get() = _state.value.isTranscribing
 
-    fun setOnActivityCallback(callback: () -> Unit) {
+    override fun supportsRole(role: ModelRole): Boolean = role == ModelRole.ASR
+
+    override fun setOnActivityCallback(callback: () -> Unit) {
         activityCallback = callback
     }
 
@@ -119,15 +105,15 @@ class SpeechTranscriptionManager internal constructor(
     private fun verifyPackageReady(spec: ModelSpec): Boolean =
         packageVerifier?.invoke(spec) ?: storageManager.verifyInstalledPackage(spec, verifyIntegrity = true)
 
-    fun resolveReadyAsrModel(preferredId: String): Result<ModelSpec> {
+    override fun resolveReadyAsrModel(preferredId: String): Result<ModelSpec> {
         val hw = MemoryDiagnostics.getDeviceHardwareInfo(context)
-        val preferred = ModelCatalog.findById(preferredId)?.takeIf { it.engineType == EngineType.SHERPA_ASR }
+        val preferred = modelCatalog.findById(preferredId)?.takeIf { it.engineType == EngineType.SHERPA_ASR }
         if (preferred != null && verifyPackageReady(preferred) &&
             MemoryDiagnostics.evaluateRuntimeMemoryForLoad(preferred, hw).isSupported
         ) {
             return Result.success(preferred)
         }
-        val alternate = ModelCatalog.asrModels.firstOrNull { candidate ->
+        val alternate = modelCatalog.asrModels.firstOrNull { candidate ->
             verifyPackageReady(candidate) && MemoryDiagnostics.evaluateRuntimeMemoryForLoad(candidate, hw).isSupported
         }
         if (alternate != null) return Result.success(alternate)
@@ -139,35 +125,16 @@ class SpeechTranscriptionManager internal constructor(
         )
     }
 
-    suspend fun verifyModelLoadable(spec: ModelSpec, extractedDir: File): Result<Unit> = withContext(Dispatchers.IO) {
-        mutex.withLock {
-            runCatching {
-                val compat = MemoryDiagnostics.evaluateRuntimeMemoryForLoad(spec, context)
-                if (!compat.isSupported) error(compat.detailsAr ?: compat.summaryAr)
-
-                val paths = storageManager.resolveAsrPaths(extractedDir)
-                    ?: error("ملفات نموذج التعرف على الكلام غير مكتملة داخل الحزمة.")
-
-                releaseActiveLocked()
-                val testSession = createAsrSession(spec, paths, "fr")
-                try {
-                    // Run a short silence probe (0.5s) to validate native recognizer creation & inference
-                    testSession.transcribeSegment(FloatArray(8_000), AudioDecoder.TARGET_SAMPLE_RATE)
-                } finally {
-                    runCatching { testSession.release() }
-                }
-                Unit
-            }
-        }
-    }
+    override suspend fun verifyModelLoadable(spec: ModelSpec, extractedDir: File): Result<Unit> =
+        recognitionEngine.verifyLoadable(spec, extractedDir)
 
     /**
-     * Launches background offline audio import & transcription via [LocalTaskCoordinator].
+     * Launches background offline audio import & transcription via [TaskCoordinatorGateway].
      */
-    fun enqueueAudioImportAndTranscribe(
+    override fun enqueueAudioImportAndTranscribe(
         uri: Uri,
         languageCode: String,
-        onCompletedBook: (String) -> Unit = {}
+        onCompletedBook: (String) -> Unit
     ) {
         val meta = resolveUriDisplayNameAndSize(uri)
         val displayTitle = meta.first.substringBeforeLast('.').ifBlank { "تسجيل صوتي" }
@@ -195,14 +162,14 @@ class SpeechTranscriptionManager internal constructor(
         }
     }
 
-    suspend fun importAndTranscribeBlocking(
+    override suspend fun importAndTranscribeBlocking(
         uri: Uri,
         languageCode: String,
-        onProgress: (Float, String) -> Unit = { _, _ -> }
-    ): Result<BookEntity> = withContext(Dispatchers.IO) {
+        onProgress: (Float, String) -> Unit
+    ): Result<Book> = withContext(Dispatchers.IO) {
         runCatching {
             val normLang = SpeechTextProcessor.normalizeLangCode(languageCode)
-            val settings = settingsRepository.settingsFlow.first()
+            val settings = settingsGateway.settingsFlow.first()
             val asrSpec = resolveReadyAsrModel(settings.activeAsrModelId).getOrThrow()
 
             val meta = resolveUriDisplayNameAndSize(uri)
@@ -239,7 +206,7 @@ class SpeechTranscriptionManager internal constructor(
                 } ?: error("تعذر قراءة الملف الصوتي المحدد.")
 
                 val fileHash = storageManager.computeSha256(destAudioFile)
-                val duplicate = bookDao.findByContentHash(fileHash)
+                val duplicate = libraryGateway.findBookByContentHash(fileHash)
                 if (duplicate != null) {
                     destAudioFile.delete()
                     _state.value = TranscriptionRuntimeState(
@@ -263,7 +230,8 @@ class SpeechTranscriptionManager internal constructor(
 
                 mutex.withLock {
                     activityCallback?.invoke()
-                    val session = ensureAsrSessionLocked(asrSpec, normLang)
+                    recognitionEngine.ensureLoaded(asrSpec, normLang).getOrThrow()
+                    _state.value = _state.value.copy(loadedAsrModelId = asrSpec.id)
                     segments.forEachIndexed { idx, segmentSamples ->
                         if (!currentCoroutineContext().isActive) {
                             throw CancellationException("Cancelled")
@@ -273,7 +241,9 @@ class SpeechTranscriptionManager internal constructor(
                         onProgress(stepProgress, label)
                         _state.value = _state.value.copy(progress = stepProgress, statusMessage = label)
 
-                        val recognized = session.transcribeSegment(segmentSamples, AudioDecoder.TARGET_SAMPLE_RATE).trim()
+                        val recognized = recognitionEngine
+                            .transcribeSegment(segmentSamples, AudioDecoder.TARGET_SAMPLE_RATE)
+                            .trim()
                         if (recognized.isNotEmpty()) {
                             transcriptChunks.add(recognized)
                         }
@@ -288,14 +258,14 @@ class SpeechTranscriptionManager internal constructor(
 
                 onProgress(0.94f, "حفظ النص والفصول في المكتبة...")
                 val processed = SpeechTextProcessor.splitAndPreprocess(combinedText, normLang)
-                val chapter = ChapterEntity(
+                val chapter = Chapter(
                     bookId = bookId,
                     chapterIndex = 0,
                     title = title,
                     sentenceCount = processed.size
                 )
                 val sentences = processed.map { s ->
-                    SentenceEntity(
+                    Sentence(
                         bookId = bookId,
                         chapterIndex = 0,
                         sentenceIndex = s.index,
@@ -305,7 +275,7 @@ class SpeechTranscriptionManager internal constructor(
                     )
                 }
                 val durationMin = (decoded.durationMs / 60_000L).coerceAtLeast(1L)
-                val book = BookEntity(
+                val book = Book(
                     id = bookId,
                     title = title,
                     author = "تفريغ صوتي محلي",
@@ -321,9 +291,9 @@ class SpeechTranscriptionManager internal constructor(
                     audioFilePath = destAudioFile.absolutePath,
                     audioDurationMs = decoded.durationMs
                 )
-                bookDao.insertFullBook(book, listOf(chapter), sentences)
-                recentActivityDao.upsert(
-                    RecentActivityEntity(
+                libraryGateway.insertTranscribedBook(book, listOf(chapter), sentences)
+                recentActivityGateway.upsert(
+                    RecentActivity(
                         id = "act_book_$bookId",
                         kind = "TRANSCRIPTION",
                         title = book.title,
@@ -360,91 +330,15 @@ class SpeechTranscriptionManager internal constructor(
         }
     }
 
-    suspend fun releaseActiveEngine() {
+    override suspend fun releaseActiveEngine() {
         mutex.withLock {
-            releaseActiveLocked()
+            recognitionEngine.release()
+            _state.value = _state.value.copy(loadedAsrModelId = null)
         }
     }
 
     private fun cancelCurrentState() {
         _state.value = _state.value.copy(isTranscribing = false, statusMessage = "تم إلغاء التفريغ")
-    }
-
-    private fun ensureAsrSessionLocked(spec: ModelSpec, languageCode: String): OfflineAsrSession {
-        val key = "${spec.id}:$languageCode"
-        val current = activeSession
-        if (current != null && loadedModelKey == key) return current
-
-        releaseActiveLocked()
-        val modelDir = storageManager.getInstalledModelDir(spec.id)
-        val paths = storageManager.resolveAsrPaths(modelDir)
-            ?: error("ملفات نموذج ${spec.displayName} مفقودة.")
-        val created = createAsrSession(spec, paths, languageCode)
-        activeSession = created
-        loadedModelKey = key
-        _state.value = _state.value.copy(loadedAsrModelId = spec.id)
-        return created
-    }
-
-    private fun releaseActiveLocked() {
-        runCatching { activeSession?.release() }
-        activeSession = null
-        loadedModelKey = null
-        _state.value = _state.value.copy(loadedAsrModelId = null)
-    }
-
-    private fun createAsrSession(
-        spec: ModelSpec,
-        paths: ModelStorageManager.AsrResolvedFiles,
-        languageCode: String
-    ): OfflineAsrSession {
-        sessionFactory?.let { return it(spec, paths, languageCode) }
-
-        val modelConfig = OfflineModelConfig().apply {
-            tokens = paths.tokensFile.absolutePath
-            numThreads = 2
-            provider = "cpu"
-            if (paths.encoderFile != null && paths.decoderFile != null) {
-                canary = OfflineCanaryModelConfig().apply {
-                    encoder = paths.encoderFile.absolutePath
-                    decoder = paths.decoderFile.absolutePath
-                    srcLang = languageCode
-                    tgtLang = languageCode
-                    usePnc = true
-                }
-                modelType = "canary"
-            } else if (paths.ctcModelFile != null) {
-                nemo = OfflineNemoEncDecCtcModelConfig().apply {
-                    model = paths.ctcModelFile.absolutePath
-                }
-                modelType = "nemo_ctc"
-            } else {
-                error("صيغة ملفات ASR غير مدعومة داخل ${spec.id}")
-            }
-        }
-
-        val config = OfflineRecognizerConfig().apply {
-            featConfig = FeatureConfig(AudioDecoder.TARGET_SAMPLE_RATE, 80, 0f)
-            this.modelConfig = modelConfig
-        }
-
-        val recognizer = OfflineRecognizer(null, config)
-        return object : OfflineAsrSession {
-            override fun transcribeSegment(samples16k: FloatArray, sampleRateHz: Int): String {
-                val stream = recognizer.createStream()
-                return try {
-                    stream.acceptWaveform(samples16k, sampleRateHz)
-                    recognizer.decode(stream)
-                    recognizer.getResult(stream).text
-                } finally {
-                    stream.release()
-                }
-            }
-
-            override fun release() {
-                recognizer.release()
-            }
-        }
     }
 
     private fun resolveUriDisplayNameAndSize(uri: Uri): Pair<String, Long> {

@@ -1,8 +1,15 @@
 package com.example.translation
 
-import com.example.data.BookDao
-import com.example.data.SentenceEntity
-import com.example.data.VocabularyDao
+import com.example.contracts.SentenceTranslationCacheStore
+import com.example.contracts.TranslationEngine
+import com.example.contracts.TranslationGateway
+import com.example.contracts.VocabularyLookupStore
+import com.example.domain.DirectionPackState
+import com.example.domain.Sentence
+import com.example.domain.SourceLanguage
+import com.example.domain.TranslationDirection
+import com.example.domain.TranslationManagerUiState
+import com.example.domain.TranslationPackStatus
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -15,21 +22,21 @@ import kotlinx.coroutines.withContext
  * Shared identically by both the Reader and the Background File Translator so models are never duplicated.
  */
 class TranslationEngineManager(
-    private val bookDao: BookDao,
-    private val vocabularyDao: VocabularyDao
-) {
+    private val sentenceCacheStore: SentenceTranslationCacheStore,
+    private val vocabularyLookupStore: VocabularyLookupStore,
     private val engines: Map<TranslationDirection, TranslationEngine> = mapOf(
         TranslationDirection.FR_TO_AR to MlKitTranslationEngine(TranslationDirection.FR_TO_AR),
         TranslationDirection.EN_TO_AR to MlKitTranslationEngine(TranslationDirection.EN_TO_AR)
     )
+) : TranslationGateway {
 
     private val _state = MutableStateFlow(TranslationManagerUiState())
-    val state: StateFlow<TranslationManagerUiState> = _state.asStateFlow()
+    override val state: StateFlow<TranslationManagerUiState> = _state.asStateFlow()
 
-    fun getEngine(direction: TranslationDirection): TranslationEngine =
+    override fun getEngine(direction: TranslationDirection): TranslationEngine =
         engines.getValue(direction)
 
-    suspend fun refreshAllStatuses() = withContext(Dispatchers.IO) {
+    override suspend fun refreshAllStatuses() = withContext(Dispatchers.IO) {
         TranslationDirection.entries.forEach { dir ->
             val engine = engines.getValue(dir)
             val readyResult = runCatching { engine.isModelReady() }
@@ -61,7 +68,7 @@ class TranslationEngineManager(
         }
     }
 
-    suspend fun downloadPack(direction: TranslationDirection): Result<Unit> {
+    override suspend fun downloadPack(direction: TranslationDirection): Result<Unit> {
         updateDirectionState(
             direction,
             DirectionPackState(
@@ -93,7 +100,7 @@ class TranslationEngineManager(
         return result
     }
 
-    suspend fun deletePack(direction: TranslationDirection): Result<Unit> {
+    override suspend fun deletePack(direction: TranslationDirection): Result<Unit> {
         val otherDirection = if (direction == TranslationDirection.FR_TO_AR) {
             TranslationDirection.EN_TO_AR
         } else {
@@ -114,13 +121,13 @@ class TranslationEngineManager(
         return res
     }
 
-    suspend fun isDirectionReady(direction: TranslationDirection): Boolean =
+    override suspend fun isDirectionReady(direction: TranslationDirection): Boolean =
         engines.getValue(direction).isModelReady()
 
-    suspend fun translateRaw(direction: TranslationDirection, text: String): Result<String> =
+    override suspend fun translateRaw(direction: TranslationDirection, text: String): Result<String> =
         engines.getValue(direction).translateText(text)
 
-    suspend fun translateSentence(
+    override suspend fun translateSentence(
         sentenceId: Long,
         sourceLanguage: SourceLanguage,
         originalText: String,
@@ -132,13 +139,13 @@ class TranslationEngineManager(
         val direction = TranslationDirection.forSource(sourceLanguage)
         engines.getValue(direction).translateText(originalText).onSuccess { arabic ->
             if (sentenceId > 0L && arabic.isNotBlank()) {
-                bookDao.updateSentenceTranslation(sentenceId, arabic)
+                sentenceCacheStore.updateSentenceTranslation(sentenceId, arabic)
             }
         }
     }
 
-    suspend fun translateParagraph(
-        sentences: List<SentenceEntity>,
+    override suspend fun translateParagraph(
+        sentences: List<Sentence>,
         sourceLanguage: SourceLanguage
     ): Result<Int> = withContext(Dispatchers.IO) {
         runCatching {
@@ -151,7 +158,7 @@ class TranslationEngineManager(
             for (s in pending) {
                 val arabic = engine.translateText(s.originalText).getOrThrow()
                 if (s.id > 0L && arabic.isNotBlank()) {
-                    bookDao.updateSentenceTranslation(s.id, arabic)
+                    sentenceCacheStore.updateSentenceTranslation(s.id, arabic)
                 }
                 translatedCount++
             }
@@ -159,11 +166,11 @@ class TranslationEngineManager(
         }
     }
 
-    suspend fun translateWord(sourceLanguage: SourceLanguage, rawWord: String): Result<String> =
+    override suspend fun translateWord(sourceLanguage: SourceLanguage, rawWord: String): Result<String> =
         withContext(Dispatchers.IO) {
             val clean = rawWord.trim()
             if (clean.isEmpty()) return@withContext Result.failure(IllegalArgumentException("كلمة فارغة"))
-            val cached = vocabularyDao.findByFrenchTerm(clean)?.arabicTranslation
+            val cached = vocabularyLookupStore.findArabicTranslation(clean)
             if (!cached.isNullOrBlank()) {
                 return@withContext Result.success(cached)
             }
@@ -180,7 +187,7 @@ class TranslationEngineManager(
         }
     }
 
-    fun closeAll() {
+    override fun closeAll() {
         engines.values.forEach { it.close() }
     }
 }

@@ -9,16 +9,19 @@ import androidx.core.app.NotificationCompat
 import androidx.work.CoroutineWorker
 import androidx.work.ForegroundInfo
 import androidx.work.WorkerParameters
-import com.example.EcouteApplication
 import com.example.R
-import com.example.data.ModelRecordEntity
+import com.example.contracts.AppContainer
+import com.example.contracts.AppContainerProvider
+import com.example.contracts.ModelRecordStore
+import com.example.domain.EngineType
+import com.example.domain.LocalTaskStatus
+import com.example.domain.MemoryDiagnostics
+import com.example.domain.ModelInstallRecord
 import com.example.domain.ModelInstallStatus
 import com.example.domain.ModelSpec
-import com.example.tts.MemoryDiagnostics
 import kotlinx.coroutines.CancellationException
 import okhttp3.OkHttpClient
 import okhttp3.Request
-import java.io.File
 import java.io.FileOutputStream
 import java.util.concurrent.TimeUnit
 
@@ -63,16 +66,16 @@ class ModelDownloadWorker(
 
     override suspend fun doWork(): Result {
         val modelId = inputData.getString(KEY_MODEL_ID) ?: return Result.failure()
-        val spec = ModelCatalog.findById(modelId) ?: return Result.failure()
-
-        val app = applicationContext as EcouteApplication
-        val storage = app.storageManager
-        val dao = app.database.modelRecordDao()
+        val container = (applicationContext as AppContainerProvider).container
+        val catalog = container.modelCatalog
+        val spec = catalog.findById(modelId) ?: return Result.failure()
+        val storage = container.storageManager
+        val recordStore = container.modelRecordStore
 
         val compat = MemoryDiagnostics.evaluateModelCompatibility(spec, applicationContext)
         if (!compat.isSupported) {
-            dao.upsert(
-                ModelRecordEntity(
+            recordStore.upsert(
+                ModelInstallRecord(
                     modelId = spec.id,
                     status = ModelInstallStatus.FAILED.name,
                     totalBytes = spec.expectedSizeBytes,
@@ -83,8 +86,8 @@ class ModelDownloadWorker(
         }
 
         if (!storage.hasNetworkConnection()) {
-            dao.upsert(
-                ModelRecordEntity(
+            recordStore.upsert(
+                ModelInstallRecord(
                     modelId = spec.id,
                     status = ModelInstallStatus.PAUSED.name,
                     downloadedBytes = storage.getTempPartFile(spec.id).length(),
@@ -96,10 +99,10 @@ class ModelDownloadWorker(
         }
 
         val needsEspeak = spec.requiresEspeakData &&
-            !storage.verifyInstalledPackage(ModelCatalog.espeakNgDataSpec, verifyIntegrity = true)
+            !storage.verifyInstalledPackage(catalog.espeakNgDataSpec, verifyIntegrity = true)
         if (!storage.hasEnoughDiskSpace(spec, includeEspeakDependency = needsEspeak)) {
-            dao.upsert(
-                ModelRecordEntity(
+            recordStore.upsert(
+                ModelInstallRecord(
                     modelId = spec.id,
                     status = ModelInstallStatus.FAILED.name,
                     totalBytes = spec.expectedSizeBytes,
@@ -115,17 +118,27 @@ class ModelDownloadWorker(
             // Download shared eSpeak-ng data first if required by Piper and not yet installed
             if (spec.requiresEspeakData) {
                 storage.withSharedEspeakInstallLock {
-                    if (!storage.verifyInstalledPackage(ModelCatalog.espeakNgDataSpec, verifyIntegrity = true)) {
-                        downloadAndVerifySpec(ModelCatalog.espeakNgDataSpec, dao, isDependency = true)
+                    if (!storage.verifyInstalledPackage(catalog.espeakNgDataSpec, verifyIntegrity = true)) {
+                        downloadAndVerifySpec(
+                            container = container,
+                            spec = catalog.espeakNgDataSpec,
+                            recordStore = recordStore,
+                            isDependency = true
+                        )
                     }
                 }
             }
-            downloadAndVerifySpec(spec, dao, isDependency = false)
+            downloadAndVerifySpec(
+                container = container,
+                spec = spec,
+                recordStore = recordStore,
+                isDependency = false
+            )
             Result.success()
         } catch (ce: CancellationException) {
             val partLen = storage.getTempPartFile(spec.id).length()
-            dao.upsert(
-                ModelRecordEntity(
+            recordStore.upsert(
+                ModelInstallRecord(
                     modelId = spec.id,
                     status = ModelInstallStatus.PAUSED.name,
                     downloadedBytes = partLen,
@@ -143,8 +156,8 @@ class ModelDownloadWorker(
             }
             val partLen = storage.getTempPartFile(spec.id).length()
             val status = if (isCorrupted) ModelInstallStatus.CORRUPTED else ModelInstallStatus.FAILED
-            dao.upsert(
-                ModelRecordEntity(
+            recordStore.upsert(
+                ModelInstallRecord(
                     modelId = spec.id,
                     status = status.name,
                     downloadedBytes = partLen,
@@ -157,16 +170,17 @@ class ModelDownloadWorker(
     }
 
     private suspend fun downloadAndVerifySpec(
+        container: AppContainer,
         spec: ModelSpec,
-        dao: com.example.data.ModelRecordDao,
+        recordStore: ModelRecordStore,
         isDependency: Boolean
     ) {
-        val app = applicationContext as EcouteApplication
-        val storage = app.storageManager
+        val storage = container.storageManager
+        val taskCoordinator = container.taskCoordinator
         val partFile = storage.getTempPartFile(spec.id)
         var existingBytes = if (partFile.exists()) partFile.length() else 0L
 
-        val previousRecord = if (!isDependency) dao.getRecord(spec.id) else null
+        val previousRecord = if (!isDependency) recordStore.getRecord(spec.id) else null
         if (existingBytes > spec.expectedSizeBytes ||
             (existingBytes == spec.expectedSizeBytes && previousRecord?.status == ModelInstallStatus.CORRUPTED.name)
         ) {
@@ -222,17 +236,17 @@ class ModelDownloadWorker(
                                 lastNotifyTime = now
                                 val pct = ((transferred * 100L) / totalBytes.coerceAtLeast(1L)).toInt().coerceIn(0, 100)
                                 if (!isDependency) {
-                                    dao.upsert(
-                                        ModelRecordEntity(
+                                    recordStore.upsert(
+                                        ModelInstallRecord(
                                             modelId = spec.id,
                                             status = ModelInstallStatus.DOWNLOADING.name,
                                             downloadedBytes = transferred,
                                             totalBytes = totalBytes
                                         )
                                     )
-                                    app.taskCoordinator.updateTaskStatus(
+                                    taskCoordinator.updateTaskStatus(
                                         id = "dl_${spec.id}",
-                                        status = com.example.runtime.LocalTaskStatus.RUNNING,
+                                        status = LocalTaskStatus.RUNNING,
                                         progress = (pct / 100f),
                                         subtitle = "جاري التنزيل ($pct%)"
                                     )
@@ -246,17 +260,17 @@ class ModelDownloadWorker(
         }
 
         if (!isDependency) {
-            dao.upsert(
-                ModelRecordEntity(
+            recordStore.upsert(
+                ModelInstallRecord(
                     modelId = spec.id,
                     status = ModelInstallStatus.VERIFYING.name,
                     downloadedBytes = spec.expectedSizeBytes,
                     totalBytes = spec.expectedSizeBytes
                 )
             )
-            app.taskCoordinator.updateTaskStatus(
+            taskCoordinator.updateTaskStatus(
                 id = "dl_${spec.id}",
-                status = com.example.runtime.LocalTaskStatus.RUNNING,
+                status = LocalTaskStatus.RUNNING,
                 progress = 0.98f,
                 subtitle = "التحقق من السلامة والتحميل..."
             )
@@ -275,15 +289,15 @@ class ModelDownloadWorker(
         } else {
             // Keep the previous installation recoverable until the native engine accepts the new files.
             try {
-                if (spec.engineType == com.example.domain.EngineType.SHERPA_ASR) {
-                    app.speechTranscriptionManager.verifyModelLoadable(spec, finalDir).getOrThrow()
+                if (spec.engineType == EngineType.SHERPA_ASR) {
+                    container.speechTranscriptionManager.verifyModelLoadable(spec, finalDir).getOrThrow()
                 } else {
-                    app.ttsEngineManager.verifyModelLoadable(spec, finalDir).getOrThrow()
+                    container.ttsEngineManager.verifyModelLoadable(spec, finalDir).getOrThrow()
                 }
             } catch (t: Throwable) {
-                app.taskCoordinator.updateTaskStatus(
+                taskCoordinator.updateTaskStatus(
                     id = "dl_${spec.id}",
-                    status = com.example.runtime.LocalTaskStatus.FAILED,
+                    status = LocalTaskStatus.FAILED,
                     errorMessage = t.message
                 )
                 if (!storage.rollbackInstalledPackage(spec.id)) {
@@ -296,8 +310,8 @@ class ModelDownloadWorker(
                 throw t
             }
             storage.confirmInstalledPackage(spec).getOrThrow()
-            dao.upsert(
-                ModelRecordEntity(
+            recordStore.upsert(
+                ModelInstallRecord(
                     modelId = spec.id,
                     status = ModelInstallStatus.INSTALLED.name,
                     downloadedBytes = spec.expectedSizeBytes,
@@ -308,9 +322,9 @@ class ModelDownloadWorker(
                     lastError = null
                 )
             )
-            app.taskCoordinator.updateTaskStatus(
+            taskCoordinator.updateTaskStatus(
                 id = "dl_${spec.id}",
-                status = com.example.runtime.LocalTaskStatus.COMPLETED,
+                status = LocalTaskStatus.COMPLETED,
                 progress = 1f,
                 subtitle = "مثبّت وموثّق"
             )

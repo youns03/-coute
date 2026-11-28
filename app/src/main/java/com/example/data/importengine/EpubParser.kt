@@ -1,7 +1,8 @@
 package com.example.data.importengine
 
-import com.example.data.ExtractedDocumentSection
-import com.example.data.ParsedSourceDocument
+import com.example.domain.ExtractedDocumentSection
+import com.example.domain.ExtractionDiagnostics
+import com.example.domain.ParsedSourceDocument
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
 import org.jsoup.Jsoup
@@ -93,7 +94,7 @@ internal object EpubParser {
                         maxExtractedTextChars = maxExtractedTextChars - totalExtractedChars.toInt().coerceAtLeast(0)
                     )
                     val chapterBody = extracted.sections.joinToString("\n\n") { sec ->
-                        if (sec.title.isNotBlank() && extracted.sections.size > 1) {
+                        if (sec.title.isNotBlank()) {
                             "${sec.title}\n\n${sec.body}"
                         } else {
                             sec.body
